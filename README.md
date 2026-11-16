@@ -46,6 +46,12 @@ buzzard lsp
 `check` also accepts `--format json`, `--ignore <CODE>` (repeatable),
 `--max-path-length <N>` and `--exit-zero`.
 
+Exit status of `check` and `inspect`: 0 for success, 1 when `check` found
+problems, 2 for an error. A report that could not be written (a full disk,
+for example) is an error, so a CI step never passes with an empty or
+truncated report. A reader that closes the pipe early, as in
+`buzzard check | head`, is not.
+
 ## Rules
 
 | Code | Severity | Meaning |
@@ -77,7 +83,27 @@ percent-encoded.
 
 The server analyzes the workspace folders on startup and then watches the
 file system, because these files are saved by the LabVIEW IDE rather than
-edited as text buffers.
+edited as text buffers. `workspace/didChangeWatchedFiles` from the client is
+accepted as well.
+
+- Changes are applied one batch at a time, in order, and their diagnostics
+  are published in that order. Requests are answered from the last complete
+  state and do not wait for a scan or a batch in progress; right after
+  startup that state is empty until the first scan is done.
+- Renaming, moving or deleting a directory moves or removes every file below
+  it.
+- The watcher follows the same rules as the initial scan and as `check`:
+  hidden files and directories (names starting with `.`), symbolic links and
+  anything outside the workspace folders are ignored, whichever way a change
+  is reported.
+- A file is always named by its path under the workspace folder as the
+  client spelled it, also when the folder is reached through a symbolic link
+  and the operating system reports the resolved path.
+- A file that fails to parse right after it was written is read again a few
+  times (for about 0.4 s in total) before `BZ000` is reported, so a file
+  caught in the middle of a save does not flash up as broken.
+- The process exits with status 0 when the client sends `shutdown` and then
+  `exit`, and with status 1 when `exit` arrives without `shutdown`.
 
 | Feature | Behaviour |
 | --- | --- |

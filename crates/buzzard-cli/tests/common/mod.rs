@@ -44,12 +44,10 @@ pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../buzzard-rsrc/tests/fixtures/pylavi")
 }
 
-/// `file://` URI for a path, in the form the server reports.
+/// `file://` URI for a path, in the form the server reports: percent-encoded
+/// where the path has a space or a character outside ASCII.
 pub fn file_uri(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    if text.starts_with('/') {
-        format!("file://{text}")
-    } else {
-        format!("file:///{text}")
-    }
+    url::Url::from_file_path(path)
+        .unwrap_or_else(|()| panic!("not an absolute path: {}", path.display()))
+        .to_string()
 }
