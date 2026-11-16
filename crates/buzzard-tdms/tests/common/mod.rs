@@ -7,6 +7,8 @@
     reason = "each test crate uses a different subset of these helpers"
 )]
 
+pub(crate) mod sha256;
+
 use buzzard_tdms::build::{Built, FileBuilder, Object, ScalerSpec, Values};
 use buzzard_tdms::{Complex32, Complex64, DataType, PropertyValue, TdmsFile, Timestamp};
 
@@ -152,8 +154,15 @@ pub(crate) fn scenario(shape: Shape) -> Built {
     let segment = builder.segment();
     set(segment);
     let mut root = Object::root();
+    // Complex properties are left to a test of their own: the oracle
+    // refuses a file that has one.
     for (name, value) in every_property() {
-        root = root.prop(name, value);
+        if !matches!(
+            value,
+            PropertyValue::ComplexF32(_) | PropertyValue::ComplexF64(_)
+        ) {
+            root = root.prop(name, value);
+        }
     }
     segment
         .object(root)
@@ -216,9 +225,42 @@ pub(crate) fn scenario(shape: Shape) -> Built {
     builder.build()
 }
 
+/// The properties of a linear scale: scale `number` is `slope * x +
+/// intercept` of scale (or scaler) `source`.
+fn linear(object: Object, number: u32, slope: f64, intercept: f64, source: u32) -> Object {
+    object
+        .prop(
+            &format!("NI_Scale[{number}]_Scale_Type"),
+            PropertyValue::String("Linear".into()),
+        )
+        .prop(
+            &format!("NI_Scale[{number}]_Linear_Slope"),
+            PropertyValue::F64(slope),
+        )
+        .prop(
+            &format!("NI_Scale[{number}]_Linear_Y_Intercept"),
+            PropertyValue::F64(intercept),
+        )
+        .prop(
+            &format!("NI_Scale[{number}]_Linear_Input_Source"),
+            PropertyValue::U32(source),
+        )
+}
+
+fn unscaled(object: Object, scales: u32) -> Object {
+    object
+        .prop(
+            "NI_Scaling_Status",
+            PropertyValue::String("unscaled".into()),
+        )
+        .prop("NI_Number_Of_Scales", PropertyValue::U32(scales))
+}
+
 /// A file with channels in a driver's raw buffers: two buffers, a channel
-/// with one scaler, a channel with two, and a typed channel, followed by a
-/// segment without metadata.
+/// with one scaler, a channel with two, a typed channel and a channel with
+/// a chain of two linear scales, followed by a segment without metadata.
+/// Every channel of the raw type has scaling properties, as in files
+/// written by acquisition drivers.
 pub(crate) fn daqmx_scenario(big_endian: bool, chunks: u64) -> Built {
     use buzzard_tdms::build::generate;
     let n = 5 * chunks;
@@ -228,6 +270,7 @@ pub(crate) fn daqmx_scenario(big_endian: bool, chunks: u64) -> Built {
         offset,
         scale_id,
     };
+    let channel = |name: &str| Object::channel("Measured", name);
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -235,39 +278,49 @@ pub(crate) fn daqmx_scenario(big_endian: bool, chunks: u64) -> Built {
         .chunks(chunks)
         .daqmx_widths(&[12, 9])
         .object(Object::group("Measured"))
-        .object(
-            Object::channel("Measured", "ai0")
-                .daqmx(true, false, vec![scaler(DataType::I16, 1, 0, 0, 0)])
-                .prop(
-                    "NI_Scaling_Status",
-                    PropertyValue::String("unscaled".into()),
-                )
-                .prop("NI_Number_Of_Scales", PropertyValue::U32(2))
-                .prop(
-                    "NI_Scale[1]_Scale_Type",
-                    PropertyValue::String("Linear".into()),
-                )
-                .prop("NI_Scale[1]_Linear_Slope", PropertyValue::F64(0.25))
-                .prop("NI_Scale[1]_Linear_Y_Intercept", PropertyValue::F64(-3.0))
-                .prop("NI_Scale[1]_Linear_Input_Source", PropertyValue::U32(0)),
-        )
-        .object(Object::channel("Measured", "ai1").daqmx(
-            true,
-            false,
-            vec![
-                scaler(DataType::I32, 2, 0, 4, 0),
-                scaler(DataType::F32, 3, 1, 1, 1),
-            ],
+        .object(linear(
+            unscaled(
+                channel("ai0").daqmx(true, false, vec![scaler(DataType::I16, 1, 0, 0, 0)]),
+                2,
+            ),
+            1,
+            0.25,
+            -3.0,
+            0,
         ))
-        .object(Object::channel("Measured", "typed").daqmx(
-            false,
-            false,
-            vec![scaler(DataType::U16, 4, 0, 10, 0)],
+        .object(linear(
+            unscaled(
+                channel("ai1").daqmx(
+                    true,
+                    false,
+                    vec![
+                        scaler(DataType::I32, 2, 0, 4, 0),
+                        scaler(DataType::F32, 3, 1, 1, 1),
+                    ],
+                ),
+                3,
+            ),
+            2,
+            2.0,
+            0.5,
+            1,
         ))
-        .object(Object::channel("Measured", "wide").daqmx(
-            true,
-            false,
-            vec![scaler(DataType::F32, 5, 1, 5, 0)],
+        .object(channel("typed").daqmx(false, false, vec![scaler(DataType::U16, 4, 0, 10, 0)]))
+        .object(linear(
+            linear(
+                unscaled(
+                    channel("wide").daqmx(true, false, vec![scaler(DataType::F32, 5, 1, 5, 0)]),
+                    3,
+                ),
+                1,
+                10.0,
+                1.0,
+                0,
+            ),
+            2,
+            -0.5,
+            7.0,
+            1,
         ));
     builder
         .segment()
@@ -278,7 +331,8 @@ pub(crate) fn daqmx_scenario(big_endian: bool, chunks: u64) -> Built {
     builder.build()
 }
 
-/// A file with digital lines: four lines of one two-byte port.
+/// A file with digital lines: four lines of one two-byte port, typed as
+/// acquisition drivers write them.
 pub(crate) fn digital_scenario() -> Built {
     let line = |bit: u32, pattern: [u8; 6]| ScalerSpec {
         values: Values::U8(pattern.to_vec()),
@@ -286,30 +340,17 @@ pub(crate) fn digital_scenario() -> Built {
         offset: bit,
         scale_id: 0,
     };
+    let channel = |name: &str, bit: u32, pattern: [u8; 6]| {
+        Object::channel("port", name).daqmx(false, true, vec![line(bit, pattern)])
+    };
     let mut builder = FileBuilder::new();
     builder
         .segment()
         .daqmx_widths(&[2])
-        .object(Object::channel("port", "line0").daqmx(
-            true,
-            true,
-            vec![line(0, [1, 0, 1, 1, 0, 0])],
-        ))
-        .object(Object::channel("port", "line3").daqmx(
-            true,
-            true,
-            vec![line(3, [0, 0, 1, 0, 1, 1])],
-        ))
-        .object(Object::channel("port", "line9").daqmx(
-            true,
-            true,
-            vec![line(9, [1, 1, 1, 0, 0, 1])],
-        ))
-        .object(Object::channel("port", "line15").daqmx(
-            true,
-            true,
-            vec![line(15, [0, 1, 0, 1, 0, 1])],
-        ));
+        .object(channel("line0", 0, [1, 0, 1, 1, 0, 0]))
+        .object(channel("line3", 3, [0, 0, 1, 0, 1, 1]))
+        .object(channel("line9", 9, [1, 1, 1, 0, 0, 1]))
+        .object(channel("line15", 15, [0, 1, 0, 1, 0, 1]));
     builder.build()
 }
 

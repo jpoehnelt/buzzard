@@ -182,6 +182,28 @@ fn typed_reads_check_the_type_and_the_range() {
 }
 
 #[test]
+fn properties_of_every_type_read_back_in_both_byte_orders() {
+    for big_endian in [false, true] {
+        let mut root = Object::root();
+        let mut channel = Object::channel("g", "c").generated(DataType::I8, 1);
+        for (name, value) in common::every_property() {
+            root = root.prop(name, value.clone());
+            channel = channel.prop(name, value);
+        }
+        let mut builder = FileBuilder::new();
+        builder
+            .segment()
+            .big_endian(big_endian)
+            .object(root)
+            .object(channel);
+        let built = builder.build();
+        let file = open(&built.bytes, None).unwrap();
+        assert_eq!(file.properties().len(), 16);
+        assert_matches(&built, &file, "every property");
+    }
+}
+
+#[test]
 fn waveform_properties_are_exposed() {
     let start = buzzard_tdms::Timestamp::new(3_850_000_000, 1 << 63);
     let mut builder = FileBuilder::new();

@@ -16,7 +16,7 @@ use std::io::Write;
 use crate::error::{Error, Result};
 use crate::file::{Channel, TdmsFile, Waveform};
 use crate::scaling::Scaling;
-use crate::types::{Column, DataType, Property};
+use crate::types::{Column, DataType};
 
 #[cfg(feature = "parquet")]
 pub mod parquet;
@@ -220,12 +220,13 @@ impl<'a> Plan<'a> {
     /// The table's metadata as ordered key-value pairs: every property of
     /// the file, of the groups of the exported channels and of the
     /// channels, and the timing.
+    #[cfg(feature = "parquet")]
     pub(crate) fn metadata(&self) -> Vec<(String, String)> {
         let mut out = vec![(
             "buzzard.tdms.version".to_owned(),
             env!("CARGO_PKG_VERSION").to_owned(),
         )];
-        let mut props = |prefix: &str, props: &[Property]| {
+        let mut props = |prefix: &str, props: &[crate::types::Property]| {
             for p in props {
                 out.push((format!("{prefix}{}", p.name), p.value.to_string()));
             }
