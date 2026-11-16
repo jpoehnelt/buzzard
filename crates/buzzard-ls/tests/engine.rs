@@ -353,3 +353,56 @@ fn parses_and_tracks_project_files() {
     assert!(fx.engine.symbols("app", 10).is_empty());
     assert!(fx.engine.hover(&at("App.lvproj")).is_none());
 }
+
+/// A snapshot is what requests read while the next state is computed: it
+/// must not change under them.
+#[test]
+fn snapshots_are_not_affected_by_later_changes() {
+    let mut f = Fixture::new("snapshot");
+    f.vi("a.vi", &CLEAN, &["b.vi"]);
+    f.vi("b.vi", &INLINE_CODE, &[]);
+    f.engine.scan();
+    let before = f.engine.snapshot();
+    let a = f.dir.join("a.vi");
+    let b = f.dir.join("b.vi");
+
+    fs::remove_file(&b).unwrap();
+    f.touch("b.vi");
+    assert!(before.contains(&b));
+    assert_eq!(before.callees(&a), std::slice::from_ref(&b));
+    assert!(before.hover(&b).is_some());
+    let after = f.engine.snapshot();
+    assert!(!after.contains(&b));
+    assert!(after.callees(&a).is_empty());
+    assert_eq!(after.paths().collect::<Vec<_>>(), [a.as_path()]);
+}
+
+#[test]
+fn lists_files_below_a_directory() {
+    let mut f = Fixture::new("under");
+    for name in ["sub", "sub/deep", "sub2", "sub.d"] {
+        fs::create_dir_all(f.dir.join(name)).unwrap();
+    }
+    for name in [
+        "a.vi",
+        "sub.vi",
+        "sub/b.vi",
+        "sub/deep/c.vi",
+        "sub2/d.vi",
+        "sub.d/e.vi",
+        "t.vi",
+    ] {
+        f.vi(name, &CLEAN, &[]);
+    }
+    f.engine.scan();
+    let snapshot = f.engine.snapshot();
+    let below = |name: &str| -> Vec<PathBuf> { snapshot.paths_under(&f.dir.join(name)) };
+    assert_eq!(
+        below("sub"),
+        [f.dir.join("sub/b.vi"), f.dir.join("sub/deep/c.vi")]
+    );
+    assert_eq!(below("sub/deep/../deep"), [f.dir.join("sub/deep/c.vi")]);
+    assert_eq!(below("sub/b.vi"), Vec::<PathBuf>::new());
+    assert_eq!(below("missing"), Vec::<PathBuf>::new());
+    assert_eq!(snapshot.paths_under(&f.dir).len(), 7);
+}

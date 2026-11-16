@@ -11,6 +11,7 @@
 //!
 //! followed by an optional attribute list and the content bytes.
 
+mod primitives;
 mod tables;
 
 use crate::error::{malformed, Result};
@@ -156,6 +157,38 @@ pub fn class_id(name: &str) -> Option<i32> {
         .iter()
         .find(|(_, n)| *n == name)
         .map(|(id, _)| *id)
+}
+
+/// Name of a built-in function, from the vendored table in `primitives.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PrimitiveName {
+    /// The function's name as the editor's palette shows it, e.g. `Add`.
+    /// Printable ASCII without quotes, backticks, backslashes or brackets.
+    /// Not unique: a few functions share a name under different ids.
+    pub name: &'static str,
+    /// Whether the source of the table records that it confirmed which
+    /// function the id is. An unverified name is the best one known and may
+    /// be wrong.
+    pub verified: bool,
+}
+
+/// Name of the built-in function with the given resource id (the
+/// `primResID` of a `prim` object), if the vendored table has it.
+///
+/// The table comes from LVKit (Apache-2.0); see `NOTICE` at the repository
+/// root for its origin and limits.
+pub fn primitive_name(id: u32) -> Option<PrimitiveName> {
+    let table = primitives::PRIMITIVES;
+    let index = table.binary_search_by_key(&id, |(k, _, _)| *k).ok()?;
+    let (_, name, verified) = table[index];
+    Some(PrimitiveName { name, verified })
+}
+
+/// Every built-in function the vendored table names, in ascending id order.
+pub fn primitive_names() -> impl ExactSizeIterator<Item = (u32, PrimitiveName)> {
+    primitives::PRIMITIVES
+        .iter()
+        .map(|&(id, name, verified)| (id, PrimitiveName { name, verified }))
 }
 
 fn lookup(table: &'static [(i32, &'static str)], id: i32) -> Option<&'static str> {
@@ -329,6 +362,53 @@ mod tests {
         assert_eq!(class_id("prim"), Some(47));
         assert_eq!(tag_name(tag::REFERENCE), Some("SL__reference"));
         assert_eq!(tag_name(99_999), None);
+    }
+
+    #[test]
+    fn primitive_table_is_sorted_and_unique() {
+        let table = primitives::PRIMITIVES;
+        assert!(table.len() > 600);
+        // Strictly ascending ids: sorted for binary search, and no duplicates.
+        assert!(table.windows(2).all(|w| w[0].0 < w[1].0));
+        assert_eq!(primitive_names().len(), table.len());
+        for (id, entry) in primitive_names() {
+            assert_eq!(primitive_name(id), Some(entry));
+        }
+    }
+
+    #[test]
+    fn primitive_names_are_looked_up_by_id() {
+        assert_eq!(
+            primitive_name(1050),
+            Some(PrimitiveName {
+                name: "Add",
+                verified: true
+            })
+        );
+        let unverified = primitive_name(8011).expect("in the table");
+        assert_eq!(unverified.name, "Close Reference");
+        assert!(!unverified.verified);
+        for unknown in [0, 1, 1043, 1_000_000, u32::MAX] {
+            assert_eq!(primitive_name(unknown), None);
+        }
+    }
+
+    #[test]
+    fn primitive_names_are_safe_to_print() {
+        for (id, entry) in primitive_names() {
+            let name = entry.name;
+            assert!(!name.is_empty() && name.len() <= 80, "{id}: {name:?}");
+            assert_eq!(name, name.trim(), "{id}");
+            assert!(!name.contains("  "), "{id}: {name:?}");
+            // No control characters, nothing outside ASCII, and none of the
+            // characters that delimit Rust, Markdown, SVG, DOT or Mermaid
+            // text. `&` is allowed: the SVG writer escapes it.
+            assert!(
+                name.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || " &'()+,-/?.:".contains(c)),
+                "{id}: {name:?}"
+            );
+        }
     }
 
     #[test]

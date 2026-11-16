@@ -5,10 +5,13 @@ use std::process::ExitCode;
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::Inspection;
 use buzzard_lint::{
-    lint, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity, Workspace,
+    lint, render, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity,
+    Workspace,
 };
 use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
+
+mod diff_cmd;
 
 /// Static analyzer and language server that reads binary .vi and .ctl files
 /// and .lvproj, .lvlib and .lvclass files directly, without the IDE.
@@ -44,8 +47,13 @@ enum Command {
         #[arg(long, value_enum, default_value_t = InspectFormat::Markdown)]
         format: InspectFormat,
     },
+    /// Compare two versions of a file: settings, dependencies, nodes, wires.
+    Diff(diff_cmd::Args),
     /// Run the language server over stdin/stdout.
     Lsp,
+    /// Run the Model Context Protocol server over stdin/stdout, so that AI
+    /// agents can call the analysis as tools.
+    Mcp,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -59,6 +67,12 @@ enum CheckFormat {
 enum InspectFormat {
     Markdown,
     Json,
+    /// Picture of the block diagram, laid out as in the editor.
+    Svg,
+    /// Block diagram as a Graphviz graph.
+    Dot,
+    /// Block diagram as a Mermaid flowchart.
+    Mermaid,
 }
 
 /// JSON shape of `inspect`: the metadata fields plus the block diagram.
@@ -104,13 +118,13 @@ fn main() -> ExitCode {
                     to_json(&sarif::to_sarif(&diagnostics, env!("CARGO_PKG_VERSION")))
                 }
             };
-            print(&rendered);
             let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
-            if failed && !exit_zero {
+            let status = if failed && !exit_zero {
                 ExitCode::from(1)
             } else {
                 ExitCode::SUCCESS
-            }
+            };
+            print(&rendered, status)
         }
         Command::Inspect { file, format } if is_project_file(&file) => {
             match ProjectFile::from_path(&file) {
@@ -120,9 +134,15 @@ fn main() -> ExitCode {
                         InspectFormat::Markdown => {
                             summary::project_to_markdown(&project.name, &project, None)
                         }
+                        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+                            eprintln!(
+                                "error: {}: a project file has no block diagram",
+                                file.display()
+                            );
+                            return ExitCode::from(2);
+                        }
                     };
-                    print(&rendered);
-                    ExitCode::SUCCESS
+                    print(&rendered, ExitCode::SUCCESS)
                 }
                 Err(err) => {
                     eprintln!("error: {}: {err}", file.display());
@@ -132,29 +152,53 @@ fn main() -> ExitCode {
         }
         Command::Inspect { file, format } => match Inspection::from_path(&file) {
             Ok(inspection) => {
-                let rendered = match format {
-                    InspectFormat::Json => to_json(&InspectOutput {
-                        metadata: &inspection.metadata,
-                        diagram: inspection.diagram.as_ref(),
-                    }),
-                    InspectFormat::Markdown => {
-                        let title = file
-                            .file_name()
-                            .unwrap_or(file.as_os_str())
-                            .to_string_lossy();
-                        let mut text = summary::to_markdown(&title, &inspection.metadata, None);
-                        if let Some(diagram) = &inspection.diagram {
-                            text.push('\n');
-                            text.push_str(&summary::diagram_to_markdown(diagram));
-                        }
-                        text
-                    }
+                let picture = |draw: fn(&BlockDiagram) -> String| match &inspection.diagram {
+                    Some(diagram) => Ok(draw(diagram)),
+                    None => Err("file has no block diagram"),
                 };
-                print(&rendered);
-                ExitCode::SUCCESS
+                let rendered = match format {
+                    InspectFormat::Svg => picture(render::to_svg),
+                    InspectFormat::Dot => picture(render::to_dot),
+                    InspectFormat::Mermaid => picture(render::to_mermaid),
+                    other => Ok(match other {
+                        InspectFormat::Json => to_json(&InspectOutput {
+                            metadata: &inspection.metadata,
+                            diagram: inspection.diagram.as_ref(),
+                        }),
+                        InspectFormat::Markdown => {
+                            let title = file
+                                .file_name()
+                                .unwrap_or(file.as_os_str())
+                                .to_string_lossy();
+                            let mut text = summary::to_markdown(&title, &inspection.metadata, None);
+                            if let Some(diagram) = &inspection.diagram {
+                                text.push('\n');
+                                text.push_str(&summary::diagram_to_markdown(diagram));
+                            }
+                            text
+                        }
+                        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+                            unreachable!("pictures are handled above")
+                        }
+                    }),
+                };
+                match rendered {
+                    Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
+                    Err(reason) => {
+                        eprintln!("error: {}: {reason}", file.display());
+                        ExitCode::from(2)
+                    }
+                }
             }
             Err(err) => {
                 eprintln!("error: {}: {err}", file.display());
+                ExitCode::from(2)
+            }
+        },
+        Command::Diff(args) => match diff_cmd::run(&args) {
+            Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
+            Err(message) => {
+                eprintln!("error: {message}");
                 ExitCode::from(2)
             }
         },
@@ -164,10 +208,10 @@ fn main() -> ExitCode {
                 .build();
             match runtime {
                 Ok(runtime) => {
-                    runtime.block_on(buzzard_ls::run_stdio());
+                    let status = runtime.block_on(buzzard_ls::run_stdio());
                     // The runtime's blocking stdin reader would otherwise keep
                     // the process alive until the client closes the pipe.
-                    std::process::exit(0)
+                    std::process::exit(status)
                 }
                 Err(err) => {
                     eprintln!("error: cannot start async runtime: {err}");
@@ -175,14 +219,39 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::Mcp => match buzzard_mcp::run_stdio() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: mcp transport failed: {err}");
+                ExitCode::from(2)
+            }
+        },
     }
 }
 
-/// Write to stdout, ignoring a closed pipe (e.g. `buzzard check | head`).
-fn print(text: &str) {
+/// Write the report to stdout and return the status to exit with.
+///
+/// A closed pipe (e.g. `buzzard check | head`) is not an error: the reader
+/// has seen what it wanted. Any other failure (a full disk, a quota, a
+/// broken mount) means the report is missing or truncated, so the command
+/// must not look like it succeeded: the error goes to stderr and the
+/// status is 2, whatever `status` was.
+fn print(text: &str, status: ExitCode) -> ExitCode {
     let mut stdout = io::stdout().lock();
-    let _ = stdout.write_all(text.as_bytes());
-    let _ = stdout.flush();
+    match write_report(&mut stdout, text) {
+        Ok(()) => status,
+        Err(err) => {
+            eprintln!("error: cannot write output: {err}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn write_report(out: &mut impl Write, text: &str) -> io::Result<()> {
+    match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
+        Err(err) if err.kind() != io::ErrorKind::BrokenPipe => Err(err),
+        _ => Ok(()),
+    }
 }
 
 fn to_json(value: &impl serde::Serialize) -> String {
@@ -221,4 +290,45 @@ fn render_human(diagnostics: &[Diagnostic], file_count: usize) -> String {
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Failing(io::ErrorKind);
+
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(self.0.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Accepts everything and fails when flushed, like a buffered file on
+    /// a full disk.
+    struct FailingFlush;
+
+    impl Write for FailingFlush {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::Other.into())
+        }
+    }
+
+    #[test]
+    fn only_a_closed_pipe_is_a_benign_write_error() {
+        assert!(write_report(&mut Vec::new(), "report").is_ok());
+        assert!(write_report(&mut Failing(io::ErrorKind::BrokenPipe), "report").is_ok());
+        let err = write_report(&mut Failing(io::ErrorKind::Other), "report").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert!(write_report(&mut Failing(io::ErrorKind::PermissionDenied), "report").is_err());
+        assert!(write_report(&mut FailingFlush, "report").is_err());
+    }
 }

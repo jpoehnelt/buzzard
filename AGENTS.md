@@ -4,14 +4,17 @@ Humans: see [README.md](README.md). This file lists the repo facts that the skil
 
 ## Layout
 
-The workspace has four crates. Each crate depends only on the crates listed above it.
+The workspace has five crates. Each crate depends only on crates listed above it.
 
 | Crate | Owns |
 | --- | --- |
 | `crates/buzzard-rsrc` | The binary RSRC container parser, block decoders, and `builder::RsrcBuilder` for synthetic test files |
-| `crates/buzzard-lint` | Lint rules, the project XML parser, the dependency graph, SARIF, and the `ViInspector` backend trait |
-| `crates/buzzard-ls` | The language server: engine, file watching, and fuzzy symbol search |
-| `crates/buzzard-cli` | The `buzzard` binary with the `check`, `inspect`, and `lsp` subcommands |
+| `crates/buzzard-lint` | Lint rules, dataflow checks, the project XML parser, the dependency graph, SARIF, diagram rendering, the semantic diff, the state machine checks, and the `ViInspector` backend trait |
+| `crates/buzzard-ls` | The language server: engine, ordered update worker, file watching, and fuzzy symbol search |
+| `crates/buzzard-mcp` | The Model Context Protocol server and its tools |
+| `crates/buzzard-cli` | The `buzzard` binary with the `check`, `inspect`, `diff`, `lsp`, and `mcp` subcommands |
+
+`editors/vscode` is a TypeScript VS Code extension over `buzzard lsp`. It is outside the Cargo workspace and has its own `npm` scripts (`lint`, `compile`, `test`, `package`).
 
 `README.md` holds the durable docs: usage, rules, language server features, design goals, and current limitations. The repo has no design records, ADRs, changelog, or changesets.
 
@@ -50,7 +53,8 @@ Two invariants have tests that enforce them:
 These are the surfaces that users and other tools depend on. Check them when you judge a change's blast radius.
 
 - Rule codes (`BZ000` and up) are defined in `RULES` in `crates/buzzard-lint/src/rules.rs`. Users pass them to `--ignore`, and SARIF output uses them as `ruleId`. Renaming a code breaks user configs and code scanning history.
-- `buzzard check` prints `--format human`, `json`, or `sarif`. `buzzard inspect` prints `--format markdown` or `json`.
+- `buzzard check` prints `--format human`, `json`, or `sarif`. `buzzard inspect` prints `--format markdown`, `json`, `svg`, `dot`, or `mermaid`. `buzzard diff` prints `--format text`, `markdown`, or `json`, and exits 0 when the two files are the same, 1 when they differ, and 2 on an error.
+- `buzzard mcp` serves the tools listed in `README.md` over stdio. Agents depend on the tool names and their argument schemas.
 - `check` exits 0 when it finds no problems and 1 when it finds any, unless `--exit-zero` is set. A file it cannot parse is a `BZ000` problem, not an error. It exits 2 for an unknown `--ignore` code or a path that does not exist. `inspect` exits 2 when it cannot read the file. CI pipelines gate on these statuses.
 - The language server implements the standard methods listed in `README.md`, plus the custom requests `buzzard/inspect` and `buzzard/exportAst` in `crates/buzzard-ls/src/server.rs`. Editor clients depend on their JSON shape.
 - Input formats are binary RSRC files (the extensions in `RSRC_EXTENSIONS` in `crates/buzzard-rsrc/src/lib.rs`) and project XML files (`.lvproj`, `.lvlib`, `.lvclass`), saved by the LabVIEW IDE.
@@ -59,7 +63,7 @@ These are the surfaces that users and other tools depend on. Check them when you
 
 - Run the CLI with `cargo run -p buzzard-cli -- check <path>` or `cargo run -p buzzard-cli -- inspect <file>`. Run the language server over stdio with `cargo run -p buzzard-cli -- lsp`. There are no ports, services, seed data, or credentials, so instances in separate worktrees do not collide.
 - The fixtures under `crates/buzzard-rsrc/tests/fixtures` and `crates/buzzard-lint/tests/fixtures/project` are real inputs to run against.
-- `README.md` claims that a release build checks about 10,800 real VIs in roughly 130 ms on four cores. That corpus is not in the repo. Time `target/release/buzzard check <dir>` after `cargo build --release`. To check that the parser accepts every file in a directory, run `cargo run --release --example corpus -- <dir>`.
+- `README.md` claims that a release build checks 1,300 real files from three open-source projects in about 0.2 s on four cores. That corpus is not in the repo; the README names the three projects. Time `target/release/buzzard check <dir>` after `cargo build --release`. To check that the parser accepts every file in a directory, run `cargo run --release --example corpus -- <dir>`.
 
 ## Commits and pull requests
 

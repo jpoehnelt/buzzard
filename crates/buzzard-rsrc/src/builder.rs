@@ -14,6 +14,9 @@ struct Entry {
     data: Vec<u8>,
 }
 
+/// A link given as raw bytes: `(name, path kind, path components)`.
+pub type ByteLink<'a> = (&'a [u8], PathKind, &'a [&'a [u8]]);
+
 pub struct RsrcBuilder {
     file_type: FourCc,
     entries: Vec<Entry>,
@@ -63,6 +66,26 @@ impl RsrcBuilder {
 
     /// Add an `LIvi` block linking to the given `(name, path)` pairs as subVIs.
     pub fn links(self, links: &[(&str, LvPath)]) -> Self {
+        let encoded: Vec<(&[u8], Vec<u8>)> = links
+            .iter()
+            .map(|(name, path)| (name.as_bytes(), encode_pth0(path)))
+            .collect();
+        self.encoded_links(&encoded)
+    }
+
+    /// Like [`links`](Self::links), with names and path components given as
+    /// raw bytes: `(name, kind, components)`. Old link forms store text in
+    /// the code page of the machine that saved the file, which a `&str`
+    /// cannot express.
+    pub fn links_bytes(self, links: &[ByteLink<'_>]) -> Self {
+        let encoded: Vec<(&[u8], Vec<u8>)> = links
+            .iter()
+            .map(|(name, kind, components)| (*name, encode_pth0_bytes(*kind, components)))
+            .collect();
+        self.encoded_links(&encoded)
+    }
+
+    fn encoded_links(self, links: &[(&[u8], Vec<u8>)]) -> Self {
         let mut data = vec![0, 1];
         data.extend_from_slice(b"LVIN");
         data.extend_from_slice(&(links.len() as u32).to_be_bytes());
@@ -74,11 +97,11 @@ impl RsrcBuilder {
             data.extend_from_slice(b"VIVI");
             data.extend_from_slice(&1u32.to_be_bytes());
             data.push(name.len() as u8);
-            data.extend_from_slice(name.as_bytes());
+            data.extend_from_slice(name);
             if data.len() % 2 != 0 {
                 data.push(0);
             }
-            data.extend(encode_pth0(path));
+            data.extend_from_slice(path);
             data.extend_from_slice(&[0; 4]);
         }
         self.resource(b"LIvi", 0, None, data)
@@ -159,17 +182,23 @@ impl RsrcBuilder {
 
 /// Encode a path in the `PTH0` form.
 pub fn encode_pth0(path: &LvPath) -> Vec<u8> {
-    let kind: u16 = match path.kind {
+    let components: Vec<&[u8]> = path.components.iter().map(|c| c.as_bytes()).collect();
+    encode_pth0_bytes(path.kind, &components)
+}
+
+/// Encode a path in the `PTH0` form from raw component bytes.
+pub fn encode_pth0_bytes(kind: PathKind, components: &[&[u8]]) -> Vec<u8> {
+    let kind: u16 = match kind {
         PathKind::Absolute => 0,
         PathKind::Relative => 1,
         PathKind::NotAPath => 2,
         PathKind::Unc => 3,
     };
     let mut body = kind.to_be_bytes().to_vec();
-    body.extend_from_slice(&(path.components.len() as u16).to_be_bytes());
-    for component in &path.components {
+    body.extend_from_slice(&(components.len() as u16).to_be_bytes());
+    for component in components {
         body.push(component.len() as u8);
-        body.extend_from_slice(component.as_bytes());
+        body.extend_from_slice(component);
     }
     let mut out = b"PTH0".to_vec();
     out.extend_from_slice(&(body.len() as u32).to_be_bytes());
@@ -247,5 +276,22 @@ mod tests {
             .links
             .iter()
             .all(|l| l.link_type == Some(FourCc::new(b"VIVI"))));
+    }
+
+    #[test]
+    fn built_byte_links_keep_their_bytes() {
+        // Shift-JIS bytes are not UTF-8, so the reader shows one character
+        // per byte, which loses nothing.
+        let name: &[u8] = b"\x83\x65\x83\x58\x83\x67.vi";
+        let bytes = RsrcBuilder::default()
+            .save_record(0x2300_8000, &[0, 0x400])
+            .links_bytes(&[(name, PathKind::Relative, &[b"", name])])
+            .build();
+        let meta = ViMetadata::from_bytes(&bytes).unwrap();
+        let expected: String = name.iter().map(|&b| char::from(b)).collect();
+        assert_eq!(meta.links.len(), 1);
+        assert_eq!(meta.links[0].name(), Some(expected.as_str()));
+        assert_eq!(meta.links[0].path.kind, PathKind::Relative);
+        assert_eq!(meta.links[0].path.components, ["", expected.as_str()]);
     }
 }

@@ -4,6 +4,7 @@ members = [
     "crates/buzzard-rsrc",
     "crates/buzzard-lint",
     "crates/buzzard-ls",
+    "crates/buzzard-mcp",
     "crates/buzzard-cli",
 ]
 
@@ -18,11 +19,11 @@ repository = "https://github.com/jpoehnelt/buzzard"
 buzzard-rsrc = { path = "crates/buzzard-rsrc", version = "0.1.0" }
 buzzard-lint = { path = "crates/buzzard-lint", version = "0.1.0" }
 buzzard-ls = { path = "crates/buzzard-ls", version = "0.1.0" }
+buzzard-mcp = { path = "crates/buzzard-mcp", version = "0.1.0" }
 
 # Binary parsing & decompression
 binrw = "0.15"
 flate2 = "1"
-memmap2 = "0.9"
 
 # LSP / async
 tower-lsp = "0.20"
@@ -47,6 +48,9 @@ thiserror = "2"
 
 # Project-level XML files
 roxmltree = "0.21"
+
+# Recovering link names stored in legacy code pages
+encoding_rs = "0.8"
 
 # The conformance suite corrupts real files tens of thousands of times;
 # optimizing the parser and its dependencies keeps `cargo test` quick.

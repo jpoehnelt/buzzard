@@ -6,16 +6,17 @@
 //! the library or class that owns it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use buzzard_rsrc::{LvPath, PathKind};
+use encoding_rs::Encoding;
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::{EdgeFiltered, EdgeRef};
 use petgraph::Direction;
 use serde::Serialize;
 
-use crate::workspace::{normalize, Workspace};
+use crate::workspace::{identity_from, normalize, Workspace};
 
 /// What an edge from `a` to `b` means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -35,63 +36,288 @@ impl EdgeKind {
     }
 }
 
+/// Whether two paths that differ only in letter case name the same file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CaseSensitivity {
+    /// Only an exact match counts (Linux and most other Unix systems).
+    #[default]
+    Sensitive,
+    /// When no exact match exists, a match that differs only in case counts
+    /// (Windows and macOS), provided it is the only one.
+    Insensitive,
+}
+
+impl CaseSensitivity {
+    /// The convention of the operating system this program was built for.
+    pub fn host() -> Self {
+        if cfg!(any(windows, target_os = "macos")) {
+            CaseSensitivity::Insensitive
+        } else {
+            CaseSensitivity::Sensitive
+        }
+    }
+}
+
+/// Code pages a file name may have been saved in. Only `PTH2` paths are
+/// UTF-8; older forms hold the bytes of the saving machine's code page.
+static CODE_PAGES: [&Encoding; 8] = [
+    encoding_rs::WINDOWS_1252,
+    encoding_rs::SHIFT_JIS,
+    encoding_rs::GBK,
+    encoding_rs::BIG5,
+    encoding_rs::EUC_KR,
+    encoding_rs::WINDOWS_1251,
+    encoding_rs::WINDOWS_1250,
+    encoding_rs::MACINTOSH,
+];
+
+fn fold(text: &str) -> String {
+    text.to_lowercase()
+}
+
+/// The single node in `nodes`, if there is exactly one.
+fn only(nodes: Option<&Vec<NodeIndex>>) -> Option<NodeIndex> {
+    match nodes?.as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    }
+}
+
+/// Finds workspace files by path or by file name.
+#[derive(Debug, Default)]
+struct Lookup {
+    /// Directory against which relative paths get their identity.
+    base: Option<PathBuf>,
+    by_path: HashMap<PathBuf, NodeIndex>,
+    by_name: HashMap<String, Vec<NodeIndex>>,
+    /// Case-folded variants of the two maps above, kept only when case
+    /// does not distinguish files.
+    folded: Option<Folded>,
+}
+
+#[derive(Debug, Default)]
+struct Folded {
+    by_path: HashMap<String, Vec<NodeIndex>>,
+    by_name: HashMap<String, Vec<NodeIndex>>,
+}
+
+impl Lookup {
+    fn new(case: CaseSensitivity) -> Self {
+        Self {
+            base: std::env::current_dir().ok(),
+            folded: (case == CaseSensitivity::Insensitive).then(Folded::default),
+            ..Self::default()
+        }
+    }
+
+    fn add(&mut self, path: &Path, node: NodeIndex) {
+        let id = identity_from(self.base.as_deref(), path);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        if let Some(folded) = &mut self.folded {
+            let key = fold(&id.to_string_lossy());
+            folded.by_path.entry(key).or_default().push(node);
+            if let Some(name) = &name {
+                folded.by_name.entry(fold(name)).or_default().push(node);
+            }
+        }
+        if let Some(name) = name {
+            self.by_name.entry(name).or_default().push(node);
+        }
+        self.by_path.insert(id, node);
+    }
+
+    /// The file at `path`, however the path is spelled.
+    fn path(&self, path: &Path) -> Option<NodeIndex> {
+        let id = identity_from(self.base.as_deref(), path);
+        if let Some(&node) = self.by_path.get(&id) {
+            return Some(node);
+        }
+        let folded = self.folded.as_ref()?;
+        only(folded.by_path.get(&fold(&id.to_string_lossy())))
+    }
+
+    /// The file called `name`, when exactly one file has that name.
+    fn name(&self, name: &str) -> Option<NodeIndex> {
+        if let Some(nodes) = self.by_name.get(name) {
+            return only(Some(nodes));
+        }
+        let folded = self.folded.as_ref()?;
+        only(folded.by_name.get(&fold(name)))
+    }
+
+    /// The workspace file a stored link refers to, as seen from the file
+    /// `from` at `from_path`.
+    fn link(
+        &self,
+        from: NodeIndex,
+        from_path: &Path,
+        link: &LvPath,
+        name: Option<&str>,
+    ) -> Option<NodeIndex> {
+        if let Some(found) = self.link_as_stored(from, from_path, link, name) {
+            return Some(found);
+        }
+        // The text may be the bytes of a legacy code page shown one byte
+        // per character. Accept a reading only when every code page that
+        // yields a match agrees on the file.
+        let mut exact = BTreeSet::new();
+        let mut named = BTreeSet::new();
+        for (path, name) in recode(link, name) {
+            exact.extend(resolve(from_path, &path).and_then(|p| self.path(&p)));
+            if can_be_stale(&path) {
+                let name = name.as_deref().or_else(|| path.file_name());
+                named.extend(name.and_then(|n| self.name(n)).filter(|&to| to != from));
+            }
+        }
+        let candidates = if exact.is_empty() { named } else { exact };
+        match candidates.len() {
+            1 => candidates.into_iter().next(),
+            _ => None,
+        }
+    }
+
+    fn link_as_stored(
+        &self,
+        from: NodeIndex,
+        from_path: &Path,
+        link: &LvPath,
+        name: Option<&str>,
+    ) -> Option<NodeIndex> {
+        if let Some(exact) = resolve(from_path, link).and_then(|p| self.path(&p)) {
+            return Some(exact);
+        }
+        // A stale path (moved checkout, absolute path from another machine)
+        // still identifies its target when the file name is unique. A
+        // symbolic path such as `<vilib>/...` is never stale: it names a
+        // file of the installation, not a workspace file that happens to
+        // share its name. Nothing references itself through a stale path.
+        if !can_be_stale(link) {
+            return None;
+        }
+        self.name(name.or_else(|| link.file_name())?)
+            .filter(|&to| to != from)
+    }
+}
+
+/// True for a link whose stored location may simply be out of date: a
+/// relative path, or one pinned to a machine's file system layout.
+fn can_be_stale(link: &LvPath) -> bool {
+    !link.is_empty() && (link.kind == PathKind::Relative || link.is_machine_absolute())
+}
+
+/// The bytes behind text that was decoded one byte per character, if the
+/// text has that shape and is not plain ASCII.
+fn code_page_bytes(text: &str) -> Option<Vec<u8>> {
+    let bytes: Vec<u8> = text
+        .chars()
+        .map(|c| u8::try_from(u32::from(c)).ok())
+        .collect::<Option<_>>()?;
+    (!bytes.is_ascii()).then_some(bytes)
+}
+
+/// `text` read as `encoding`, or `None` if its bytes are not valid in it.
+/// Text that cannot be code page bytes is returned unchanged.
+fn recode_text(text: &str, encoding: &'static Encoding) -> Option<String> {
+    let Some(bytes) = code_page_bytes(text) else {
+        return Some(text.to_owned());
+    };
+    encoding
+        .decode_without_bom_handling_and_without_replacement(&bytes)
+        .map(|decoded| decoded.into_owned())
+}
+
+/// Every distinct reading of a link under the candidate code pages. Empty
+/// unless some part of the link looks like undecoded code page bytes.
+fn recode(link: &LvPath, name: Option<&str>) -> Vec<(LvPath, Option<String>)> {
+    let suspect = |text: &str| code_page_bytes(text).is_some();
+    if !link.components.iter().any(|c| suspect(c)) && !name.is_some_and(suspect) {
+        return Vec::new();
+    }
+    let mut out: Vec<(LvPath, Option<String>)> = Vec::new();
+    for encoding in CODE_PAGES {
+        let components: Option<Vec<String>> = link
+            .components
+            .iter()
+            .map(|c| recode_text(c, encoding))
+            .collect();
+        let name = match name {
+            Some(name) => recode_text(name, encoding).map(Some),
+            None => Some(None),
+        };
+        let (Some(components), Some(name)) = (components, name) else {
+            continue;
+        };
+        let reading = (
+            LvPath {
+                kind: link.kind,
+                components,
+            },
+            name,
+        );
+        if !out.contains(&reading) {
+            out.push(reading);
+        }
+    }
+    out
+}
+
 #[derive(Debug, Default)]
 pub struct DependencyGraph {
+    /// Nodes carry the path as given, which is what callers see.
     graph: DiGraph<PathBuf, EdgeKind>,
-    index: HashMap<PathBuf, NodeIndex>,
+    lookup: Lookup,
 }
 
 impl DependencyGraph {
+    /// Build the graph with the case convention of this operating system.
     pub fn build(workspace: &Workspace) -> Self {
+        Self::build_with(workspace, CaseSensitivity::host())
+    }
+
+    /// Build the graph with an explicit case convention.
+    pub fn build_with(workspace: &Workspace, case: CaseSensitivity) -> Self {
         let mut graph = DiGraph::new();
-        let mut index = HashMap::new();
-        let mut by_name: HashMap<&str, Vec<NodeIndex>> = HashMap::new();
+        let mut lookup = Lookup::new(case);
+        let mut nodes = Vec::with_capacity(workspace.files().len());
         for path in workspace.files().keys() {
             let node = graph.add_node(path.clone());
-            index.insert(path.clone(), node);
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                by_name.entry(name).or_default().push(node);
-            }
+            lookup.add(path, node);
+            nodes.push(node);
         }
 
-        // A stale path (moved checkout, absolute path from another machine,
-        // installation path of a library developed in this workspace) still
-        // identifies its target when the file name is unique.
-        let unique = |name: &str| match by_name.get(name)?.as_slice() {
-            [only] => Some(*only),
-            _ => None,
-        };
-
-        for (path, state) in workspace.files() {
-            let from = index[path];
+        for ((path, state), &from) in workspace.files().iter().zip(&nodes) {
             let mut targets: BTreeSet<(NodeIndex, EdgeKind)> = BTreeSet::new();
             if let Some(project) = state.project() {
                 for member in project.members.iter().filter(|m| !m.dependency) {
-                    let target = member.path.as_ref().and_then(|p| index.get(p));
-                    targets.extend(target.map(|&to| (to, EdgeKind::Contains)));
+                    let target = member.path.as_ref().and_then(|p| lookup.path(p));
+                    targets.extend(target.map(|to| (to, EdgeKind::Contains)));
                 }
                 if let Some(parent) = &project.parent_class {
-                    let exact = parent.path.as_ref().and_then(|p| index.get(p).copied());
+                    // Unlike a call to an installed VI, a parent class stored
+                    // by its installed location is still looked up by name:
+                    // class hierarchies are developed in one workspace and
+                    // used from another, and class names are distinctive.
                     // No class is its own parent, whatever its name suggests.
-                    let target = exact.or_else(|| unique(&parent.name).filter(|&to| to != from));
+                    let target = lookup
+                        .link(from, path, &parent.link, Some(&parent.name))
+                        .or_else(|| lookup.name(&parent.name).filter(|&to| to != from));
                     targets.extend(target.map(|to| (to, EdgeKind::Inherits)));
                 }
             }
             let links = state.metadata().map_or(&[][..], |meta| &meta.links);
             for link in links {
-                let exact = resolve(path, &link.path).and_then(|p| index.get(&p).copied());
-                let target = exact.or_else(|| unique(link.name()?));
+                let target = lookup.link(from, path, &link.path, link.name());
                 targets.extend(target.map(|to| (to, EdgeKind::Uses)));
             }
             for (to, kind) in targets {
                 graph.add_edge(from, to, kind);
             }
         }
-        Self { graph, index }
+        Self { graph, lookup }
     }
 
     fn neighbors(&self, path: &Path, direction: Direction, kind: EdgeKind) -> Vec<&Path> {
-        let Some(&node) = self.index.get(&normalize(path)) else {
+        let Some(node) = self.lookup.path(path) else {
             return Vec::new();
         };
         let mut out: Vec<&Path> = self
@@ -257,13 +483,19 @@ pub fn resolve(from: &Path, link: &LvPath) -> Option<PathBuf> {
     let mut out = match link.kind {
         // Relative links are relative to the referencing file itself, so
         // the first empty ("parent") component steps to its directory.
-        PathKind::Relative => from.to_path_buf(),
+        PathKind::Relative => normalize(from),
         PathKind::Absolute => PathBuf::new(),
         PathKind::Unc | PathKind::NotAPath => return None,
     };
     for (i, component) in link.components.iter().enumerate() {
         if component.is_empty() {
-            if !out.pop() {
+            // Only a named component can be stepped out of. `pop` would
+            // also remove a trailing `..`, which cancels a step up instead
+            // of adding one, and it would remove the root.
+            let named = matches!(out.components().next_back(), Some(Component::Normal(_)));
+            if named {
+                out.pop();
+            } else if !out.has_root() {
                 out.push("..");
             }
         } else if i == 0 && link.kind == PathKind::Absolute {
@@ -303,6 +535,113 @@ mod tests {
         let from = Path::new("main.vi");
         assert_eq!(resolve(from, &LvPath::absolute(&["<vilib>", "a.vi"])), None);
         assert_eq!(resolve(from, &LvPath::absolute(&[])), None);
+    }
+
+    #[test]
+    fn parent_steps_never_cancel_the_parent_steps_of_the_referencing_path() {
+        // ../main.vi linking to ../../lib/x.vi is three levels up from the
+        // starting directory, not `lib/x.vi` inside it.
+        let up = LvPath {
+            kind: PathKind::Relative,
+            components: vec!["".into(), "".into(), "lib".into(), "x.vi".into()],
+        };
+        assert_eq!(
+            resolve(Path::new("../main.vi"), &up).unwrap(),
+            Path::new("../../lib/x.vi")
+        );
+        assert_eq!(
+            resolve(Path::new("../../main.vi"), &up).unwrap(),
+            Path::new("../../../lib/x.vi")
+        );
+        assert_eq!(
+            resolve(Path::new("main.vi"), &up).unwrap(),
+            Path::new("../lib/x.vi")
+        );
+        // A referencing path that is not normalized behaves like its
+        // normalized form.
+        assert_eq!(
+            resolve(Path::new("a/../../main.vi"), &up).unwrap(),
+            Path::new("../../lib/x.vi")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parent_steps_stop_at_the_root() {
+        let up = LvPath {
+            kind: PathKind::Relative,
+            components: vec!["".into(), "".into(), "".into(), "x.vi".into()],
+        };
+        assert_eq!(
+            resolve(Path::new("/a/main.vi"), &up).unwrap(),
+            Path::new("/x.vi")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_windows_drive_letter() {
+        let link = LvPath::absolute(&["C", "Users", "me", "a.vi"]);
+        assert_eq!(
+            resolve(Path::new("main.vi"), &link).unwrap(),
+            Path::new(r"C:\Users\me\a.vi")
+        );
+        // The result is a full path: it has a drive and a root.
+        assert!(resolve(Path::new("main.vi"), &link).unwrap().is_absolute());
+        // A lower-case drive letter is kept as stored.
+        let lower = LvPath::absolute(&["d", "a.vi"]);
+        assert_eq!(
+            resolve(Path::new(r"C:\proj\main.vi"), &lower).unwrap(),
+            Path::new(r"d:\a.vi")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_windows_relative_and_parent_steps() {
+        let from = Path::new(r"C:\proj\sub\main.vi");
+        assert_eq!(
+            resolve(from, &LvPath::sibling("a.vi")).unwrap(),
+            Path::new(r"C:\proj\sub\a.vi")
+        );
+        let up = LvPath {
+            kind: PathKind::Relative,
+            components: vec!["".into(), "".into(), "lib".into(), "b.vi".into()],
+        };
+        assert_eq!(resolve(from, &up).unwrap(), Path::new(r"C:\proj\lib\b.vi"));
+        // Stepping up never leaves the drive.
+        let far = LvPath {
+            kind: PathKind::Relative,
+            components: vec!["".into(); 6],
+        };
+        assert_eq!(resolve(from, &far).unwrap(), Path::new(r"C:\"));
+    }
+
+    #[test]
+    fn reads_code_page_bytes_back() {
+        // "テスト.vi" in Shift-JIS, one byte per character.
+        let stored: String = [0x83u8, 0x65, 0x83, 0x58, 0x83, 0x67]
+            .iter()
+            .map(|&b| char::from(b))
+            .chain(".vi".chars())
+            .collect();
+        assert_eq!(
+            recode_text(&stored, encoding_rs::SHIFT_JIS).as_deref(),
+            Some("テスト.vi")
+        );
+        // Plain ASCII and text beyond U+00FF are not code page bytes.
+        assert_eq!(code_page_bytes("plain.vi"), None);
+        assert_eq!(code_page_bytes("テスト.vi"), None);
+        assert!(recode(&LvPath::sibling("plain.vi"), Some("plain.vi")).is_empty());
+        let readings = recode(&LvPath::sibling(&stored), Some(&stored));
+        assert!(readings
+            .iter()
+            .any(|(path, name)| path.file_name() == Some("テスト.vi")
+                && name.as_deref() == Some("テスト.vi")));
+        // Readings are distinct.
+        for (i, reading) in readings.iter().enumerate() {
+            assert!(!readings[..i].contains(reading));
+        }
     }
 
     #[cfg(unix)]
