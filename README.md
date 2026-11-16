@@ -173,6 +173,7 @@ Main.vi
     states (5): Initialize, Wait for Event, User State 1, User State 2, Exit
     initial state: Initialize
     default state: none
+    states are the items of the type definition State.ctl as saved in this file; the type definition itself was not read
     model: exact (every next state and stop condition is a constant on the diagram)
     transitions:
       Initialize -> Wait for Event; never stops the loop
@@ -180,13 +181,13 @@ Main.vi
       User State 1 -> Initialize; never stops the loop
       User State 2 -> Initialize; never stops the loop
       Exit -> Exit; stops the loop
-    PROVEN [BZ201] state `User State 1` can never be reached
+    PROVEN [BZ201] state `User State 1` can never be reached (going by the items of the type definition `State.ctl` as saved in this file)
       why: no chain of next-state values the diagram can write leads from the initial state to this one, and every value the analysis could not follow was assumed to lead anywhere
-    PROVEN [BZ201] state `User State 2` can never be reached
+    PROVEN [BZ201] state `User State 2` can never be reached (going by the items of the type definition `State.ctl` as saved in this file)
       why: ...
 
 Checked 1 file: 1 with a state machine (1 state machine, 0 string/queue machines), 0 without.
-2 findings: 2 proven, 0 heuristic.
+2 findings: 2 proven, 0 structural, 0 heuristic.
 ```
 
 A state machine here is the classic pattern: a while loop, a shift register,
@@ -202,10 +203,15 @@ default state, and whether the model is exact. `--format json` has the same
 data and `--format dot` draws the transition graphs: a double border for a
 state that stops the loop, a dashed one for a state proven unreachable, and
 a dashed edge to `?` where the next state could not be followed. Files
-without a state machine are counted, not listed. The exit status is 0 when
-there are no findings, 1 when there are, and 2 for an error such as a path
-that does not exist. A file that cannot be parsed is listed and does not
-change the status.
+without a state machine are counted, not listed. In the text report a state
+name that holds a comma (a case for several values, `A, B`) is put in
+backticks where names are listed. A state whose next state could not be
+followed may go to any state; the list of transitions (`transitions` in the
+JSON) holds the known ones only. The exit status is 0 when there are no
+findings, 1 when there are, and 2 for an error such as a path that does not
+exist. A file that cannot be parsed is listed and does not change the
+status, and neither does a file whose block diagram did not decode
+completely (see below).
 
 The same findings are the lint rules `BZ201`, `BZ202` and `BZ203`, so they
 also appear in `buzzard check`, in SARIF, in the language server and in the
@@ -225,18 +231,55 @@ and what the model cannot do, the program cannot do either:
 
 - **`BZ201`, a state that can never be reached** is proven: no sequence of
   next-state values the diagram can write leads to it.
-- **`BZ202`, a state from which the loop can never stop** is proven: no
-  state that can follow it can make the loop's condition terminal end the
-  loop. When that is true of every state the loop never stops at all, which
-  is reported once, as information, because a loop that runs until the
-  program is aborted is a legitimate design.
-- **`BZ203`, a next state that no case handles** is a fact about the
-  diagram: a constant with that value is wired to the register and no case
-  is labelled with it (even ignoring letter case), so the default case
-  runs. Whether the path that writes it ever executes is not determined.
+- **`BZ202`, a state from which the loop's condition terminal can never
+  stop the loop** is proven: no state that can follow it can make the
+  condition terminal end the loop. When that is true of every state the
+  terminal never stops the loop at all, which is reported once, as
+  information, because a loop that runs until the program is aborted is a
+  legitimate design. This says nothing about other ways out, so it is
+  labelled `PROVEN` only when the block diagram holds nothing that could
+  end the program or abort the VI some other way: no subVI call, call by
+  reference, invoke node, property node, call into a library or XNode,
+  and no node of a class that is not known to be harmless, anywhere on the
+  diagram. When there is one, the finding names the nodes and is labelled
+  `STRUCTURAL`. This is the conservative choice: such a node counts
+  wherever it sits, also outside the loop, because it may run in the same
+  iteration or in parallel.
 
-Each finding is labelled `PROVEN` or `HEURISTIC` and carries one sentence
-saying why it holds.
+Each finding is labelled `PROVEN`, `STRUCTURAL` or `HEURISTIC` and carries
+one sentence saying why it holds:
+
+- `PROVEN` holds for every execution of the VI as saved in the file.
+- `STRUCTURAL` is a fact about what is wired on the diagram. It is not a
+  statement about what runs. Besides the `BZ202` case above this is
+  **`BZ203`, a constant that no case handles and that can reach the state
+  register**: no case is labelled with the value (even ignoring letter
+  case), so the default case would run for it. The constant may sit on a
+  path that never executes, such as the disabled frame of a disable
+  structure. It is reported once per state machine and value, and not for
+  a value that only states which always stop the loop can write.
+- `HEURISTIC` is a match on names and can be wrong in both directions.
+
+A proof is about the file as it was saved:
+
+- **Type definitions.** When the selector's enumeration is an instance of a
+  type definition, the states are the items of the copy the VI stored when
+  it was saved. `buzzard` does not open the `.ctl` file and does not compare
+  the two, so if the type definition changed afterwards and the VI was not
+  saved again, the proof is about the old item list. Every `BZ201` and
+  `BZ202` finding about such a machine names the type definition and says
+  "as saved in this file".
+- **A complete decode.** The decoder skips what it cannot resolve, and a
+  wire it skipped would look like a tunnel that was left unwired. It
+  records every such loss: a signal, node, terminal or frame that does not
+  resolve or is listed twice, a wire end that is no terminal of its diagram,
+  two wires into one terminal, an object defined twice, an object that no
+  list names, and a list that does not hold as many elements as it states.
+  A block diagram with any loss is listed as not decoded completely and is
+  not searched for classic state machines at all. None of the 1,773 real
+  files it was checked on has a loss. A selector table is used only when it
+  is whole: every entry has its five fields exactly once, and every case
+  that is not the default has a value.
 
 ### What is not proven
 
@@ -257,11 +300,13 @@ saying why it holds.
   miss a misspelled state, and it can be wrong about a name that never
   reaches the queue.
 - **Termination in general.** "Stop" means that the loop's own condition
-  terminal ends the loop. A diagram that calls the built-in Stop or Quit
-  function gets no `BZ202` at all; an abort from inside a subVI, by an
-  error dialog or by the user is outside the model. That a state finishes
-  its own work (an event structure that waits forever, an inner loop) is
-  not checked.
+  terminal ends the loop, and `BZ202` claims nothing else. A diagram that
+  calls the built-in Stop or Quit function gets no `BZ202` at all, and one
+  with a subVI call or another node that could end the program gets it as
+  `STRUCTURAL` only. What such a node really does is not looked into. An
+  error dialog or an abort by the user is outside the model. That a state
+  finishes its own work (an event structure that waits forever, an inner
+  loop) is not checked.
 - **The reading of the file.** The proofs rest on how the binary file is
   decoded: shift registers, case selector tables, tunnels, "use default if
   unwired" and the stop terminal's polarity. Each was checked against some
@@ -269,14 +314,31 @@ saying why it holds.
   nine real state machine files, but none of it against a running editor.
 
 The extraction gives up rather than guess. It does not model: a state held
-in a cluster, a feedback node or a stacked shift register; for loops and
-timed loops; selectors that are Booleans or error clusters; a selector fed
-by anything but the register; 64-bit selectors; strings that are not plain
-ASCII; an uninitialised register's first state (it keeps its value between
-calls); and which case of an event structure handles which event (all
-cases are assumed possible, and a wired timeout is assumed able to run
-none). An enumeration's item names are the copy stored in the file, which
-is stale if the type definition changed and the file was not saved again.
+in a cluster or a feedback node; for loops and timed loops; selectors that
+are Booleans or error clusters; a selector fed by anything but the
+register; strings that are not plain ASCII; an uninitialised register's
+first state (it keeps its value between calls); a case structure with more
+than 1,024 cases; and which case of an event structure handles which event
+(all cases are assumed possible, and a wired timeout is assumed able to run
+none).
+
+- **Selector types.** Next states are resolved only for the selector types
+  whose table encoding was seen in real files: strings; enumerations of 8,
+  16 and 32 bits; `I32`; and `U8` and `I16` as long as every number in the
+  table is between 0 and the type's largest value. For `I8`, `U16`, `U32`,
+  the 64-bit types, and a `U8` or `I16` table with a number outside that
+  range, every next state is unknown, because how a narrow or unsigned
+  value is widened into the table was never observed for them.
+- **Stacked shift registers are unverified.** None of the 634 loops in the
+  real files has one, so how a file stores one is known from third-party
+  notes only. A loop gives no state machine unless its registers pair one
+  to one: one left terminal per register, and as many left and right
+  register terminals on the loop as it has registers.
+- **Unwired tunnels of an enumeration** are taken to give the first item,
+  the default of the data type, as the product documentation says. This
+  was not checked in an editor for a type definition whose control has
+  another default value.
+
 The module documentation of `crates/buzzard-lint/src/verify` lists every
 assumption.
 
@@ -294,14 +356,15 @@ assumption.
 | `BZ101` | warning or info | An error output on the block diagram is not wired |
 | `BZ102` | warning | A reference is created and never reaches anything that could close it |
 | `BZ201` | warning | A state of a state machine can never be reached (proven) |
-| `BZ202` | warning or info | A state machine has a state from which its loop can never stop, or can never stop at all (proven) |
-| `BZ203` | warning | A state machine writes a next state that no case handles, so the default case runs |
+| `BZ202` | warning or info | A state machine has a state from which the loop's condition terminal can never stop the loop, or the terminal can never stop it at all (proven, or structural when a subVI call or a similar node could end the program some other way) |
+| `BZ203` | warning | A constant that no case handles can reach the state register of a state machine, so the default case would run for it (structural; heuristic for a string/queue machine) |
 
 `BZ201` to `BZ203` come from the state machine verification; see
-[Verification](#verification) for what they do and do not prove. `BZ202` is
-a warning for a trap state and informational when the whole loop never
-stops. `BZ203` is a heuristic, and says so, when it is about a string/queue
-state machine.
+[Verification](#verification) for what they do and do not prove. Each
+message ends in `(proven)`, `(structural, not proven)` or `(heuristic, not
+proven)`. `BZ202` is a warning for a trap state and informational when the
+condition terminal never stops the loop at all. `BZ203` is structural for a
+classic state machine and a heuristic for a string/queue state machine.
 
 `BZ101` is a warning when the file has automatic error handling off, because
 the error is then silently discarded, and informational when it is on. Error
@@ -387,7 +450,7 @@ Or commit a `.mcp.json` at the root of the project to share it with a team:
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `buzzard_check` | `paths[]`, `ignore?[]`, `limit?`, `refresh?` | Diagnostics (code, severity, path, message) and a summary |
-| `buzzard_verify` | `paths[]`, `format?` (`text`, `json`, `dot`) | The state machines under `paths`: states, transitions, initial state, and findings labelled `PROVEN` or `HEURISTIC` |
+| `buzzard_verify` | `paths[]`, `format?` (`text`, `json`, `dot`) | The state machines under `paths`: states, transitions, initial state, and findings labelled `PROVEN`, `STRUCTURAL` or `HEURISTIC` |
 | `buzzard_inspect` | `path` | Metadata and dependency list of one file, as Markdown and JSON |
 | `buzzard_diagram` | `path`, `format?` (`markdown`, `json`, `mermaid`, `dot`, `svg`) | The block diagram |
 | `buzzard_callers` | `path`, `root`, `refresh?` | Files under `root` that use the file |
@@ -464,8 +527,11 @@ established about the format.
 real loops that are not state machines; its README records their sources
 and licences. The seven classic enumeration state machines the extraction
 was developed against have no licence and are not redistributed: the tests
-rebuild their shapes as diagrams, and an ignored test checks the real files
-when `BUZZARD_FSM_SAMPLES` points at clones of their repositories.
+rebuild their shapes as diagrams, and ignored tests check the real files
+when `BUZZARD_FSM_SAMPLES` points at clones of their repositories. One test
+changes single bytes of the inflated block diagram heap of every fixture
+and checks that a damaged file never gains a proven finding, and that
+nothing is gone from a decoded diagram without a recorded loss.
 
 ### Dependency graph
 
