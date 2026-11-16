@@ -26,3 +26,8 @@ pub fn run_stdio() -> std::io::Result<()> {
     let stdout = std::io::stdout().lock();
     Server::new(base).serve(stdin, stdout)
 }
+
+/// Compiles the examples of the crate's `README.md` as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

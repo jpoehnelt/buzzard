@@ -15,7 +15,6 @@ edition = "2021"
 rust-version = "1.91"
 license = "Apache-2.0"
 repository = "https://github.com/jpoehnelt/buzzard"
-readme = "README.md"
 
 [workspace.dependencies]
 buzzard-rsrc = { path = "crates/buzzard-rsrc", version = "0.1.0" }

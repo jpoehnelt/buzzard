@@ -1,5 +1,11 @@
 //! Writer for synthetic RSRC files, used to build test inputs without the
 //! editor. It produces the same layout the parser reads.
+//!
+//! This is test support, and it is public on purpose: the other crates of
+//! buzzard build their test files with it, and a program built on this
+//! crate can do the same. It writes the resources buzzard's tests need
+//! (any raw resource, a save record, link lists); it is not a general
+//! writer and cannot produce a file the editor would open.
 
 use crate::blocks::path::{LvPath, PathKind};
 use crate::fourcc::FourCc;

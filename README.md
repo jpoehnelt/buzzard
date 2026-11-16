@@ -14,8 +14,18 @@ describes a TDMS file and exports its channels to Parquet or CSV. See
 
 ## Install
 
+From a checkout of this repository:
+
 ```bash
 cargo install --path crates/buzzard-cli
+```
+
+The crates are not on crates.io yet. After the first release, this will
+install the same `buzzard` binary (the crate is `buzzard-cli` because the
+name `buzzard` is taken):
+
+```bash
+cargo install buzzard-cli
 ```
 
 ## Usage
@@ -717,6 +727,12 @@ and its tests cut and damage files at every byte.
 | `crates/buzzard-tdms` | Reader for TDMS measurement files, Parquet and CSV export |
 | `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `deps`, `diff`, `verify`, `tdms`, `lsp`, `mcp`) |
 
+Each crate has its own `README.md`, `LICENSE` and `NOTICE`, which is what its
+package on crates.io will carry. `buzzard-rsrc` and `buzzard-tdms` are
+libraries for other programs. `buzzard-lint`, `buzzard-ls` and `buzzard-mcp`
+are internal parts of the tool, and their API may change in any release.
+[RELEASING.md](RELEASING.md) describes how the crates are published.
+
 ## Development
 
 ```bash
@@ -745,6 +761,13 @@ RUSTDOCFLAGS="-D warnings" cargo +1.100.0 doc --workspace --no-deps --locked
 ```bash
 cargo deny check
 ```
+
+```bash
+cargo package --workspace --locked
+```
+
+The last one builds every crate from the files its package will hold, and
+publishes nothing. It needs Cargo 1.90 or later.
 
 The lint policy lives in `[workspace.lints]` in the root `Cargo.toml`, and
 every crate inherits it. It forbids `unsafe`, requires docs on public items,
@@ -911,7 +934,9 @@ JKISoftware/JKI-State-Machine-Objects,
 (BSD 3-Clause) and
 [LabVIEW-Open-Source/LV-MQTT-Broker](https://github.com/LabVIEW-Open-Source/LV-MQTT-Broker)
 (Zero-Clause BSD), with their licence texts next to them. The names of heap
-tags and object classes are generated from pylabview.
+tags and object classes (`crates/buzzard-rsrc/src/blocks/heap/tables.rs`)
+are generated from pylabview; `NOTICE` has its copyright lines and the MIT
+licence text.
 
 The table of built-in function names
 (`crates/buzzard-rsrc/src/blocks/heap/primitives.rs`) is generated from

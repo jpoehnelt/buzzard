@@ -4,6 +4,7 @@ use thiserror::Error;
 
 /// Errors produced while parsing an RSRC container or one of its blocks.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RsrcError {
     /// The input is shorter than the 32-byte header; holds its length.
     #[error("file is too small to be an RSRC container ({0} bytes)")]

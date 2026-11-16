@@ -6,9 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords = ["lint", "static-analysis", "dependency-graph", "sarif"]
 categories = ["development-tools"]
+# The package is the source. The tests stay in the repository: they need
+# fixtures and sibling crates that a package does not carry.
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 
 [dependencies]
 buzzard-rsrc.workspace = true

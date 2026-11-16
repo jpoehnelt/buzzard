@@ -6,18 +6,36 @@ CSV. It is built for test-stand logs: hundreds of channels at about 1 kHz,
 a few at 100 kHz and more, files of several gigabytes made of many small
 segments.
 
-```rust
+```rust,no_run
 use buzzard_tdms::TdmsFile;
 
-let file = TdmsFile::open("hotfire-0042.tdms")?;
-for channel in file.channels() {
-    println!("{} {} x {}", channel.path(), channel.len(), channel.dtype());
+fn main() -> Result<(), buzzard_tdms::Error> {
+    let file = TdmsFile::open("hotfire-0042.tdms")?;
+    for channel in file.channels() {
+        println!("{} {} x {}", channel.path(), channel.len(), channel.dtype());
+    }
+    let pressure = file.channel("Chamber", "PT-101").expect("the channel exists");
+    let last_second: Vec<f64> = pressure.read(pressure.len() - 1000..pressure.len())?;
+    println!("{} values", last_second.len());
+    Ok(())
 }
-let pressure = file.channel("Chamber", "PT-101").expect("the channel exists");
-let last_second: Vec<f64> = pressure.read(pressure.len() - 1000..pressure.len())?;
 ```
 
-From the command line, through the `buzzard` binary:
+The crate is at 0.x: a minor release (0.1 to 0.2) may change the API, a
+patch release does not. `build::FileBuilder` writes synthetic files for
+tests and benchmarks; it is public so that programs built on this crate can
+test against it, and it is not a general TDMS writer.
+
+The published package holds the source, the benchmark example and this
+file. The other paths this document names (`tests/...`, `tools/...`,
+`deny.toml`) and the test commands are those of the
+[repository](https://github.com/jpoehnelt/buzzard), where `tests/` is
+`crates/buzzard-tdms/tests/`.
+
+From the command line, through the `buzzard` binary, which is built from
+the `buzzard-cli` crate of the same
+[repository](https://github.com/jpoehnelt/buzzard) (its README says how to
+install it):
 
 ```sh
 buzzard tdms info hotfire-0042.tdms                 # or --format json
@@ -334,7 +352,8 @@ be.
 
 ## Licence boundary
 
-This crate is Apache-2.0. npTDMS is LGPL-3.0, and none of it is here: no code,
+This crate is Apache-2.0 (see `LICENSE` and `NOTICE`). npTDMS is LGPL-3.0, and
+none of it is here: no code,
 no test, no fixture was copied or ported. The reader was written from the
 vendor's format description, from research notes that state format facts
 in prose (some of them first established by reading npTDMS, and recorded

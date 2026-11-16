@@ -24,3 +24,8 @@ pub use inspector::{Inspection, RsrcInspector, ViInspector};
 pub use project::{Member, ParentClass, ProjectFile, ProjectKind};
 pub use rules::{lint, LintConfig, Rule, RULES};
 pub use workspace::{Analysis, FileState, Workspace};
+
+/// Compiles the examples of the crate's `README.md` as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

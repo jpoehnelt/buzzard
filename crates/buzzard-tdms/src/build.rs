@@ -1,7 +1,10 @@
 //! A writer of synthetic TDMS files for tests and benchmarks, with a model
 //! of what each file holds.
 //!
-//! This is test support, not a general writer. It is written from the
+//! This is test support, not a general writer. It is public on purpose:
+//! the crate's tests, its benchmark and the tests of the `buzzard` binary
+//! build their files with it, and a program built on this crate can test
+//! against it the same way. It is written from the
 //! format description alone and shares no code with the reader: it has its
 //! own encoder and its own account of which channels a segment carries, so
 //! that the contents it [expects](Built::channels) are an independent

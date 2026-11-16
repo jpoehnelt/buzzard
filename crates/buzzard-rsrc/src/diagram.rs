@@ -121,6 +121,7 @@ pub enum Direction {
 /// What a tunnel does to the value that crosses it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TunnelMode {
     /// The value passes unchanged.
     Plain,
@@ -156,6 +157,7 @@ pub struct Tunnel {
 /// What a case selector is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SelectorKind {
     /// A Boolean: the frames are False and True.
     Boolean,
@@ -449,6 +451,7 @@ pub struct Wire {
 /// decoder was checked on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Loss {
     /// An element of the node list that names no object or an object
     /// without an id, or a node list that does not hold as many elements

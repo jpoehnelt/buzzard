@@ -48,6 +48,7 @@ use crate::types::{Column, DataType};
 
 /// How the column data is compressed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Compression {
     /// Snappy: fast, read by every Parquet reader. The default.
     #[default]
