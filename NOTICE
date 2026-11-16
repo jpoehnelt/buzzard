@@ -2,7 +2,8 @@ buzzard
 Copyright (c) 2026 buzzard contributors
 
 buzzard is licensed under the MIT licence (see LICENSE). One generated file
-contains data taken from a third-party project under a different licence.
+contains data taken from a third-party project under a different licence,
+and one test fixture is a published measurement file under another.
 This file records what was taken and on what terms.
 
 buzzard is not affiliated with, authorized by, endorsed by, or sponsored by
@@ -74,3 +75,25 @@ about LVKit, and the paragraph above qualifies the fourth and fifth):
     (https://github.com/mefistotelis/pylabview).
 
     See PROVENANCE.md for detail.
+
+
+A TDMS measurement file, from Zenodo
+====================================
+
+File:     crates/buzzard-tdms/tests/fixtures/zenodo-7758683/waveforms-point21.tdms
+Source:   "Waveforms Point21.tdms" in Saullo G. P. Castro, "Impact hammer
+          test of an Aluminium 6082 T6 plate, 260 x 246 x 1.5 mm, free
+          boundary conditions", Zenodo, 2022,
+          https://doi.org/10.5281/zenodo.7758683
+Licence:  Creative Commons Attribution 4.0 International,
+          https://creativecommons.org/licenses/by/4.0/legalcode
+
+What was taken: that one file of the data set, unchanged apart from its
+name. It is test data only: it is read by the tests of buzzard-tdms and is
+not part of the buzzard binary. Its checksums are in
+crates/buzzard-tdms/tests/fixtures/README.md.
+
+The tests of buzzard-tdms can also run npTDMS
+(https://github.com/adamreeve/npTDMS, LGPL-3.0) as a separate program to
+compare results. npTDMS is not included in, linked into or distributed
+with buzzard; see crates/buzzard-tdms/tests/oracle/README.md.

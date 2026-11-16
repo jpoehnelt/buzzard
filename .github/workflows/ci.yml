@@ -160,12 +160,43 @@ jobs:
       - run: npm run package
         working-directory: editors/vscode
 
+  # The TDMS reader against npTDMS (crates/buzzard-tdms/tests/oracle). npTDMS
+  # is installed from PyPI and run as a separate program; it is LGPL and is
+  # never linked, vendored or shipped. pytest is there because the test
+  # scenarios that the npTDMS wheel ships import it.
+  tdms-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The runner's own Python; a virtual environment keeps pip off the
+      # system packages. The npTDMS version is pinned so that a release
+      # cannot change what CI compares against; move it deliberately.
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/oracle"
+          "$RUNNER_TEMP/oracle/bin/pip" install npTDMS==1.14.0 pytest
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked -p buzzard-tdms --test oracle --no-run
+      - run: |
+          BUZZARD_TDMS_ORACLE="$RUNNER_TEMP/oracle/bin/python" \
+            cargo test --locked -p buzzard-tdms --test oracle -- --nocapture
+        env:
+          # Fail, do not skip, when the shipped scenarios cannot be run.
+          BUZZARD_TDMS_ORACLE_STRICT: 1
+
   # The one check to require in branch protection. It fails if any job above
   # failed or was cancelled, and the list of jobs can change without touching
   # the repository settings.
   ci:
     if: always()
-    needs: [fmt, lint, test, msrv, deny, vscode]
+    needs: [fmt, lint, test, msrv, deny, vscode, tdms-oracle]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -8,6 +8,10 @@ projects, written in Rust.
 LabVIEW IDE or runtime, so it runs on Linux, macOS and Windows CI runners
 alike.
 
+It also reads the measurement files those projects produce: `buzzard tdms`
+describes a TDMS file and exports its channels to Parquet or CSV. See
+[TDMS measurement files](#tdms-measurement-files).
+
 ## Install
 
 ```bash
@@ -479,6 +483,48 @@ like `buzzard_inspect` and `buzzard_diagram`, reads its files on every call. A f
 call (missing or unreadable file, bad argument) is returned as a result with
 `isError` set, so the agent can read the reason.
 
+## TDMS measurement files
+
+TDMS is the format data-acquisition software logs test data in. `buzzard
+tdms` reads such files with the `buzzard-tdms` crate, a read-only reader
+made for test-stand logs of several gigabytes.
+
+```bash
+buzzard tdms info run-0042.tdms
+buzzard tdms info run-0042.tdms --format json
+```
+
+`info` prints the groups, the channels with their types, lengths, units
+and sample intervals, every property, the number of segments, and
+anything wrong with the file, such as a last segment that a crashed
+writer left unfinished. It reads only the file's metadata, so it takes
+milliseconds on a file of any size.
+
+```bash
+buzzard tdms export run-0042.tdms --out slow.parquet --channels Chamber
+buzzard tdms export run-0042.tdms --out pt101.csv --format csv --channels Chamber/PT-101
+```
+
+`export` writes one table: a column per channel named `group/channel`, a
+leading `time_s` column when the channels share their waveform timing,
+and, for Parquet, every property of the file, the groups and the channels
+as key-value metadata. `--channels` takes `group/channel` names and group
+names; without it every channel is exported. A table suits channels of
+one sample rate, so export the slow and the fast channels separately.
+Parquet is the default format, compressed with Snappy (`--compression
+none` turns that off); `--threads` sets the number of worker threads;
+`--raw` exports stored values without applying linear scaling.
+
+Both exit with status 0, or 2 when the file cannot be read or a named
+channel does not exist. A file that is damaged at its end is read as far
+as it goes, reported by `info`, and is not an error.
+
+The crate's [README](crates/buzzard-tdms/README.md) says exactly which
+parts of the format are supported, how truncated files are treated, how
+fast the reader is, and how it is tested against generated files, against
+[npTDMS](https://github.com/adamreeve/npTDMS) as an oracle, and against
+damaged input.
+
 ## Editors
 
 [`editors/vscode`](editors/vscode) is a thin VS Code extension over
@@ -503,6 +549,10 @@ Any other editor with a Language Server Protocol client can run
 - **Safe on hostile input.** Every read is bounds-checked. The test suite
   truncates and corrupts real files and requires an error, never a panic.
 
+The TDMS reader follows the same goals. It opens a 400 MB log in under a
+millisecond, reads it at 2 to 5 GB/s on four cores, has no `unsafe` code,
+and its tests cut and damage files at every byte.
+
 ## Workspace
 
 | Crate | Purpose |
@@ -511,7 +561,8 @@ Any other editor with a Language Server Protocol client can run
 | `crates/buzzard-lint` | Lint rules, state machine verification, project file parser, dependency graph, SARIF, the `ViInspector` backend trait |
 | `crates/buzzard-ls` | Language Server Protocol implementation |
 | `crates/buzzard-mcp` | Model Context Protocol server |
-| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `diff`, `verify`, `lsp`, `mcp`) |
+| `crates/buzzard-tdms` | Reader for TDMS measurement files, Parquet and CSV export |
+| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `diff`, `verify`, `tdms`, `lsp`, `mcp`) |
 
 ## Development
 
@@ -585,6 +636,20 @@ when `BUZZARD_FSM_SAMPLES` points at clones of their repositories. One test
 changes single bytes of the inflated block diagram heap of every fixture
 and checks that a damaged file never gains a proven finding, and that
 nothing is gone from a decoded diagram without a recorded loss.
+
+`crates/buzzard-tdms/tests/fixtures` holds one real TDMS recording from a
+public data set; its README records the source, the licence and the
+checksums. Every other TDMS test file is written at test time by the
+crate's own generator. To compare the reader with npTDMS, install npTDMS
+and pytest into a virtual environment and name its interpreter:
+
+```bash
+BUZZARD_TDMS_ORACLE=/path/to/venv/bin/python cargo test -p buzzard-tdms --test oracle -- --nocapture
+```
+
+Without the variable that test passes without comparing anything; the
+`tdms-oracle` CI job always runs it. `tools/tdms-bench.sh` measures the
+reader's speed on generated files.
 
 ### Dependency graph
 
@@ -692,6 +757,16 @@ development the parser, diagram decoder and renderers are also run over
 about 1,300 files from ni/grpc-labview, JKISoftware/JKI-State-Machine and
 LabVIEW-Open-Source/LV-MQTT-Broker with
 `cargo run --release -p buzzard-rsrc --example corpus -- <dir>`.
+
+The TDMS reader follows the vendor's public description of the format.
+Its tests run [adamreeve/npTDMS](https://github.com/adamreeve/npTDMS)
+(LGPL-3.0) as a separate program to compare results; none of npTDMS is
+included in this repository. The recording under
+`crates/buzzard-tdms/tests/fixtures` is from Saullo G. P. Castro, "Impact
+hammer test of an Aluminium 6082 T6 plate, 260 x 246 x 1.5 mm, free
+boundary conditions", Zenodo,
+[doi:10.5281/zenodo.7758683](https://doi.org/10.5281/zenodo.7758683),
+under CC BY 4.0.
 
 ## Trademark disclaimer
 

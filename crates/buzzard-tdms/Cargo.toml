@@ -1,0 +1,38 @@
+[package]
+name = "buzzard-tdms"
+description = "Fast, safe, read-only reader for TDMS measurement files, with Parquet and CSV export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["tdms", "measurement", "daq", "parquet", "parser"]
+categories = ["parser-implementations", "science", "encoding"]
+
+[features]
+default = []
+# Parquet export (`buzzard_tdms::export::parquet`). Off by default so that the
+# reader alone builds with three small dependencies; `buzzard-cli` turns it on.
+parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
+
+[dependencies]
+bytemuck.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+parquet = { workspace = true, optional = true }
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+parquet.workspace = true
+arrow-array.workspace = true
+serde_json.workspace = true
+
+[[example]]
+name = "tdms_bench"
+required-features = ["parquet"]
+
+[lints]
+workspace = true
