@@ -5,10 +5,10 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::blocks::bdpw::Bdpw;
+use crate::blocks::libn;
 use crate::blocks::linkinfo::{self, LinkRef};
 use crate::blocks::lvsr::{Lvsr, ViFlags};
 use crate::blocks::vers::Vers;
-use crate::blocks::libn;
 use crate::container::RsrcFile;
 use crate::error::Result;
 use crate::fourcc::FourCc;
@@ -70,7 +70,11 @@ impl ViMetadata {
             .first(b"BDPW")
             .map(|data| Bdpw::parse(data).map(|b| b.has_password()))
             .transpose()?;
-        let libraries = file.first(b"LIBN").map(libn::parse).transpose()?.unwrap_or_default();
+        let libraries = file
+            .first(b"LIBN")
+            .map(libn::parse)
+            .transpose()?
+            .unwrap_or_default();
 
         let mut links: Vec<LinkRef> = linkinfo::LINK_BLOCKS
             .iter()

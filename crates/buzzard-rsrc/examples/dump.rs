@@ -8,7 +8,13 @@ fn main() {
                 println!("{path}: {} ({} bytes)", file.file_type(), bytes.len());
                 for r in file.resources() {
                     let head: String = r.data.iter().take(40).map(|b| format!("{b:02x}")).collect();
-                    println!("  {} id={} name={:?} len={} {head}", r.ty, r.id, r.name, r.data.len());
+                    println!(
+                        "  {} id={} name={:?} len={} {head}",
+                        r.ty,
+                        r.id,
+                        r.name,
+                        r.data.len()
+                    );
                 }
             }
             Err(err) => println!("{path}: error: {err}"),

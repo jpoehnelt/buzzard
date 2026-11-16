@@ -57,7 +57,11 @@ pub fn scan(data: &[u8]) -> Vec<LinkRef> {
             Ok((path, len)) => {
                 if !path.is_empty() {
                     let (link_type, qualified_name) = prefix_before(data, at).unwrap_or_default();
-                    links.push(LinkRef { link_type, qualified_name, path });
+                    links.push(LinkRef {
+                        link_type,
+                        qualified_name,
+                        path,
+                    });
                 }
                 offset = at + len;
             }
@@ -118,7 +122,9 @@ fn link_type_before(data: &[u8], names_at: usize) -> Option<FourCc> {
             return None;
         }
         let code: [u8; 4] = data.get(end.checked_sub(4)?..end)?.try_into().ok()?;
-        code.iter().all(u8::is_ascii_alphanumeric).then_some(FourCc(code))
+        code.iter()
+            .all(u8::is_ascii_alphanumeric)
+            .then_some(FourCc(code))
     })
 }
 
@@ -128,7 +134,8 @@ mod tests {
     use crate::blocks::path::PathKind;
 
     // `LIvi` block of a real VI calling `empty.vi` through a relative path.
-    const RELATIVE: &[u8] = b"\x00\x01LVIN\x00\x00\x00\x01\x00\x02VIVI\x00\x00\x00\x01\x08empty.vi\x00\
+    const RELATIVE: &[u8] =
+        b"\x00\x01LVIN\x00\x00\x00\x01\x00\x02VIVI\x00\x00\x00\x01\x08empty.vi\x00\
 PTH0\x00\x00\x00\x0e\x00\x01\x00\x02\x00\x08empty.vi\x00\x00\x00\x00\x01\x42";
 
     #[test]

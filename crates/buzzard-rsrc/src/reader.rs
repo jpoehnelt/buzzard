@@ -11,7 +11,11 @@ pub(crate) struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     pub fn new(bytes: &'a [u8], what: &'static str) -> Self {
-        Self { bytes, pos: 0, what }
+        Self {
+            bytes,
+            pos: 0,
+            what,
+        }
     }
 
     pub fn at(bytes: &'a [u8], pos: usize, what: &'static str) -> Self {

@@ -15,7 +15,10 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut r = Reader::new(data, "compressed block");
     let size = r.u32()? as usize;
     if size > MAX_DECOMPRESSED {
-        return Err(malformed("compressed block", format!("declared size {size} is too large")));
+        return Err(malformed(
+            "compressed block",
+            format!("declared size {size} is too large"),
+        ));
     }
     let mut out = Vec::with_capacity(size);
     ZlibDecoder::new(r.take(r.remaining())?)
@@ -46,7 +49,10 @@ mod tests {
     #[test]
     fn round_trips() {
         let payload = b"hello hello hello hello";
-        assert_eq!(decompress(&compress(payload, payload.len() as u32)).unwrap(), payload);
+        assert_eq!(
+            decompress(&compress(payload, payload.len() as u32)).unwrap(),
+            payload
+        );
     }
 
     #[test]

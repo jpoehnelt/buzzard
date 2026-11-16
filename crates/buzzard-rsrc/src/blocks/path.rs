@@ -43,7 +43,10 @@ impl LvPath {
         let total = body_start + size;
 
         if size == 0 {
-            let path = Self { kind: PathKind::Absolute, components: Vec::new() };
+            let path = Self {
+                kind: PathKind::Absolute,
+                components: Vec::new(),
+            };
             return Ok((path, total));
         }
 
@@ -97,7 +100,10 @@ impl LvPath {
 
     /// Final component, normally the file name.
     pub fn file_name(&self) -> Option<&str> {
-        self.components.last().map(String::as_str).filter(|s| !s.is_empty())
+        self.components
+            .last()
+            .map(String::as_str)
+            .filter(|s| !s.is_empty())
     }
 }
 

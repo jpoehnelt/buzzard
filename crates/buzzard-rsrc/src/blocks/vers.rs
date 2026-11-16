@@ -27,7 +27,12 @@ impl Vers {
         } else {
             String::new()
         };
-        Ok(Self { version, language, text, name })
+        Ok(Self {
+            version,
+            language,
+            text,
+            name,
+        })
     }
 }
 
@@ -37,7 +42,9 @@ mod tests {
 
     #[test]
     fn parses_real_block() {
-        let data = [0x21, 0x00, 0x80, 0x00, 0x00, 0x00, 0x04, b'2', b'1', b'.', b'0', 0x00];
+        let data = [
+            0x21, 0x00, 0x80, 0x00, 0x00, 0x00, 0x04, b'2', b'1', b'.', b'0', 0x00,
+        ];
         let vers = Vers::parse(&data).unwrap();
         assert_eq!(vers.version.to_string(), "21.0.0");
         assert_eq!(vers.text, "21.0");

@@ -27,10 +27,19 @@ impl Default for RsrcBuilder {
 
 impl RsrcBuilder {
     pub fn new(file_type: FourCc) -> Self {
-        Self { file_type, entries: Vec::new() }
+        Self {
+            file_type,
+            entries: Vec::new(),
+        }
     }
 
-    pub fn resource(mut self, ty: &[u8; 4], id: i32, name: Option<&str>, data: impl Into<Vec<u8>>) -> Self {
+    pub fn resource(
+        mut self,
+        ty: &[u8; 4],
+        id: i32,
+        name: Option<&str>,
+        data: impl Into<Vec<u8>>,
+    ) -> Self {
         self.entries.push(Entry {
             ty: FourCc(*ty),
             id,
@@ -48,7 +57,8 @@ impl RsrcBuilder {
         }
         let mut vers = version.to_be_bytes().to_vec();
         vers.extend_from_slice(&[0, 0, 0, 0]);
-        self.resource(b"LVSR", 0, None, lvsr).resource(b"vers", 4, None, vers)
+        self.resource(b"LVSR", 0, None, lvsr)
+            .resource(b"vers", 4, None, vers)
     }
 
     /// Add an `LIvi` block linking to the given `(name, path)` pairs as subVIs.
@@ -83,7 +93,10 @@ impl RsrcBuilder {
                 None => types.push((entry.ty, vec![entry])),
             }
         }
-        assert!(!types.is_empty(), "an RSRC file needs at least one resource");
+        assert!(
+            !types.is_empty(),
+            "an RSRC file needs at least one resource"
+        );
 
         let mut data = Vec::new();
         let mut names = Vec::new();
@@ -167,7 +180,10 @@ pub fn encode_pth0(path: &LvPath) -> Vec<u8> {
 impl LvPath {
     /// Relative path to a sibling of the referencing file, e.g. `../a.vi`.
     pub fn sibling(name: &str) -> Self {
-        Self { kind: PathKind::Relative, components: vec![String::new(), name.to_owned()] }
+        Self {
+            kind: PathKind::Relative,
+            components: vec![String::new(), name.to_owned()],
+        }
     }
 
     pub fn absolute(components: &[&str]) -> Self {
@@ -187,8 +203,18 @@ mod tests {
     fn built_file_round_trips_through_parser() {
         let bytes = RsrcBuilder::default()
             .resource(b"LVSR", 0, Some("a.vi"), vec![0x21, 0, 0x80, 0, 0, 0, 0, 0])
-            .resource(b"vers", 4, None, b"\x21\x00\x80\x00\x00\x00\x00\x00".to_vec())
-            .resource(b"vers", 7, None, b"\x23\x00\x80\x00\x00\x00\x00\x00".to_vec())
+            .resource(
+                b"vers",
+                4,
+                None,
+                b"\x21\x00\x80\x00\x00\x00\x00\x00".to_vec(),
+            )
+            .resource(
+                b"vers",
+                7,
+                None,
+                b"\x23\x00\x80\x00\x00\x00\x00\x00".to_vec(),
+            )
             .resource(b"ODD!", -3, Some("odd"), vec![1, 2, 3])
             .build();
         let file = RsrcFile::parse(&bytes).unwrap();
@@ -196,7 +222,10 @@ mod tests {
         assert_eq!(file.types().len(), 3);
         assert_eq!(file.of_type(b"vers").count(), 2);
         let odd = file.of_type(b"ODD!").next().unwrap();
-        assert_eq!((odd.id, odd.name.as_deref(), odd.data), (-3, Some("odd"), &[1u8, 2, 3][..]));
+        assert_eq!(
+            (odd.id, odd.name.as_deref(), odd.data),
+            (-3, Some("odd"), &[1u8, 2, 3][..])
+        );
         assert_eq!(file.resources()[0].name.as_deref(), Some("a.vi"));
     }
 
@@ -214,6 +243,9 @@ mod tests {
         assert_eq!(meta.flags.unwrap().separate_compiled_code, Some(true));
         let names: Vec<_> = meta.links.iter().map(|l| l.name().unwrap()).collect();
         assert_eq!(names, ["b.vi", "odd name.vi"]);
-        assert!(meta.links.iter().all(|l| l.link_type == Some(FourCc::new(b"VIVI"))));
+        assert!(meta
+            .links
+            .iter()
+            .all(|l| l.link_type == Some(FourCc::new(b"VIVI"))));
     }
 }

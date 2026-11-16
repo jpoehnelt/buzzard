@@ -34,7 +34,11 @@ fn fixtures() -> Vec<PathBuf> {
     let mut out = Vec::new();
     walk(&root().join("fixtures"), &mut out);
     out.sort();
-    assert!(out.len() >= 30, "fixtures went missing: found {}", out.len());
+    assert!(
+        out.len() >= 30,
+        "fixtures went missing: found {}",
+        out.len()
+    );
     out
 }
 
@@ -48,8 +52,11 @@ fn snapshots_match() {
     let mut failures = Vec::new();
     for path in fixtures() {
         let rel = path.strip_prefix(root().join("fixtures")).unwrap();
-        let snapshot = root().join("snapshots").join(format!("{}.json", rel.display()));
-        let meta = ViMetadata::from_path(&path).unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
+        let snapshot = root()
+            .join("snapshots")
+            .join(format!("{}.json", rel.display()));
+        let meta =
+            ViMetadata::from_path(&path).unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
         let actual = serde_json::to_string_pretty(&meta).unwrap() + "\n";
         if bless {
             fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
@@ -111,7 +118,10 @@ fn compressed_blocks_inflate() {
             }
         }
     }
-    assert!(inflated >= 60, "only {inflated} compressed blocks were checked");
+    assert!(
+        inflated >= 60,
+        "only {inflated} compressed blocks were checked"
+    );
 }
 
 /// Truncated or corrupted input must produce an error or a value, never a
@@ -126,7 +136,9 @@ fn hostile_input_never_panics() {
         // Deterministic corruption: overwrite each byte of the directory and
         // a sample of the data section with hostile values.
         let info = u32::from_be_bytes(bytes[16..20].try_into().unwrap()) as usize;
-        let positions = (0..64).chain((64..info).step_by(13)).chain(info..bytes.len());
+        let positions = (0..64)
+            .chain((64..info).step_by(13))
+            .chain(info..bytes.len());
         for pos in positions {
             for value in [0x00, 0x7f, 0xff] {
                 let mut copy = bytes.clone();
@@ -162,20 +174,41 @@ fn baseline_vi() {
 #[test]
 fn single_setting_fixtures() {
     let flags = |name: &str| fixture(name).flags.unwrap();
-    assert_eq!(flags("pylavi/empty_separate_code.vi").separate_compiled_code, Some(true));
-    assert_eq!(flags("pylavi/empty_no_auto_err.vi").auto_error_handling, Some(false));
-    assert_eq!(flags("pylavi/empty_no_debugging.vi").debuggable, Some(false));
-    assert_eq!(flags("pylavi/empty_suspend_when_called.vi").suspend_when_called, Some(true));
+    assert_eq!(
+        flags("pylavi/empty_separate_code.vi").separate_compiled_code,
+        Some(true)
+    );
+    assert_eq!(
+        flags("pylavi/empty_no_auto_err.vi").auto_error_handling,
+        Some(false)
+    );
+    assert_eq!(
+        flags("pylavi/empty_no_debugging.vi").debuggable,
+        Some(false)
+    );
+    assert_eq!(
+        flags("pylavi/empty_suspend_when_called.vi").suspend_when_called,
+        Some(true)
+    );
     assert_eq!(flags("pylavi/empty_run_on_open.vi").run_on_open, Some(true));
-    assert_eq!(flags("pylavi/empty_clear_indicators.vi").clear_indicators, Some(true));
+    assert_eq!(
+        flags("pylavi/empty_clear_indicators.vi").clear_indicators,
+        Some(true)
+    );
     assert_eq!(flags("pylavi/empty_locked.vi").locked, Some(true));
     assert_eq!(flags("pylavi/add.vi").has_breakpoints, Some(false));
-    assert_eq!(flags("pylavi/add_breakpoints.vi").has_breakpoints, Some(true));
+    assert_eq!(
+        flags("pylavi/add_breakpoints.vi").has_breakpoints,
+        Some(true)
+    );
 }
 
 #[test]
 fn password_fixtures() {
-    assert_eq!(fixture("pylavi/empty_locked.vi").password_protected, Some(false));
+    assert_eq!(
+        fixture("pylavi/empty_locked.vi").password_protected,
+        Some(false)
+    );
     let protected = fixture("pylavi/empty_password.vi");
     assert_eq!(protected.password_protected, Some(true));
     assert_eq!(protected.flags.unwrap().locked, Some(true));
@@ -188,7 +221,10 @@ fn version_stage_fixtures() {
     assert_eq!(stage("pylavi/empty_alpha.vi"), Stage::Alpha);
     assert_eq!(stage("pylavi/empty_beta.vi"), Stage::Beta);
     assert_eq!(stage("pylavi/empty_dev.vi"), Stage::Development);
-    assert_eq!(fixture("pylabview/empty_vifile.vi").version.unwrap().major, 14);
+    assert_eq!(
+        fixture("pylabview/empty_vifile.vi").version.unwrap().major,
+        14
+    );
 }
 
 #[test]
@@ -203,19 +239,29 @@ fn link_fixtures() {
         .collect();
     assert_eq!(
         seen,
-        [("IUVI".to_owned(), "../empty.vi".to_owned()), ("VIVI".to_owned(), "../empty.vi".to_owned())]
+        [
+            ("IUVI".to_owned(), "../empty.vi".to_owned()),
+            ("VIVI".to_owned(), "../empty.vi".to_owned())
+        ]
     );
     assert_eq!(relative.links[0].qualified_name, ["empty.vi"]);
     assert!(!relative.links[0].path.is_machine_absolute());
 
     let absolute = fixture("pylavi/absolute_link_PTH.vi");
     let paths: Vec<String> = absolute.links.iter().map(|l| l.path.to_string()).collect();
-    assert!(paths.contains(&"/Volumes/marcp/Desktop/PTH empty PTH.vi".to_owned()), "{paths:?}");
+    assert!(
+        paths.contains(&"/Volumes/marcp/Desktop/PTH empty PTH.vi".to_owned()),
+        "{paths:?}"
+    );
     assert!(
         paths.contains(&"<vilib>/AdvancedString/Path To Command Line String.vi".to_owned()),
         "{paths:?}"
     );
-    let pinned: Vec<_> = absolute.links.iter().filter(|l| l.path.is_machine_absolute()).collect();
+    let pinned: Vec<_> = absolute
+        .links
+        .iter()
+        .filter(|l| l.path.is_machine_absolute())
+        .collect();
     assert_eq!(pinned.len(), 2);
     assert_eq!(pinned[0].name(), Some("PTH empty PTH.vi"));
 }
@@ -231,13 +277,22 @@ fn reentrancy_fixtures() {
         };
         assert_eq!(get("Non-Reentrant"), (Reentrancy::NonReentrant, false));
         assert_eq!(get("Shared-Reentrant"), (Reentrancy::SharedClones, false));
-        assert_eq!(get("Preallocate-Reentrant"), (Reentrancy::PreallocatedClones, false));
-        assert_eq!(get("Inline - preallocate"), (Reentrancy::PreallocatedClones, true));
+        assert_eq!(
+            get("Preallocate-Reentrant"),
+            (Reentrancy::PreallocatedClones, false)
+        );
+        assert_eq!(
+            get("Inline - preallocate"),
+            (Reentrancy::PreallocatedClones, true)
+        );
         assert!(get("Inline").1);
     }
 }
 
 #[test]
 fn llb_archives_parse_as_libraries() {
-    assert_eq!(fixture("pylabview/empty_libfile.llb").kind, FileKind::Library);
+    assert_eq!(
+        fixture("pylabview/empty_libfile.llb").kind,
+        FileKind::Library
+    );
 }
