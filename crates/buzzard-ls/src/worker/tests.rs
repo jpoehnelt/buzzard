@@ -25,6 +25,22 @@ struct TestInspector {
     gate: Mutex<Option<std_mpsc::Receiver<()>>>,
 }
 
+/// Decrement a counter unless it is zero; true if it was decremented.
+///
+/// Written as a compare-and-swap loop because the standard helper for this
+/// was renamed between the oldest and newest toolchains this crate builds
+/// on.
+fn take_one(counter: &AtomicUsize) -> bool {
+    let mut current = counter.load(Ordering::SeqCst);
+    while current > 0 {
+        match counter.compare_exchange(current, current - 1, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return true,
+            Err(seen) => current = seen,
+        }
+    }
+    false
+}
+
 #[tower_lsp::async_trait]
 impl ViInspector for TestInspector {
     async fn inspect(&self, path: &Path) -> Result<Inspection, String> {
@@ -33,10 +49,7 @@ impl ViInspector for TestInspector {
         if let Some(gate) = gate {
             let _ = gate.recv();
         }
-        let fail = self
-            .failures_left
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
-            .is_ok();
+        let fail = take_one(&self.failures_left);
         if fail {
             return Err("file is truncated".to_owned());
         }

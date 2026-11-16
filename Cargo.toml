@@ -24,7 +24,6 @@ buzzard-mcp = { path = "crates/buzzard-mcp", version = "0.1.0" }
 # Binary parsing & decompression
 binrw = "0.15"
 flate2 = "1"
-memmap2 = "0.9"
 
 # LSP / async
 tower-lsp = "0.20"
