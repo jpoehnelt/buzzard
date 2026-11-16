@@ -38,7 +38,8 @@ buzzard inspect Motor.lvclass
 ```
 
 `inspect` includes the block diagram: an outline of nodes, terminals and
-wires in Markdown, the full graph in JSON, or a picture:
+wires in Markdown (with the label of each case and the value of each
+constant), the full graph in JSON, or a picture:
 
 ```bash
 buzzard inspect Main.vi --format svg > Main.svg
@@ -156,6 +157,198 @@ failed diff; a file it cannot read is reported in the output instead.
 Set either with `git config --global` to have it in every repository; the
 `.gitattributes` line stays per repository.
 
+## Verification
+
+`buzzard verify` finds the state machines on block diagrams and checks
+them:
+
+```bash
+buzzard verify path/to/project
+buzzard verify Main.vi --format dot | dot -Tsvg -o Main-states.svg
+```
+
+```text
+Main.vi
+  state machine at while loop #38, case structure #49
+    states (5): Initialize, Wait for Event, User State 1, User State 2, Exit
+    initial state: Initialize
+    default state: none
+    states are the items of the type definition State.ctl as saved in this file; the type definition itself was not read
+    model: exact (every next state and stop condition is a constant on the diagram)
+    transitions:
+      Initialize -> Wait for Event; never stops the loop
+      Wait for Event -> Exit; never stops the loop
+      User State 1 -> Initialize; never stops the loop
+      User State 2 -> Initialize; never stops the loop
+      Exit -> Exit; stops the loop
+    PROVEN [BZ201] state `User State 1` can never be reached (going by the items of the type definition `State.ctl` as saved in this file)
+      why: no chain of next-state values the diagram can write leads from the initial state to this one, and every value the analysis could not follow was assumed to lead anywhere
+    PROVEN [BZ201] state `User State 2` can never be reached (going by the items of the type definition `State.ctl` as saved in this file)
+      why: ...
+
+Checked 1 file: 1 with a state machine (1 state machine, 0 string/queue machines), 0 without.
+2 findings: 2 proven, 0 structural, 0 heuristic.
+```
+
+A state machine here is the classic pattern: a while loop, a shift register,
+and a case structure inside the loop whose selector is wired from the
+register. The selector is an enumeration, a string or an integer. Each case
+is a state, named by its case label; a case that handles several values or
+a range is one state. `#38` and `#49` are the object ids that
+`inspect --format json` prints.
+
+For every machine the report gives its states, the transitions, the initial
+state (the constant wired to the register from outside the loop), the
+default state, and whether the model is exact. `--format json` has the same
+data and `--format dot` draws the transition graphs: a double border for a
+state that stops the loop, a dashed one for a state proven unreachable, and
+a dashed edge to `?` where the next state could not be followed. Files
+without a state machine are counted, not listed. In the text report a state
+name that holds a comma (a case for several values, `A, B`) is put in
+backticks where names are listed. A state whose next state could not be
+followed may go to any state; the list of transitions (`transitions` in the
+JSON) holds the known ones only. The exit status is 0 when there are no
+findings, 1 when there are, and 2 for an error such as a path that does not
+exist. A file that cannot be parsed is listed and does not change the
+status, and neither does a file whose block diagram did not decode
+completely (see below).
+
+The same findings are the lint rules `BZ201`, `BZ202` and `BZ203`, so they
+also appear in `buzzard check`, in SARIF, in the language server and in the
+MCP tools.
+
+### What is proven
+
+The model **over-approximates** the diagram. The next state of a case is
+followed backwards from the shift register through constants, tunnels, the
+Select function and nested case, event, disable and sequence structures.
+Where it reaches anything else (a subVI, arithmetic, a control, a local
+variable, a property node, a cluster, a wire that cannot be followed) the
+case is taken to be able to go to *any* state. A stop condition that is not
+a constant is taken to be able to go either way, and an initial state that
+is not a constant is unknown. So the program can do no more than the model,
+and what the model cannot do, the program cannot do either:
+
+- **`BZ201`, a state that can never be reached** is proven: no sequence of
+  next-state values the diagram can write leads to it.
+- **`BZ202`, a state from which the loop's condition terminal can never
+  stop the loop** is proven: no state that can follow it can make the
+  condition terminal end the loop. When that is true of every state the
+  terminal never stops the loop at all, which is reported once, as
+  information, because a loop that runs until the program is aborted is a
+  legitimate design. This says nothing about other ways out, so it is
+  labelled `PROVEN` only when the block diagram holds nothing that could
+  end the program or abort the VI some other way: no subVI call, call by
+  reference, invoke node, property node, call into a library or XNode,
+  and no node of a class that is not known to be harmless, anywhere on the
+  diagram. When there is one, the finding names the nodes and is labelled
+  `STRUCTURAL`. This is the conservative choice: such a node counts
+  wherever it sits, also outside the loop, because it may run in the same
+  iteration or in parallel.
+
+Each finding is labelled `PROVEN`, `STRUCTURAL` or `HEURISTIC` and carries
+one sentence saying why it holds:
+
+- `PROVEN` holds for every execution of the VI as saved in the file.
+- `STRUCTURAL` is a fact about what is wired on the diagram. It is not a
+  statement about what runs. Besides the `BZ202` case above this is
+  **`BZ203`, a constant that no case handles and that can reach the state
+  register**: no case is labelled with the value (even ignoring letter
+  case), so the default case would run for it. The constant may sit on a
+  path that never executes, such as the disabled frame of a disable
+  structure. It is reported once per state machine and value, and not for
+  a value that only states which always stop the loop can write.
+- `HEURISTIC` is a match on names and can be wrong in both directions.
+
+A proof is about the file as it was saved:
+
+- **Type definitions.** When the selector's enumeration is an instance of a
+  type definition, the states are the items of the copy the VI stored when
+  it was saved. `buzzard` does not open the `.ctl` file and does not compare
+  the two, so if the type definition changed afterwards and the VI was not
+  saved again, the proof is about the old item list. Every `BZ201` and
+  `BZ202` finding about such a machine names the type definition and says
+  "as saved in this file".
+- **A complete decode.** The decoder skips what it cannot resolve, and a
+  wire it skipped would look like a tunnel that was left unwired. It
+  records every such loss: a signal, node, terminal or frame that does not
+  resolve or is listed twice, a wire end that is no terminal of its diagram,
+  two wires into one terminal, an object defined twice, an object that no
+  list names, a list that does not hold as many elements as it states, an
+  object with a field it cannot name or with the same field twice, and a
+  heap whose byte stream breaks a rule that every real one keeps (a
+  closing entry that does not match its opening one or carries data, an
+  attribute of an unknown kind, a node left open). A block diagram with
+  any loss is listed as not decoded completely and is
+  not searched for classic state machines at all. None of the 1,773 real
+  files it was checked on has a loss. A selector table is used only when it
+  is whole: every entry has its five fields exactly once, and every case
+  that is not the default has a value. What is left is damage that changes
+  a value and nothing else, such as the item an enumeration constant holds
+  or the number of the default case: the file then describes another
+  program, and the findings are about that program.
+
+### What is not proven
+
+- **The reverse of the above.** A state the report does not call
+  unreachable may still never run, and a loop it does not report may still
+  never stop. Whenever the model is not exact, findings can be missing;
+  they are never invented.
+- **Anything about string/queue state machines.** In a machine in the style
+  of the JKI State Machine the register holds a queue of state names as one
+  string, and library subVIs split and extend it. That is not a finite
+  automaton and it is not modelled. Such a machine is recognised (a string
+  case structure selected by an output of `Parse State Queue`), and one
+  check is made, labelled `HEURISTIC`: a state name in a string constant
+  wired into an `Add State(s) to Queue` call, or into the queue before the
+  loop, that matches no case label. A queue string is read as the real
+  files use it: one state per line, the name ending at `>>`, with `//` and
+  `/* */` comments. Names built at run time are not seen, so the check can
+  miss a misspelled state, and it can be wrong about a name that never
+  reaches the queue.
+- **Termination in general.** "Stop" means that the loop's own condition
+  terminal ends the loop, and `BZ202` claims nothing else. A diagram that
+  calls the built-in Stop or Quit function gets no `BZ202` at all, and one
+  with a subVI call or another node that could end the program gets it as
+  `STRUCTURAL` only. What such a node really does is not looked into. An
+  error dialog or an abort by the user is outside the model. That a state
+  finishes its own work (an event structure that waits forever, an inner
+  loop) is not checked.
+- **The reading of the file.** The proofs rest on how the binary file is
+  decoded: shift registers, case selector tables, tunnels, "use default if
+  unwired" and the stop terminal's polarity. Each was checked against some
+  1,750 real files saved by versions 13 to 25, and the extraction against
+  nine real state machine files, but none of it against a running editor.
+
+The extraction gives up rather than guess. It does not model: a state held
+in a cluster or a feedback node; for loops and timed loops; selectors that
+are Booleans or error clusters; a selector fed by anything but the
+register; strings that are not plain ASCII; an uninitialised register's
+first state (it keeps its value between calls); a case structure with more
+than 1,024 cases; and which case of an event structure handles which event
+(all cases are assumed possible, and a wired timeout is assumed able to run
+none).
+
+- **Selector types.** Next states are resolved only for the selector types
+  whose table encoding was seen in real files: strings; enumerations of 8,
+  16 and 32 bits; `I32`; and `U8` and `I16` as long as every number in the
+  table is between 0 and the type's largest value. For `I8`, `U16`, `U32`,
+  the 64-bit types, and a `U8` or `I16` table with a number outside that
+  range, every next state is unknown, because how a narrow or unsigned
+  value is widened into the table was never observed for them.
+- **Stacked shift registers are unverified.** None of the 634 loops in the
+  real files has one, so how a file stores one is known from third-party
+  notes only. A loop gives no state machine unless its registers pair one
+  to one: one left terminal per register, and as many left and right
+  register terminals on the loop as it has registers.
+- **Unwired tunnels of an enumeration** are taken to give the first item,
+  the default of the data type, as the product documentation says. This
+  was not checked in an editor for a type definition whose control has
+  another default value.
+
+The module documentation of `crates/buzzard-lint/src/verify` lists every
+assumption.
+
 ## Rules
 
 | Code | Severity | Meaning |
@@ -169,6 +362,16 @@ Set either with `git config --global` to have it in every repository; the
 | `BZ006` | warning | A project, library or class lists a member whose file does not exist on disk |
 | `BZ101` | warning or info | An error output on the block diagram is not wired |
 | `BZ102` | warning | A reference is created and never reaches anything that could close it |
+| `BZ201` | warning | A state of a state machine can never be reached (proven) |
+| `BZ202` | warning or info | A state machine has a state from which the loop's condition terminal can never stop the loop, or the terminal can never stop it at all (proven, or structural when a subVI call or a similar node could end the program some other way) |
+| `BZ203` | warning | A constant that no case handles can reach the state register of a state machine, so the default case would run for it (structural; heuristic for a string/queue machine) |
+
+`BZ201` to `BZ203` come from the state machine verification; see
+[Verification](#verification) for what they do and do not prove. Each
+message ends in `(proven)`, `(structural, not proven)` or `(heuristic, not
+proven)`. `BZ202` is a warning for a trap state and informational when the
+condition terminal never stops the loop at all. `BZ203` is structural for a
+classic state machine and a heuristic for a string/queue state machine.
 
 `BZ101` is a warning when the file has automatic error handling off, because
 the error is then silently discarded, and informational when it is on. Error
@@ -254,6 +457,7 @@ Or commit a `.mcp.json` at the root of the project to share it with a team:
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `buzzard_check` | `paths[]`, `ignore?[]`, `limit?`, `refresh?` | Diagnostics (code, severity, path, message) and a summary |
+| `buzzard_verify` | `paths[]`, `format?` (`text`, `json`, `dot`) | The state machines under `paths`: states, transitions, initial state, and findings labelled `PROVEN`, `STRUCTURAL` or `HEURISTIC` |
 | `buzzard_inspect` | `path` | Metadata and dependency list of one file, as Markdown and JSON |
 | `buzzard_diagram` | `path`, `format?` (`markdown`, `json`, `mermaid`, `dot`, `svg`) | The block diagram |
 | `buzzard_callers` | `path`, `root`, `refresh?` | Files under `root` that use the file |
@@ -264,7 +468,8 @@ Or commit a `.mcp.json` at the root of the project to share it with a team:
 Every tool is read-only. Relative paths are resolved against the directory
 the server was started in. The parsed workspace is cached per root; each call
 compares file sizes and modification times with the cached scan and re-parses
-when anything differs, and `refresh: true` forces a re-parse. A failed tool
+when anything differs, and `refresh: true` forces a re-parse. `buzzard_verify`,
+like `buzzard_inspect` and `buzzard_diagram`, reads its files on every call. A failed tool
 call (missing or unreadable file, bad argument) is returned as a result with
 `isError` set, so the agent can read the reason.
 
@@ -297,10 +502,10 @@ Any other editor with a Language Server Protocol client can run
 | Crate | Purpose |
 | --- | --- |
 | `crates/buzzard-rsrc` | Parser for the binary RSRC resource container |
-| `crates/buzzard-lint` | Lint rules, project file parser, dependency graph, SARIF, the `ViInspector` backend trait |
+| `crates/buzzard-lint` | Lint rules, state machine verification, project file parser, dependency graph, SARIF, the `ViInspector` backend trait |
 | `crates/buzzard-ls` | Language Server Protocol implementation |
 | `crates/buzzard-mcp` | Model Context Protocol server |
-| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `lsp`, `mcp`) |
+| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `diff`, `verify`, `lsp`, `mcp`) |
 
 ## Development
 
@@ -365,6 +570,16 @@ Review the generated snapshot before committing it.
 and `.lvclass` files; its README records where they come from and what they
 established about the format.
 
+`crates/buzzard-lint/tests/fixtures/verify` holds real state machines and
+real loops that are not state machines; its README records their sources
+and licences. The seven classic enumeration state machines the extraction
+was developed against have no licence and are not redistributed: the tests
+rebuild their shapes as diagrams, and ignored tests check the real files
+when `BUZZARD_FSM_SAMPLES` points at clones of their repositories. One test
+changes single bytes of the inflated block diagram heap of every fixture
+and checks that a damaged file never gains a proven finding, and that
+nothing is gone from a decoded diagram without a recorded loss.
+
 ### Dependency graph
 
 The graph has three kinds of edge. `Uses` is a VI referencing another file,
@@ -419,8 +634,17 @@ does not lead to a workspace file:
   unverified names are printed the same way. The names are used for wording
   only: the dataflow rules still reason from terminal types and wiring
   alone.
-- Constant values, label text, case selector values and wire routes are not
-  decoded.
+- Constants are decoded when they are Booleans, integers, enumerations,
+  single or double precision numbers or strings; constants of other types
+  (arrays, clusters, references, text rings) are not. A constant has no
+  position in the decoded diagram, so the pictures do not draw it. Free
+  labels and wire routes are not decoded.
+- Case selector tables are decoded for Boolean, integer, enumeration,
+  string and error cluster selectors. Which event each case of an event
+  structure handles, and which frame of a disable structure is enabled,
+  are not decoded.
+- State machine verification covers the classic pattern only and proves
+  only what [Verification](#verification) says it proves.
 - The dataflow rules and the diagram's terminal directions were validated
   on files saved by versions 13 to 26. Files saved before version 8 use a
   different heap format and have no decoded diagram.
@@ -439,7 +663,13 @@ pylavi. The project file fixtures under
 `crates/buzzard-lint/tests/fixtures/project` come from
 [JKISoftware/JKI-State-Machine-Objects](https://github.com/JKISoftware/JKI-State-Machine-Objects)
 (BSD 3-Clause) and [ni/grpc-labview](https://github.com/ni/grpc-labview)
-(MIT); their licence texts are kept next to the files. The names of heap
+(MIT); their licence texts are kept next to the files. The state machine
+fixtures under `crates/buzzard-lint/tests/fixtures/verify` come from
+JKISoftware/JKI-State-Machine-Objects,
+[JKISoftware/JKI-State-Machine](https://github.com/JKISoftware/JKI-State-Machine)
+(BSD 3-Clause) and
+[LabVIEW-Open-Source/LV-MQTT-Broker](https://github.com/LabVIEW-Open-Source/LV-MQTT-Broker)
+(Zero-Clause BSD), with their licence texts next to them. The names of heap
 tags and object classes are generated from pylabview.
 
 The table of built-in function names

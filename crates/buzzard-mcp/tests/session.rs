@@ -231,6 +231,7 @@ fn tools_list_describes_every_tool_with_a_schema() {
         names,
         [
             "buzzard_check",
+            "buzzard_verify",
             "buzzard_inspect",
             "buzzard_diagram",
             "buzzard_callers",
@@ -1095,7 +1096,7 @@ fn serve_runs_a_whole_session_over_a_reader_and_writer() {
         ]
     );
     assert_eq!(replies[0]["result"]["serverInfo"]["name"], "buzzard");
-    assert_eq!(replies[2]["result"]["tools"].as_array().unwrap().len(), 7);
+    assert_eq!(replies[2]["result"]["tools"].as_array().unwrap().len(), 8);
     assert_eq!(replies[3]["error"]["code"], -32700);
     assert_eq!(replies[4]["result"]["isError"], false);
     assert_eq!(replies[5]["result"]["isError"], true);
@@ -1153,4 +1154,136 @@ fn serve_survives_binary_garbage_and_oversized_lines() {
     );
     let silent = serve(b"");
     assert!(silent.is_empty(), "expected nothing, got {silent:?}");
+}
+
+// ------------------------------------------------------------ verification
+
+/// Real state machines; `crates/buzzard-lint/tests/fixtures/verify/README.md`
+/// records their sources and licences.
+fn machines() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../buzzard-lint/tests/fixtures/verify")
+}
+
+#[test]
+fn verify_describes_machines_and_labels_findings() {
+    let mut session = Session::new(machines());
+    let (text, structured) = session.ok("buzzard_verify", json!({ "paths": ["."] }));
+    assert!(text.starts_with(
+        "jki-smo/process.vi\n  state machine at while loop #3379, case structure #3023\n    \
+         states (2): Init, Idle\n    initial state: Init\n    default state: Idle\n"
+    ));
+    assert!(text.contains("      Idle -> Idle, Init; may stop the loop\n"));
+    assert!(text.contains(
+        "jki-state-machine/new-support-vis-examples.vi\n  string/queue state machine at while \
+         loop #70, case structure #177 (recognised, not modelled)\n"
+    ));
+    assert!(text.contains(
+        "    HEURISTIC [BZ203] state `Action: Step 1` is enqueued but no case handles it; the \
+         default case `Default` runs instead\n      why: the name appears in a string constant"
+    ));
+    assert!(text.ends_with(
+        "Checked 5 files: 3 with a state machine (1 state machine, 2 string/queue machines), 2 \
+         without.\n3 findings: 0 proven, 0 structural, 3 heuristic.\n"
+    ));
+
+    assert_eq!(structured["summary"]["files"], 5);
+    assert_eq!(structured["summary"]["heuristic"], 3);
+    let files = structured["files"].as_array().unwrap();
+    let paths: Vec<&str> = files.iter().map(|f| f["path"].as_str().unwrap()).collect();
+    assert_eq!(
+        paths,
+        [
+            "jki-smo/process.vi",
+            "jki-state-machine/new-support-vis-examples.vi",
+            "jki-state-machine/queued-state-machine-template.vi",
+        ]
+    );
+    let machine = &files[0]["machines"][0];
+    assert_eq!(machine["machine"]["default"], "Idle");
+    assert_eq!(machine["exact"], false);
+    let finding = &files[1]["findings"][0];
+    assert_eq!(finding["code"], "BZ203");
+    assert_eq!(finding["confidence"], "heuristic");
+    assert!(finding["justification"].as_str().unwrap().len() > 20);
+
+    // The JSON format is the same data as text; a second call is identical.
+    let (json_text, json_structured) = session.ok(
+        "buzzard_verify",
+        json!({ "paths": ["."], "format": "json" }),
+    );
+    assert_eq!(json_structured, structured);
+    assert_eq!(
+        serde_json::from_str::<Value>(&json_text).unwrap(),
+        structured
+    );
+    let again = session.ok("buzzard_verify", json!({ "paths": ["."] }));
+    assert_eq!(again, (text, structured));
+}
+
+#[test]
+fn verify_draws_the_transition_graph_and_checks_its_arguments() {
+    let mut session = Session::new(machines());
+    let result = session.call(
+        "buzzard_verify",
+        json!({ "paths": ["jki-smo/process.vi"], "format": "dot" }),
+    );
+    assert_eq!(result["isError"], false);
+    assert!(result.get("structuredContent").is_none());
+    let dot = text(&result);
+    assert!(dot.starts_with("digraph state_machines {\n"));
+    assert!(dot.contains("label=\"jki-smo/process.vi: while loop #3379, case structure #3023\";"));
+    assert!(dot.contains("m0_s0 -> m0_s1;"));
+
+    // A file without a machine is counted, not listed.
+    let (text, structured) = session.ok(
+        "buzzard_verify",
+        json!({ "paths": ["lv-mqtt-broker", "lv-mqtt-broker/test-simple-connection.vi"] }),
+    );
+    assert_eq!(
+        text,
+        "Checked 1 file: 0 with a state machine (0 state machines, 0 string/queue machines), 1 \
+         without.\nNo findings.\n"
+    );
+    assert_eq!(structured["files"], json!([]));
+
+    for (arguments, expected) in [
+        (json!({}), "missing required argument `paths`"),
+        (json!({ "paths": [] }), "must name at least one file"),
+        (json!({ "paths": [""] }), "contains an empty path"),
+        (json!({ "paths": "x" }), "must be an array of strings"),
+        (
+            json!({ "paths": ["nope.vi"] }),
+            "path does not exist: nope.vi",
+        ),
+        (
+            json!({ "paths": ["."], "format": "svg" }),
+            "argument `format` must be one of: text, json, dot",
+        ),
+        (
+            json!({ "paths": ["."], "refresh": true }),
+            "unknown argument `refresh`",
+        ),
+    ] {
+        let message = session.fails("buzzard_verify", arguments);
+        assert!(message.contains(expected), "{message}");
+    }
+}
+
+#[test]
+fn check_reports_state_machine_findings() {
+    let mut session = Session::new(machines());
+    let (text, structured) = session.ok("buzzard_check", json!({ "paths": ["jki-state-machine"] }));
+    assert_eq!(structured["summary"]["by_code"]["BZ203"], 3);
+    assert!(text.contains(
+        "jki-state-machine/new-support-vis-examples.vi: warning[BZ203]: string/queue state \
+         machine at while loop #70, case structure #177: state `Action: Step 2` is enqueued"
+    ));
+    let (_, rules) = session.ok("buzzard_rules", json!({}));
+    let codes: Vec<&str> = rules["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rule| rule["code"].as_str().unwrap())
+        .collect();
+    assert!(codes.ends_with(&["BZ201", "BZ202", "BZ203"]));
 }

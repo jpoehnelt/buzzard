@@ -12,7 +12,7 @@ The workspace has five crates. Each crate depends only on crates listed above it
 | `crates/buzzard-lint` | Lint rules, dataflow checks, the project XML parser, the dependency graph, SARIF, diagram rendering, the semantic diff, the state machine checks, and the `ViInspector` backend trait |
 | `crates/buzzard-ls` | The language server: engine, ordered update worker, file watching, and fuzzy symbol search |
 | `crates/buzzard-mcp` | The Model Context Protocol server and its tools |
-| `crates/buzzard-cli` | The `buzzard` binary with the `check`, `inspect`, `diff`, `lsp`, and `mcp` subcommands |
+| `crates/buzzard-cli` | The `buzzard` binary with the `check`, `inspect`, `diff`, `verify`, `lsp`, and `mcp` subcommands |
 
 `editors/vscode` is a TypeScript VS Code extension over `buzzard lsp`. It is outside the Cargo workspace and has its own `npm` scripts (`lint`, `compile`, `test`, `package`).
 
@@ -43,18 +43,22 @@ Lints are clippy and rustdoc, both with `-D warnings`. The lint policy is `[work
 - The tests in `crates/buzzard-cli/tests/` run the built binary and write synthetic `.vi` files with the helpers in `tests/common/mod.rs`.
 - `crates/buzzard-rsrc/tests/conformance.rs` parses the real binaries in `tests/fixtures` and compares them with golden snapshots in `tests/snapshots`. To regenerate the snapshots, run `BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance`, then review the diff before committing.
 - Fixture files are byte-exact copies of upstream files (`.gitattributes`). Do not edit them. A new fixture records its source and licence, as `crates/buzzard-lint/tests/fixtures/project/README.md` does.
+- `crates/buzzard-lint/tests/verify.rs` tests the state machine extraction on the real files in `tests/fixtures/verify` and on diagrams built by `tests/verify/build.rs`. Real classic enumeration machines have no licence and are not in the repo; `real_machines_outside_the_repository` and `damage_to_the_real_machines_proves_nothing_new` check them when `BUZZARD_FSM_SAMPLES` points at clones (run with `-- --ignored`).
 
-Two invariants have tests that enforce them:
+Three invariants have tests that enforce them:
 
 - Output is byte-identical across runs, for example `check_output_is_byte_identical_across_runs` in `crates/buzzard-cli/tests/cli.rs` and `parsing_is_deterministic` in `crates/buzzard-rsrc/tests/conformance.rs`.
-- Truncated or corrupted input returns an error and never panics, for example `hostile_input_never_panics` in `crates/buzzard-rsrc/tests/conformance.rs`.
+- Truncated or corrupted input returns an error and never panics, for example `hostile_input_never_panics` and `hostile_state_machine_fields_never_panic` in `crates/buzzard-rsrc/tests/conformance.rs`.
+- A damaged file never gains a proven finding. The diagram decoder records everything it skips as a `Loss` on the `Diagram`, and a diagram with a loss is not searched for classic state machines. `a_damaged_heap_never_adds_a_proven_finding` in `crates/buzzard-lint/tests/verify.rs` changes single bytes of the inflated heap of each fixture and checks both that and that nothing is gone from a decoded diagram without a recorded loss; `BUZZARD_HEAP_DAMAGE_STEP=1` makes it try every byte. `every_loss_of_the_decoder_is_recorded` in `crates/buzzard-rsrc/tests/conformance.rs` covers each kind of loss. A decoder change that skips something new records a loss for it.
+- The state machine model over-approximates the diagram: anything the extraction cannot follow becomes `Successors::Unknown`, `Stop::Maybe` or an unknown initial state, never a guess. `an_unknowable_next_state_is_unknown_and_claims_nothing` and its neighbours in `crates/buzzard-lint/tests/verify.rs` enforce it. A change that makes the extraction follow something new documents the assumption in `crates/buzzard-lint/src/verify/extract.rs` and adds the case to those tests.
 
 ## Contracts
 
 These are the surfaces that users and other tools depend on. Check them when you judge a change's blast radius.
 
-- Rule codes (`BZ000` and up) are defined in `RULES` in `crates/buzzard-lint/src/rules.rs`. Users pass them to `--ignore`, and SARIF output uses them as `ruleId`. Renaming a code breaks user configs and code scanning history.
-- `buzzard check` prints `--format human`, `json`, or `sarif`. `buzzard inspect` prints `--format markdown`, `json`, `svg`, `dot`, or `mermaid`. `buzzard diff` prints `--format text`, `markdown`, or `json`, and exits 0 when the two files are the same, 1 when they differ, and 2 on an error.
+- Rule codes (`BZ000` and up) are defined in `RULES` in `crates/buzzard-lint/src/rules.rs`. Users pass them to `--ignore`, and SARIF output uses them as `ruleId`. Renaming a code breaks user configs and code scanning history. `BZ201`, `BZ202` and `BZ203` are the state machine findings; their messages end in `(proven)`, `(structural, not proven)` or `(heuristic, not proven)`, and `README.md` states what each means. Do not label a finding proven unless it follows from the over-approximating model. A fact about the wiring that says nothing about what runs is structural.
+- `buzzard check` prints `--format human`, `json`, or `sarif`. `buzzard inspect` prints `--format markdown`, `json`, `svg`, `dot`, or `mermaid`. `buzzard diff` prints `--format text`, `markdown`, or `json`, and exits 0 when the two files are the same, 1 when they differ, and 2 on an error. `buzzard verify` prints `--format text`, `json`, or `dot`, and exits 0 when it has no findings, 1 when it has any, and 2 on an error; a file it cannot parse is listed and does not change the status.
+- The JSON of `buzzard inspect` and `buzzard verify` is the serialized form of `BlockDiagram` (`crates/buzzard-rsrc/src/diagram.rs`) and `Verified` (`crates/buzzard-lint/src/verify/report.rs`). Optional diagram fields (`constant`, `numeric`, `tunnel`, `param`, `selector`, `loop_info`, `losses`) are left out when absent or empty.
 - `buzzard mcp` serves the tools listed in `README.md` over stdio. Agents depend on the tool names and their argument schemas.
 - `check` exits 0 when it finds no problems and 1 when it finds any, unless `--exit-zero` is set. A file it cannot parse is a `BZ000` problem, not an error. It exits 2 for an unknown `--ignore` code or a path that does not exist. `inspect` exits 2 when it cannot read the file. CI pipelines gate on these statuses.
 - The language server implements the standard methods listed in `README.md`, plus the custom requests `buzzard/inspect` and `buzzard/exportAst` in `crates/buzzard-ls/src/server.rs`. Editor clients depend on their JSON shape.
