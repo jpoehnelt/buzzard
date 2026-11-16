@@ -17,7 +17,9 @@ The workspace has six crates. Each crate depends only on crates listed above it.
 
 `editors/vscode` is a TypeScript VS Code extension over `buzzard lsp`. It is outside the Cargo workspace and has its own `npm` scripts (`lint`, `compile`, `test`, `package`).
 
-`README.md` holds the durable docs: usage, rules, language server features, design goals, and current limitations. The repo has no design records, ADRs, changelog, or changesets.
+`README.md` holds the durable docs: usage, rules, language server features, design goals, and current limitations. `RELEASING.md` holds the steps for publishing the crates to crates.io. The repo has no design records, ADRs, changelog, or changesets.
+
+Each crate has its own `README.md`, `LICENSE` and `NOTICE`, because `cargo package` takes files from the crate's directory only. The `include` list in each `Cargo.toml` keeps a package to `src`, `examples` and those three files; tests and fixtures are not packaged. Its patterns start with `/`, because a pattern without one matches at any depth. The `LICENSE` files are copies of the root one, and only `crates/buzzard-rsrc/NOTICE` carries the LVKit section of the root `NOTICE`. The code examples in the crate READMEs are compiled as doctests (`ReadmeDoctests` at the end of each `src/lib.rs`).
 
 ## Checks
 
@@ -30,10 +32,13 @@ CI is `.github/workflows/ci.yml`. It runs every job on every pull request, merge
 | `test` | `cargo test --workspace --locked`, on Ubuntu, macOS, and Windows |
 | `msrv` | `cargo +1.91 check --workspace --all-targets --locked`, using the `rust-version` in `Cargo.toml` |
 | `deny` | `cargo deny check`, configured in `deny.toml`: RustSec advisories, licenses, wildcard versions and sources |
+| `package` | `cargo package --workspace --locked`, with Cargo 1.90 or later. It builds every crate from its packaged files and publishes nothing. Delete `target/package` afterwards |
 | `tdms-oracle` | `BUZZARD_TDMS_ORACLE=<python with npTDMS and pytest> BUZZARD_TDMS_ORACLE_STRICT=1 cargo test -p buzzard-tdms --test oracle`, on Ubuntu. Without the first variable the test passes without comparing anything |
 | `ci` | None. It fails when any job above failed or was cancelled, and it is the job meant for branch protection. |
 
 CI uses no secrets, so pull requests from forks run every job.
+
+`.github/workflows/release.yml` is not a check. It publishes to crates.io and is started by hand only (`workflow_dispatch`); see `RELEASING.md`. Do not run `cargo publish` without `--dry-run`, create a tag, or add a trigger to that workflow: a published version is permanent, and the owner starts every release.
 
 To run one integration test file, use `cargo test -p <crate> --test <file>`, for example `cargo test -p buzzard-lint --test rules`. To run unit tests by name, use `cargo test -p <crate> --lib <name>`.
 
@@ -44,6 +49,7 @@ Lints are clippy and rustdoc, both with `-D warnings`. The lint policy is `[work
 - Unit tests sit beside the code in `#[cfg(test)] mod tests`, or in a `tests.rs` submodule such as `crates/buzzard-lint/src/project/tests.rs`. Integration tests live in `crates/<crate>/tests/`.
 - The tests in `crates/buzzard-cli/tests/` run the built binary and write synthetic `.vi` files with the helpers in `tests/common/mod.rs`.
 - `crates/buzzard-rsrc/tests/conformance.rs` parses the real binaries in `tests/fixtures` and compares them with golden snapshots in `tests/snapshots`. To regenerate the snapshots, run `BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance`, then review the diff before committing.
+- `crates/buzzard-cli/tests/packaging.rs` compares each crate's `LICENSE` with the root one, checks what each crate's `NOTICE` holds, and checks the `include` list and `readme` of each `Cargo.toml`. After a change to the root `LICENSE` or `NOTICE`, copy it into the crates.
 - Fixture files are byte-exact copies of upstream files (`.gitattributes`). Do not edit them. A new fixture records its source and licence, as `crates/buzzard-lint/tests/fixtures/project/README.md` does.
 - `crates/buzzard-lint/tests/verify.rs` tests the state machine extraction on the real files in `tests/fixtures/verify` and on diagrams built by `tests/verify/build.rs`. Real classic enumeration machines have no licence and are not in the repo; `real_machines_outside_the_repository` and `damage_to_the_real_machines_proves_nothing_new` check them when `BUZZARD_FSM_SAMPLES` points at clones (run with `-- --ignored`).
 
@@ -76,7 +82,9 @@ These are the surfaces that users and other tools depend on. Check them when you
 - The language server implements the standard methods listed in `README.md`, plus the custom requests `buzzard/inspect` and `buzzard/exportAst` in `crates/buzzard-ls/src/server.rs`. Editor clients depend on their JSON shape.
 - `buzzard tdms info <file>` prints `--format text` or `json` and exits 0, or 2 when the file cannot be opened; anomalies such as a truncated last segment are part of the report and do not change the status. The JSON is the `InfoJson` struct in `crates/buzzard-cli/src/tdms_cmd.rs`: `file`, `size`, `segments`, `versions`, `index` (`data_file`, `index_file` or `index_file_rejected`), `anomalies` (each with `kind` from `Anomaly::kind` and `message`), `properties`, and `groups` with their `channels` (`name`, `path`, `type`, `length`, optional `unit`, `waveform`, `scalers`, `scaling`, and `properties`). Type names are those of `DataType::name`. Tools that read the report depend on these names.
 - `buzzard tdms export <file> --out <path> [--channels ...] [--format parquet|csv] [--compression snappy|none] [--raw] [--threads N]` exits 0, or 2 on any error (unreadable file, unknown channel or group name, a write failure), and leaves no output file behind on an error. Columns are named `group/channel` (`.re` and `.im` for complex channels) with a leading `time_s` when the channels share their waveform timing. The Parquet key-value metadata keys (`tdms.file.*`, `tdms.group.*`, `tdms.channel.*`, `buzzard.channel.*`, `buzzard.time.*`, `buzzard.tdms.version`) are listed in `crates/buzzard-tdms/src/export/parquet.rs`; analytics pipelines depend on the column names and on these keys. The same input and options give the same bytes (`export_writes_parquet_by_default_and_is_deterministic` in `crates/buzzard-cli/tests/tdms.rs`).
-- The public API of `buzzard-tdms` (`TdmsFile`, `Group`, `Channel`, `OpenOptions`, `Error`, `Anomaly`, `export`) is what other programs build on. `Error`, `Anomaly`, `DataType`, `PropertyValue`, `Column` and `Scaling` are `#[non_exhaustive]`.
+- The public API of `buzzard-tdms` (`TdmsFile`, `Group`, `Channel`, `OpenOptions`, `Error`, `Anomaly`, `export`) is what other programs build on. `Error`, `Anomaly`, `DataType`, `PropertyValue`, `Column`, `Scaling` and `export::parquet::Compression` are `#[non_exhaustive]`.
+- Once released on crates.io, the public APIs of `buzzard-tdms` and `buzzard-rsrc` are published surfaces: a breaking change needs a new minor version while the crates are at 0.x, and a published version cannot be changed. That includes the builders (`buzzard_tdms::build`, `buzzard_rsrc::builder`), which are public test support. In `buzzard-rsrc`, `RsrcError`, `Loss`, `DataType`, `RefKind`, `NumericType`, `Value`, `SelectorKind` and `TunnelMode` are `#[non_exhaustive]`; `SelectorMatch`, `PathKind`, `FileKind` and `Direction` are matched exhaustively by `buzzard-lint` and are not. `buzzard-lint`, `buzzard-ls` and `buzzard-mcp` are published only so that `cargo install buzzard-cli` works; their READMEs say that their API may change in any release.
+- The crate names on crates.io (`buzzard-rsrc`, `buzzard-lint`, `buzzard-ls`, `buzzard-mcp`, `buzzard-tdms`, `buzzard-cli`) and the binary name `buzzard` are permanent once published.
 - Input formats are binary RSRC files (the extensions in `RSRC_EXTENSIONS` in `crates/buzzard-rsrc/src/lib.rs`) and project XML files (`.lvproj`, `.lvlib`, `.lvclass`), saved by the LabVIEW IDE, and TDMS measurement files (`.tdms`, with an optional `.tdms_index` file beside them) written by data-acquisition software.
 
 ## Running and measuring

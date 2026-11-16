@@ -1,0 +1,158 @@
+name: Release
+
+# Publishes the crates to crates.io. Started by hand only: there is no push,
+# pull request, tag or schedule trigger, so nothing a contributor does can
+# start it. See RELEASING.md for the steps around it.
+on:
+  workflow_dispatch:
+    inputs:
+      crates:
+        description: "Which crates: tdms (buzzard-tdms alone) or all (the six, in dependency order)"
+        type: choice
+        options: [tdms, all]
+        default: tdms
+        required: true
+      dry_run:
+        description: "Dry run: package and verify, upload nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One release at a time, and never cancelled halfway through a list of crates.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+jobs:
+  # Every job of ci.yml, on the commit being released. Its `package` job
+  # builds each crate from its packaged files.
+  checks:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # What `cargo publish` would do, without the upload. Has no access to
+  # crates.io: no token is requested and `id-token` is not granted.
+  dry-run:
+    if: ${{ inputs.dry_run }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - name: Package and verify without uploading
+        env:
+          CRATE_SET: ${{ inputs.crates }}
+        run: |
+          set -euo pipefail
+          case "$CRATE_SET" in
+            tdms) cargo publish --dry-run --locked -p buzzard-tdms ;;
+            all) cargo publish --dry-run --locked --workspace ;;
+            *) echo "::error::unknown crate set '$CRATE_SET'"; exit 1 ;;
+          esac
+          {
+            echo "### Dry run: nothing was uploaded"
+            echo
+            echo "| Package | Bytes |"
+            echo "| --- | --- |"
+            for file in target/package/*.crate; do
+              echo "| $(basename "$file") | $(stat -c %s "$file") |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The upload. A version that crates.io already has is skipped, so a run
+  # that failed halfway can be started again.
+  publish:
+    if: ${{ !inputs.dry_run }}
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The trusted publisher of each crate on crates.io names this workflow
+    # file and this environment. Give the environment required reviewers and
+    # restrict it to `main` in the repository settings.
+    environment: release
+    permissions:
+      contents: read
+      # Lets the job ask GitHub for the OIDC token that crates.io exchanges
+      # for a publish token.
+      id-token: write
+    steps:
+      - name: Refuse to publish from anything but main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::releases are published from main, not from $GITHUB_REF"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      # Trusted Publishing: exchanges the job's OIDC token for a crates.io
+      # token that lasts 30 minutes, and revokes it when the job ends. It
+      # works only for a crate that already exists on crates.io and has this
+      # workflow as a trusted publisher (RELEASING.md, "The first release").
+      - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
+        id: auth
+      - name: Publish in dependency order
+        env:
+          CRATE_SET: ${{ inputs.crates }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          set -euo pipefail
+          case "$CRATE_SET" in
+            tdms) crates="buzzard-tdms" ;;
+            # A crate comes after every crate it depends on.
+            all) crates="buzzard-rsrc buzzard-tdms buzzard-lint buzzard-ls buzzard-mcp buzzard-cli" ;;
+            *) echo "::error::unknown crate set '$CRATE_SET'"; exit 1 ;;
+          esac
+
+          metadata=$(cargo metadata --no-deps --format-version 1 --locked)
+
+          # Whether crates.io has this version, from the sparse index: one
+          # JSON object per line and per version, yanked ones included.
+          # The names are longer than three characters, so the path is the
+          # first two characters, the next two, then the name.
+          published() {
+            local name=$1 version=$2 status
+            status=$(curl --silent --show-error --retry 3 --output index.json \
+              --write-out '%{http_code}' \
+              "https://index.crates.io/${name:0:2}/${name:2:2}/${name}")
+            case "$status" in
+              200) jq --exit-status --arg v "$version" 'select(.vers == $v)' index.json > /dev/null ;;
+              404) return 1 ;;
+              *) echo "::error::the crates.io index answered $status for $name"; exit 1 ;;
+            esac
+          }
+
+          for name in $crates; do
+            version=$(jq --raw-output --arg n "$name" \
+              '.packages[] | select(.name == $n) | .version' <<< "$metadata")
+            test -n "$version"
+            if published "$name" "$version"; then
+              echo "::notice::$name $version is already on crates.io; skipped"
+              echo "- $name $version: already published, skipped" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            # The `package` job of the checks built this crate from its
+            # packaged files, so the upload does not build it again: the
+            # token would not outlive six builds. cargo waits until the
+            # index lists the new version before it returns.
+            cargo publish --locked --no-verify -p "$name"
+            echo "- $name $version: published" >> "$GITHUB_STEP_SUMMARY"
+          done

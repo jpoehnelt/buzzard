@@ -1,0 +1,81 @@
+buzzard-rsrc
+Copyright (c) 2026 buzzard contributors
+
+buzzard-rsrc is part of buzzard (https://github.com/jpoehnelt/buzzard) and is
+licensed under the Apache License, Version 2.0 (see LICENSE).
+
+buzzard is not affiliated with, authorized by, endorsed by, or sponsored by
+National Instruments Corporation. LabVIEW, NI, and National Instruments are
+trademarks of National Instruments Corporation, used only to identify the
+file format that buzzard reads.
+
+One generated file of this package contains data taken from a third-party
+project under the same licence. The section below is the one in the NOTICE
+of the buzzard repository, unchanged, so its paths are those of the
+repository: in this package the file is src/blocks/heap/primitives.rs, and
+tools/gen_primitives.py is not included.
+
+
+Built-in function names, from LVKit
+===================================
+
+File:     crates/buzzard-rsrc/src/blocks/heap/primitives.rs
+Source:   LVKit, https://github.com/pragmatest-dev/lvkit
+          src/lvkit/data/primitives/*.json
+          commit b0430f03e4a6a0ce9b1015215efb1cce6d7509ff
+Licence:  Apache License, Version 2.0 (full text in LICENSE)
+          Copyright 2025-2026 Ryan Friedman
+
+What was taken: for each built-in function, its resource id, its name, and
+LVKit's `verified` flag. Nothing else was copied: no descriptions, no
+documentation links, no terminal names, no code, and nothing from LVKit's
+standard-library data (src/lvkit/data/vilib).
+
+Changes made (Apache-2.0, section 4(b)): the data was modified. The entries
+of 77 JSON files were flattened into one Rust table sorted by id, reduced to
+the three fields above, and 3 entries whose name is a placeholder ("Unknown",
+"Unknown ...") were left out, leaving 687 of 690. The table is produced by
+tools/gen_primitives.py and is not edited by hand.
+
+Provenance of the names: 487 of the 690 entries in LVKit (484 of the 687 kept
+here) are tagged by LVKit as coming from "vi-scripting-nodes-lv2025". That is
+a list of function ids, names and terminals that a third party produced with
+the VI Scripting interface of LabVIEW 2025 and attached, without a licence
+statement, to LVKit issue #59 (https://github.com/pragmatest-dev/lvkit/issues/59).
+LVKit merged it into its table. buzzard takes the result from LVKit under
+LVKit's licence and has not seen the original export. The owner of buzzard
+accepted this origin knowingly: the names are facts about the file format,
+not creative text. The table is kept in one generated file so that it can be
+replaced by an independently derived one. buzzard has not checked any name
+against LabVIEW; 162 entries are marked verified by LVKit, the rest are not.
+
+The NOTICE file distributed with LVKit at that commit reads as follows
+(reproduced as Apache-2.0, section 4(d) requires; its statements are LVKit's,
+about LVKit, and the paragraph above qualifies the fourth and fifth):
+
+    lvkit
+    Copyright 2025-2026 Ryan Friedman
+
+    This product is an independent, clean-room project. It is not affiliated with,
+    authorized by, endorsed by, or sponsored by National Instruments Corporation.
+
+    LabVIEW, NI, and National Instruments are trademarks of National Instruments
+    Corporation, used herein only to identify the file format and software with
+    which lvkit interoperates (nominative use).
+
+    lvkit was developed using only publicly available information: public NI
+    documentation, the open-source pylabview project, and observation of VI files.
+    It was built without installing or running LabVIEW or any NI software, and
+    without the use of any NI source code, internal or non-public specifications,
+    or confidential or proprietary materials.
+
+    lvkit's mappings of LabVIEW primitives and standard-library VIs (in
+    src/lvkit/data/) are lvkit's own definitions, derived purely by inference from
+    public documentation and from the VI XML produced by pylabview. They are
+    best-effort inferences, not authoritative reproductions of any NI
+    specification, and they contain no NI documentation text or artwork.
+
+    lvkit depends on, but does not include, pylabview
+    (https://github.com/mefistotelis/pylabview).
+
+    See PROVENANCE.md for detail.

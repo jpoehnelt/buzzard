@@ -9,6 +9,13 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["tdms", "measurement", "daq", "parquet", "parser"]
 categories = ["parser-implementations", "science", "encoding"]
+# The package is the source. The tests stay in the repository, with the
+# measurement file they read (CC-BY-4.0, see the root NOTICE).
+include = ["/src/**", "/examples/**", "/README.md", "/LICENSE", "/NOTICE"]
+
+# docs.rs builds with the Parquet export so that `export::parquet` is documented.
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = []

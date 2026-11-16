@@ -6,9 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "README.md"
 keywords = ["rsrc", "parser", "binary-format", "resource-fork"]
 categories = ["parser-implementations", "encoding"]
+# The package is the source. The tests stay in the repository: they need
+# fixtures and sibling crates that a package does not carry.
+include = ["/src/**", "/examples/**", "/README.md", "/LICENSE", "/NOTICE"]
 
 [dependencies]
 binrw.workspace = true

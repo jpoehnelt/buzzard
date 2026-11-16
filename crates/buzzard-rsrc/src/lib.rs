@@ -34,3 +34,8 @@ pub use version::{Stage, Version};
 /// File extensions (lowercase, without the dot) that hold RSRC containers
 /// this crate can summarize.
 pub const RSRC_EXTENSIONS: [&str; 5] = ["vi", "ctl", "vit", "ctt", "vim"];
+
+/// Compiles the examples of the crate's `README.md` as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

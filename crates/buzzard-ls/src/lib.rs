@@ -15,3 +15,8 @@ mod server;
 mod worker;
 
 pub use server::run_stdio;
+
+/// Compiles the examples of the crate's `README.md` as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

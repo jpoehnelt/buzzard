@@ -53,6 +53,7 @@ struct TypeDesc {
 /// runtime resource are named; the rest are grouped as `Other`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum RefKind {
     /// Datalog file (kind 1).
     DataLog,
@@ -135,6 +136,7 @@ impl RefKind {
 /// Coarse classification of a terminal's data type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DataType {
     /// The standard error cluster: Boolean status, 32-bit code, string source.
     ErrorCluster,
@@ -390,6 +392,7 @@ fn string_constant(bytes: &[u8]) -> Option<Value> {
 /// How a number is stored. Looks through type definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum NumericType {
     /// A signed 8-bit integer.
     I8,
@@ -470,6 +473,7 @@ impl NumericType {
 /// The value of a block-diagram constant of a simple type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Value {
     /// A Boolean.
     Boolean(bool),

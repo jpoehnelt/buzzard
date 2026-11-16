@@ -53,3 +53,8 @@ pub use types::{
     Column, Complex32, Complex64, DataType, Property, PropertyValue, Sample, Timestamp,
     EPOCH_OFFSET_SECONDS,
 };
+
+/// Compiles the examples of the crate's `README.md` as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;

@@ -50,6 +50,7 @@ impl Default for ExportOptions {
 
 /// What an export wrote.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Exported {
     /// Number of rows.
     pub rows: u64,
