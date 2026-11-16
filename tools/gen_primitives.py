@@ -126,7 +126,7 @@ def render(entries, skipped, scripted, scripted_in_source, commit):
         f"//! (<{REPO}>, commit",
         f"//! `{commit}`),",
         "//! Apache License 2.0, Copyright 2025-2026 Ryan Friedman. See `NOTICE` and",
-        "//! `LICENSES/Apache-2.0.txt` at the repository root.",
+        "//! `LICENSE` at the repository root.",
         "//!",
         "//! Modified: only the id, the function name and the `verified` flag of each",
         "//! entry were copied, flattened into one table sorted by id. Entries whose",

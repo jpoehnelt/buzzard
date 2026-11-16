@@ -334,7 +334,7 @@ be.
 
 ## Licence boundary
 
-This crate is MIT. npTDMS is LGPL-3.0, and none of it is here: no code,
+This crate is Apache-2.0. npTDMS is LGPL-3.0, and none of it is here: no code,
 no test, no fixture was copied or ported. The reader was written from the
 vendor's format description, from research notes that state format facts
 in prose (some of them first established by reading npTDMS, and recorded
