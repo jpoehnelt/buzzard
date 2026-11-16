@@ -3,7 +3,7 @@
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -17,7 +17,13 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, Notify};
 use tower_lsp::jsonrpc::{Error, Request, Result};
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeWatchedFilesParams,
+    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Range,
+    ReferenceParams, ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind, Url,
+    WorkspaceSymbolParams,
+};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use tower_service::Service;
 
@@ -37,9 +43,7 @@ struct Backend {
 }
 
 fn lock(engine: &Mutex<Engine>) -> MutexGuard<'_, Engine> {
-    engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    engine.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn to_url(path: &Path) -> Option<Url> {
@@ -49,7 +53,7 @@ fn to_url(path: &Path) -> Option<Url> {
 
 fn to_path(uri: &Url) -> Result<PathBuf> {
     uri.to_file_path()
-        .map_err(|_| Error::invalid_params(format!("not a file URI: {uri}")))
+        .map_err(|()| Error::invalid_params(format!("not a file URI: {uri}")))
 }
 
 fn file_location(path: &Path) -> Option<Location> {
@@ -120,7 +124,7 @@ async fn refresh(
     if changes.is_empty() {
         return;
     }
-    let engine = engine.clone();
+    let engine = Arc::clone(engine);
     let updates = tokio::task::spawn_blocking(move || lock(&engine).apply(changes)).await;
     publish(client, updates.unwrap_or_default()).await;
 }
@@ -137,11 +141,11 @@ impl Backend {
         for root in lock(&self.engine).roots() {
             let _ = debouncer.watcher().watch(root, RecursiveMode::Recursive);
         }
-        *self.watcher.lock().unwrap_or_else(|p| p.into_inner()) = Some(debouncer);
+        *self.watcher.lock().unwrap_or_else(PoisonError::into_inner) = Some(debouncer);
 
         let client = self.client.clone();
-        let engine = self.engine.clone();
-        let inspector = self.inspector.clone();
+        let engine = Arc::clone(&self.engine);
+        let inspector = Arc::clone(&self.inspector);
         tokio::spawn(async move {
             while let Some(paths) = rx.recv().await {
                 refresh(&client, &engine, &inspector, paths).await;
@@ -152,6 +156,10 @@ impl Backend {
     /// `buzzard/inspect`: metadata and graph neighbours of one file as JSON.
     /// A project, library or class answers with `project` instead of
     /// `metadata`.
+    #[expect(
+        clippy::unused_async,
+        reason = "tower-lsp registers custom methods as functions that return a future"
+    )]
     async fn inspect(&self, params: InspectParams) -> Result<Value> {
         let path = to_path(&params.uri)?;
         let engine = lock(&self.engine);
@@ -231,8 +239,9 @@ impl LanguageServer for Backend {
             .iter()
             .filter_map(|folder| folder.uri.to_file_path().ok())
             .collect();
+        // `rootUri` is superseded by workspace folders; it is the fallback
+        // for clients that send none.
         if roots.is_empty() {
-            #[allow(deprecated)]
             roots.extend(params.root_uri.and_then(|uri| uri.to_file_path().ok()));
         }
         *lock(&self.engine) = Engine::new(roots, LintConfig::default());
@@ -254,7 +263,7 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         // Watch before scanning so that a save during the scan is not missed.
         self.start_watcher();
-        let engine = self.engine.clone();
+        let engine = Arc::clone(&self.engine);
         let updates = tokio::task::spawn_blocking(move || lock(&engine).scan()).await;
         publish(&self.client, updates.unwrap_or_default()).await;
     }
@@ -262,7 +271,7 @@ impl LanguageServer for Backend {
     async fn shutdown(&self) -> Result<()> {
         self.watcher
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(PoisonError::into_inner)
             .take();
         Ok(())
     }
@@ -303,7 +312,10 @@ impl LanguageServer for Backend {
         let out = symbols
             .into_iter()
             .filter_map(|symbol| {
-                #[allow(deprecated)]
+                #[expect(
+                    deprecated,
+                    reason = "`SymbolInformation::deprecated` is superseded by `tags`, but a struct literal must still set it"
+                )]
                 Some(SymbolInformation {
                     kind: match symbol.kind {
                         engine::SymbolKind::Vi => SymbolKind::FUNCTION,
@@ -344,10 +356,10 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, request: Request) -> Self::Future {
-        let is_exit = request.method() == "exit";
-        let response = self.inner.call(request);
-        let exit = self.exit.clone();
+    fn call(&mut self, req: Request) -> Self::Future {
+        let is_exit = req.method() == "exit";
+        let response = self.inner.call(req);
+        let exit = Arc::clone(&self.exit);
         Box::pin(async move {
             let response = response.await;
             if is_exit {
@@ -373,7 +385,7 @@ pub async fn run_stdio() {
     let exit = Arc::new(Notify::new());
     let service = ExitAware {
         inner: service,
-        exit: exit.clone(),
+        exit: Arc::clone(&exit),
     };
     let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
     tokio::select! {

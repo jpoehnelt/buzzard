@@ -12,6 +12,16 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
+/// `file://` URI for a path, in the form the server reports.
+fn file_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
 struct Session {
     child: Child,
     stdin: ChildStdin,
@@ -28,9 +38,9 @@ impl Session {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .unwrap();
-        let stdin = child.stdin.take().unwrap();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+            .expect("start `buzzard lsp`");
+        let stdin = child.stdin.take().expect("stdin is piped");
+        let mut stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
         let (tx, incoming) = mpsc::channel();
         std::thread::spawn(move || loop {
             let mut length = None;
@@ -51,7 +61,8 @@ impl Session {
             if stdout.read_exact(&mut body).is_err() {
                 return;
             }
-            if tx.send(serde_json::from_slice(&body).unwrap()).is_err() {
+            let message = serde_json::from_slice(&body).expect("the server sends JSON");
+            if tx.send(message).is_err() {
                 return;
             }
         });
@@ -64,10 +75,11 @@ impl Session {
         }
     }
 
-    fn send(&mut self, message: Value) {
+    fn send(&mut self, message: &Value) {
         let body = message.to_string();
-        write!(self.stdin, "Content-Length: {}\r\n\r\n{body}", body.len()).unwrap();
-        self.stdin.flush().unwrap();
+        write!(self.stdin, "Content-Length: {}\r\n\r\n{body}", body.len())
+            .expect("write to the server");
+        self.stdin.flush().expect("flush to the server");
     }
 
     fn notify(&mut self, method: &str, params: Value) {
@@ -75,7 +87,7 @@ impl Session {
         if !params.is_null() {
             message["params"] = params;
         }
-        self.send(message);
+        self.send(&message);
     }
 
     /// Wait for the first message matching `wanted`, keeping the others.
@@ -103,7 +115,7 @@ impl Session {
         if !params.is_null() {
             message["params"] = params;
         }
-        self.send(message);
+        self.send(&message);
         let response = self.wait_for(method, |m| m["id"] == id && m.get("method").is_none());
         assert!(
             response.get("error").is_none(),
@@ -119,9 +131,16 @@ impl Session {
                 && m["params"]["uri"]
                     .as_str()
                     .is_some_and(|uri| uri.ends_with(suffix))
-                && wanted(m["params"]["diagnostics"].as_array().unwrap())
+                && wanted(
+                    m["params"]["diagnostics"]
+                        .as_array()
+                        .expect("published diagnostics are an array"),
+                )
         });
-        message["params"]["diagnostics"].as_array().unwrap().clone()
+        message["params"]["diagnostics"]
+            .as_array()
+            .expect("the matched message has diagnostics")
+            .clone()
     }
 }
 
@@ -133,6 +152,10 @@ impl Drop for Session {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one editor session from `initialize` to `exit`; each step depends on the state the previous ones left"
+)]
 fn full_editor_session() {
     let dir = TempDir::new("lsp");
     dir.vi("main.vi", &CLEAN, &["util.vi"]);
@@ -165,7 +188,7 @@ fn full_editor_session() {
         .iter()
         .map(|s| s["name"].as_str().unwrap())
         .collect();
-    names.sort();
+    names.sort_unstable();
     assert_eq!(names, ["App.lvproj", "main.vi", "util.vi"]);
     let symbols = session.request("workspace/symbol", json!({ "query": "utl" }));
     assert_eq!(symbols[0]["name"], "util.vi");
@@ -222,7 +245,7 @@ fn full_editor_session() {
     let inspected = session.request("buzzard/inspect", json!({ "uri": uri("main.vi") }));
     assert_eq!(inspected["owners"], json!([uri("App.lvproj")]));
     std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
-    session.diagnostics_for("/App.lvproj", |d| d.is_empty());
+    session.diagnostics_for("/App.lvproj", <[Value]>::is_empty);
 
     // The block diagram of a file on request, as a graph or as text.
     let real = fixtures().join("add.vi");
@@ -239,7 +262,7 @@ fn full_editor_session() {
 
     // Saving a fixed file from the IDE is picked up by the file watcher.
     dir.vi("util.vi", &CLEAN, &[]);
-    session.diagnostics_for("/util.vi", |d| d.is_empty());
+    session.diagnostics_for("/util.vi", <[Value]>::is_empty);
 
     // A newly saved file that closes a cycle is reported on both members.
     dir.vi("util.vi", &CLEAN, &["main.vi"]);
@@ -252,7 +275,7 @@ fn full_editor_session() {
 
     // Deleting a file clears diagnostics and updates the graph.
     std::fs::remove_file(dir.0.join("util.vi")).unwrap();
-    session.diagnostics_for("/main.vi", |d| d.is_empty());
+    session.diagnostics_for("/main.vi", <[Value]>::is_empty);
     let symbols = session.request("workspace/symbol", json!({ "query": "util" }));
     assert_eq!(symbols, json!([]));
 

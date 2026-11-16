@@ -37,7 +37,7 @@ pub fn score(query: &str, candidate: &str) -> Option<i32> {
     if wanted.peek().is_some() {
         return None;
     }
-    Some(total - candidate.chars().count() as i32)
+    Some(total - i32::try_from(candidate.chars().count()).unwrap_or(i32::MAX))
 }
 
 #[cfg(test)]

@@ -10,25 +10,37 @@ use buzzard_lint::{
 };
 use buzzard_rsrc::{FileKind, ViMetadata};
 
+/// What kind of file a workspace symbol stands for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SymbolKind {
+    /// A VI, or any other binary file that is not a control.
     Vi,
+    /// A control (`.ctl`).
     Control,
+    /// A `.lvclass` class.
     Class,
+    /// A `.lvlib` library.
     Library,
+    /// A `.lvproj` project.
     Project,
 }
 
+/// One result of a workspace symbol search: a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
+    /// File name, which is what the query is matched against.
     pub name: String,
+    /// What kind of file it is.
     pub kind: SymbolKind,
+    /// Path of the file, as the workspace stores it.
     pub path: PathBuf,
 }
 
 /// Diagnostics to publish for one file; an empty list clears them.
 pub type Update = (PathBuf, Vec<Diagnostic>);
 
+/// The analyzed workspace, its dependency graph, and the diagnostics last
+/// published for each file.
 #[derive(Debug, Default)]
 pub struct Engine {
     roots: Vec<PathBuf>,
@@ -39,6 +51,8 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// An engine for `roots` that has not scanned anything yet; see
+    /// [`Engine::scan`].
     pub fn new(roots: Vec<PathBuf>, config: LintConfig) -> Self {
         Self {
             roots,
@@ -47,6 +61,7 @@ impl Engine {
         }
     }
 
+    /// The roots given to [`Engine::new`].
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
@@ -103,6 +118,7 @@ impl Engine {
         updates
     }
 
+    /// The metadata of the binary file at `path`, if it parsed.
     pub fn metadata(&self, path: &Path) -> Option<&ViMetadata> {
         self.workspace.get(path)?.metadata()
     }
@@ -132,10 +148,12 @@ impl Engine {
         to_owned(self.graph.child_classes(path))
     }
 
+    /// Files that use the file at `path`.
     pub fn callers(&self, path: &Path) -> Vec<PathBuf> {
         to_owned(self.graph.callers(path))
     }
 
+    /// Files that the file at `path` uses.
     pub fn callees(&self, path: &Path) -> Vec<PathBuf> {
         to_owned(self.graph.callees(path))
     }

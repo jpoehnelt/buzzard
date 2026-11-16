@@ -35,6 +35,7 @@ impl EdgeKind {
     }
 }
 
+/// Every file of a workspace and the edges between them.
 #[derive(Debug, Default)]
 pub struct DependencyGraph {
     graph: DiGraph<PathBuf, EdgeKind>,
@@ -42,6 +43,9 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
+    /// Build the graph for a workspace. A link or parent class whose stored
+    /// path matches no file falls back to a file name that is unique in the
+    /// workspace.
     pub fn build(workspace: &Workspace) -> Self {
         let mut graph = DiGraph::new();
         let mut index = HashMap::new();
@@ -153,6 +157,10 @@ impl DependencyGraph {
 
     /// Every group of mutually dependent files, with one concrete cycle
     /// through the group's first member. Groups and members are sorted.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the only `expect` is on a strongly connected component, which is never empty"
+    )]
     pub fn cycles(&self) -> Vec<Cycle> {
         let dependencies = EdgeFiltered::from_fn(&self.graph, |e| e.weight().is_dependency());
         let mut out: Vec<Cycle> = tarjan_scc(&dependencies)
@@ -212,6 +220,7 @@ impl DependencyGraph {
         vec![start]
     }
 
+    /// Number of files in the graph, which is every file in the workspace.
     pub fn file_count(&self) -> usize {
         self.graph.node_count()
     }
@@ -239,6 +248,7 @@ impl DependencyGraph {
     }
 }
 
+/// A circular dependency, as found by [`DependencyGraph::cycles`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cycle {
     /// Every file in the strongly connected group, sorted.
@@ -270,7 +280,7 @@ pub fn resolve(from: &Path, link: &LvPath) -> Option<PathBuf> {
             if component.len() == 1 && cfg!(windows) {
                 out.push(format!("{component}:\\"));
             } else {
-                out.push("/");
+                out = PathBuf::from("/");
                 out.push(component);
             }
         } else {
@@ -293,7 +303,7 @@ mod tests {
         );
         let up = LvPath {
             kind: PathKind::Relative,
-            components: vec!["".into(), "".into(), "lib".into(), "b.vi".into()],
+            components: vec![String::new(), String::new(), "lib".into(), "b.vi".into()],
         };
         assert_eq!(resolve(from, &up).unwrap(), Path::new("proj/lib/b.vi"));
     }

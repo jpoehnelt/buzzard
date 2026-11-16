@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use super::*;
 use buzzard_rsrc::PathKind;
 
@@ -6,19 +8,19 @@ use buzzard_rsrc::PathKind;
 /// from.
 const REAL_LINKS: [(&str, u32, &[&str], &str); 5] = [
     (
-        r##"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!!O!!!!!1N445]O<(:D<'&T=V"53$!!!!!7!!%!"!!!!V..4QN445]O<(:D<'&T=Q!!!!!"##,
+        r#"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!!O!!!!!1N445]O<(:D<'&T=V"53$!!!!!7!!%!"!!!!V..4QN445]O<(:D<'&T=Q!!!!!"#,
         0x1300_8000,
         &["SMO.lvclass"],
         "../../SMO/SMO.lvclass",
     ),
     (
-        r##"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!!U!!!!!1N445]O<(:D<'&T=V"53$!!!!!=!!%!"Q!!!!!$=X*D!V..4QN445]O<(:D<'&T=Q!!!!!"##,
+        r#"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!!U!!!!!1N445]O<(:D<'&T=V"53$!!!!!=!!%!"Q!!!!!$=X*D!V..4QN445]O<(:D<'&T=Q!!!!!"#,
         0x1300_8000,
         &["SMO.lvclass"],
         "../../../../src/SMO/SMO.lvclass",
     ),
     (
-        r##"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!"?!!!!!2N445]O5W6M:F2F=GVJ<G&U;7ZH,GRW9WRB=X.16%AQ!!!!.A!"!!1!!".445]O5W6M:F2F=GVJ<G&U;7ZH'V..4SZ4:7RG6'6S<7FO982J<G=O<(:D<'&T=Q!!!!!"##,
+        r#"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!"?!!!!!2N445]O5W6M:F2F=GVJ<G&U;7ZH,GRW9WRB=X.16%AQ!!!!.A!"!!1!!".445]O5W6M:F2F=GVJ<G&U;7ZH'V..4SZ4:7RG6'6S<7FO982J<G=O<(:D<'&T=Q!!!!!"#,
         0x1300_8000,
         &["SMO.SelfTerminating.lvclass"],
         "../../SMO.SelfTerminating/SMO.SelfTerminating.lvclass",
@@ -26,14 +28,14 @@ const REAL_LINKS: [(&str, u32, &[&str], &str); 5] = [
     // The name has an even length here, so with its length byte a padding
     // byte is needed before the path.
     (
-        r##"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!!_!!!!!1Z445]O65EO<(:D<'&T=Q"16%AQ!!!!)A!"!!=!!!!!!X.S9Q:445]O65E/5UV0,F6*,GRW9WRB=X-!!!!!"##,
+        r#"%Q#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!!_!!!!!1Z445]O65EO<(:D<'&T=Q"16%AQ!!!!)A!"!!=!!!!!!X.S9Q:445]O65E/5UV0,F6*,GRW9WRB=X-!!!!!"#,
         0x1300_8000,
         &["SMO.UI.lvclass"],
         "../../../../src/SMO.UI/SMO.UI.lvclass",
     ),
     // A parent that lives in a library installed under <vilib>.
     (
-        r##"'1#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!#$!!!!!BNH5F"$,8.F=H:J9W6S,8*F<'6B=W5O<(:M;7)45W6S>GFD:5*B=W5O<(:D<'&T=V"53$!!!!"(!!!!"1=]>GFM;7)_"'>35%-64'&C6EF&6S"H5F"$)&.F=H:J9W6S#V.F=H:J9W6#98.F%V.F=H:J9W6#98.F,GRW9WRB=X-!!!!!"##,
+        r#"'1#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!#$!!!!!BNH5F"$,8.F=H:J9W6S,8*F<'6B=W5O<(:M;7)45W6S>GFD:5*B=W5O<(:D<'&T=V"53$!!!!"(!!!!"1=]>GFM;7)_"'>35%-64'&C6EF&6S"H5F"$)&.F=H:J9W6S#V.F=H:J9W6#98.F%V.F=H:J9W6#98.F,GRW9WRB=X-!!!!!"#,
         0x1900_8000,
         &["gRPC-servicer-release.lvlib", "ServiceBase.lvclass"],
         "<vilib>/gRPC/LabVIEW gRPC Servicer/ServiceBase/ServiceBase.lvclass",
@@ -400,7 +402,7 @@ fn entity_expansion_bombs_are_rejected_immediately() {
     bomb.push_str(" <!ENTITY lol0 \"lollollollollollollollollollol\">\n");
     for i in 1..10 {
         let prev = format!("&lol{};", i - 1).repeat(10);
-        bomb.push_str(&format!(" <!ENTITY lol{i} \"{prev}\">\n"));
+        let _ = writeln!(bomb, " <!ENTITY lol{i} \"{prev}\">");
     }
     bomb.push_str("]>\n<Project><Item Name=\"&lol9;\" URL=\"&lol9;\"/>&lol9;</Project>");
     let started = std::time::Instant::now();
