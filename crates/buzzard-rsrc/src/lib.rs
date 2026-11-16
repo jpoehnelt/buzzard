@@ -7,6 +7,7 @@
 pub mod blocks;
 pub mod builder;
 pub mod container;
+pub mod diagram;
 pub mod error;
 pub mod fourcc;
 pub mod header;
@@ -17,11 +18,13 @@ pub mod version;
 pub use blocks::linkinfo::LinkRef;
 pub use blocks::lvsr::{Reentrancy, ViFlags};
 pub use blocks::path::{LvPath, PathKind};
+pub use blocks::types::{DataType, RefKind};
 pub use container::{Resource, RsrcFile};
+pub use diagram::{BlockDiagram, Diagram, Direction, Node, Terminal, Wire};
 pub use error::{Result, RsrcError};
 pub use fourcc::FourCc;
 pub use header::RsrcHeader;
-pub use metadata::{FileKind, ViMetadata};
+pub use metadata::{read_file, FileKind, ViMetadata};
 pub use version::{Stage, Version};
 
 /// File extensions (lowercase, without the dot) that hold RSRC containers

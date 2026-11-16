@@ -7,6 +7,9 @@ use serde::Serialize;
 use crate::error::{malformed, Result};
 use crate::reader::{decode_text, Reader};
 
+/// Longest flattened path accepted. Real paths are a few hundred bytes.
+pub const MAX_PATH_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathKind {
@@ -38,6 +41,12 @@ impl LvPath {
             _ => return Err(malformed("path", "unknown path signature")),
         };
         let size = r.u32()? as usize;
+        if size > MAX_PATH_BYTES {
+            return Err(malformed(
+                "path",
+                format!("path of {size} bytes is too long"),
+            ));
+        }
         let body_start = r.pos();
         let mut body = Reader::new(r.take(size)?, "path");
         let total = body_start + size;
@@ -72,6 +81,11 @@ impl LvPath {
 
         let mut components = Vec::new();
         while body.remaining() > 0 {
+            // Stop as soon as the declared count is exceeded, so that a
+            // stray signature in front of unrelated data is rejected cheaply.
+            if expected.is_some_and(|n| components.len() >= n) {
+                return Err(malformed("path", "component count does not match"));
+            }
             let raw = if wide { body.pstr16()? } else { body.pstr()? };
             components.push(decode_text(raw));
         }

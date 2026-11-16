@@ -1,0 +1,79 @@
+{
+  "root": {
+    "uid": 3,
+    "nodes": [
+      {
+        "uid": 7,
+        "class": "sRN",
+        "name": null,
+        "terminals": [
+          {
+            "uid": 77,
+            "direction": "output",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 75,
+            "dco_class": "bDConstDCO"
+          },
+          {
+            "uid": 100,
+            "direction": "output",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 98,
+            "dco_class": "bDConstDCO"
+          }
+        ],
+        "diagrams": []
+      },
+      {
+        "uid": 43,
+        "class": "prim",
+        "name": null,
+        "terminals": [
+          {
+            "uid": 51,
+            "direction": "output",
+            "wired": false,
+            "data_type": "numeric",
+            "dco": 52,
+            "dco_class": "overridableParm"
+          },
+          {
+            "uid": 54,
+            "direction": "input",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 55,
+            "dco_class": "parm"
+          },
+          {
+            "uid": 57,
+            "direction": "input",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 58,
+            "dco_class": "parm"
+          }
+        ],
+        "diagrams": []
+      }
+    ],
+    "wires": [
+      {
+        "uid": 104,
+        "source": 100,
+        "sinks": [
+          54
+        ]
+      },
+      {
+        "uid": 81,
+        "source": 77,
+        "sinks": [
+          57
+        ]
+      }
+    ]
+  }
+}

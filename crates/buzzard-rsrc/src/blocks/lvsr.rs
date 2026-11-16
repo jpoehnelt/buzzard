@@ -79,6 +79,15 @@ impl Lvsr {
         self.words.get(word).map(|w| w & mask != 0)
     }
 
+    /// A flag that only exists in files saved by `major` or later. Older
+    /// files have the word but the bit means nothing there.
+    fn flag_since(&self, flag: Flag, major: u8) -> Option<bool> {
+        if self.version.major < major {
+            return None;
+        }
+        self.flag(flag)
+    }
+
     pub fn reentrancy(&self) -> Option<Reentrancy> {
         let reentrant = self.flag(REENTRANT)? || self.flag(PREALLOCATE_CLONES)?;
         Some(if !reentrant {
@@ -92,7 +101,7 @@ impl Lvsr {
 
     pub fn flags(&self) -> ViFlags {
         ViFlags {
-            separate_compiled_code: self.flag(SEPARATE_CODE),
+            separate_compiled_code: self.flag_since(SEPARATE_CODE, 10),
             auto_error_handling: self.flag(AUTO_ERROR_HANDLING),
             debuggable: self.flag(DEBUGGABLE),
             has_breakpoints: self.flag(BREAKPOINTS_SET),
@@ -103,7 +112,7 @@ impl Lvsr {
             clear_indicators: self.flag(CLEAR_INDICATORS),
             saved_for_previous: self.flag(SAVED_FOR_PREVIOUS),
             reentrancy: self.reentrancy(),
-            inline: self.flag(INLINE),
+            inline: self.flag_since(INLINE, 10),
         }
     }
 }
@@ -132,6 +141,25 @@ mod tests {
         assert_eq!(flags.has_breakpoints, Some(false));
         assert_eq!(flags.breakpoint_count, None);
         assert_eq!(flags.reentrancy, Some(Reentrancy::NonReentrant));
+    }
+
+    #[test]
+    fn settings_newer_than_the_file_are_unknown() {
+        // Saved by 8.6: the word exists, but "separate compiled code" and
+        // inlining were introduced in 2010 (version 10).
+        let mut data = 0x0860_8000u32.to_be_bytes().to_vec();
+        data.extend([0u8; 116]);
+        let flags = Lvsr::parse(&data).unwrap().flags();
+        assert_eq!(flags.separate_compiled_code, None);
+        assert_eq!(flags.inline, None);
+        assert_eq!(flags.auto_error_handling, Some(false));
+
+        let mut data = 0x1000_8000u32.to_be_bytes().to_vec();
+        data.extend([0u8; 116]);
+        assert_eq!(
+            Lvsr::parse(&data).unwrap().flags().separate_compiled_code,
+            Some(false)
+        );
     }
 
     #[test]

@@ -26,6 +26,12 @@ pub const LINK_BLOCKS: [&[u8; 4]; 3] = [b"LIvi", b"LIfp", b"LIbd"];
 
 const MAX_NAME_PARTS: u32 = 32;
 const MAX_LOOKBEHIND: usize = 4096;
+/// Bytes of parsing work allowed per byte of block; see [`scan`].
+const WORK_PER_BYTE: usize = 16;
+/// Most heap objects one link is expected to serve.
+const MAX_HEAP_USES: usize = 4096;
+/// Heap object ids are small sequential numbers.
+const MAX_HEAP_UID: u32 = 1 << 24;
 
 /// One reference from a file to another file.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -35,6 +41,9 @@ pub struct LinkRef {
     /// Qualified name: owning libraries followed by the item name.
     pub qualified_name: Vec<String>,
     pub path: LvPath,
+    /// Unique ids of the heap objects (for example subVI call nodes) that
+    /// use this link. Empty for links that are not tied to heap objects.
+    pub heap_uids: Vec<u32>,
 }
 
 impl LinkRef {
@@ -49,21 +58,46 @@ impl LinkRef {
 
 /// Extract every link with a non-empty path from one link info block.
 pub fn scan(data: &[u8]) -> Vec<LinkRef> {
-    let mut links = Vec::new();
+    let mut links: Vec<LinkRef> = Vec::new();
     let mut offset = 0;
+    // Index into `links` and end offset of the most recent named link.
+    let mut pending: Option<(usize, usize)> = None;
+    // End of the last accepted path: no prefix can reach back past it.
+    let mut floor = 0;
+    // Bounds total work on input stuffed with path look-alikes. Real blocks
+    // use a small fraction of it.
+    let mut budget = data.len().saturating_mul(WORK_PER_BYTE) + 64 * 1024;
     while let Some(found) = find(&data[offset..], b"PTH") {
         let at = offset + found;
+        let declared = data
+            .get(at + 4..at + 8)
+            .map_or(0, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize);
+        let cost = 16 + declared.min(data.len() - at);
+        if cost > budget {
+            break;
+        }
+        budget -= cost;
         match LvPath::parse(&data[at..]) {
             Ok((path, len)) => {
+                // A heap link's record ends with the list of heap objects
+                // that use it, directly followed by a second, usually empty,
+                // path. That list sits right before this path.
+                if let Some((index, end)) = pending.take() {
+                    links[index].heap_uids = uid_list_before(&data[end..at]);
+                }
                 if !path.is_empty() {
-                    let (link_type, qualified_name) = prefix_before(data, at).unwrap_or_default();
+                    let (link_type, qualified_name) =
+                        prefix_before(data, at, floor).unwrap_or_default();
+                    pending = Some((links.len(), at + len));
                     links.push(LinkRef {
                         link_type,
                         qualified_name,
                         path,
+                        heap_uids: Vec::new(),
                     });
                 }
                 offset = at + len;
+                floor = offset;
             }
             Err(_) => offset = at + 3,
         }
@@ -71,25 +105,60 @@ pub fn scan(data: &[u8]) -> Vec<LinkRef> {
     links
 }
 
+/// Read a `u32` count followed by that many `u32` ids from the end of
+/// `tail`, choosing the shortest list whose count matches.
+fn uid_list_before(tail: &[u8]) -> Vec<u32> {
+    // `word(1)` is the last 32-bit word of `tail`, `word(2)` the one before.
+    let word = |index_from_end: usize| -> Option<u32> {
+        let end = tail.len().checked_sub((index_from_end - 1) * 4)?;
+        let bytes = tail.get(end.checked_sub(4)?..end)?;
+        Some(u32::from_be_bytes(bytes.try_into().ok()?))
+    };
+    for count in 1..=MAX_HEAP_USES {
+        match word(count + 1) {
+            Some(found) if found as usize == count => {
+                let mut ids: Vec<u32> = (1..=count).rev().filter_map(word).collect();
+                if ids.iter().all(|&id| id != 0 && id < MAX_HEAP_UID) {
+                    ids.sort_unstable();
+                    return ids;
+                }
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+    Vec::new()
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Read the link type and qualified name that end right before `path_at`.
-fn prefix_before(data: &[u8], path_at: usize) -> Option<(Option<FourCc>, Vec<String>)> {
+/// Read the link type and qualified name that end right before `path_at`,
+/// looking no further back than `floor` (the end of the previous path).
+fn prefix_before(
+    data: &[u8],
+    path_at: usize,
+    floor: usize,
+) -> Option<(Option<FourCc>, Vec<String>)> {
     for pad in 0..=1 {
         let end = path_at.checked_sub(pad)?;
         if data[end..path_at].iter().any(|&b| b != 0) {
             continue;
         }
-        let lowest = end.saturating_sub(MAX_LOOKBEHIND);
+        let lowest = end.saturating_sub(MAX_LOOKBEHIND).max(floor);
         // A name list is at least a count plus one empty string.
         let mut start = end.checked_sub(5)?;
-        loop {
-            if let Some(names) = names_between(data, start, end) {
-                return Some((link_type_before(data, start), names));
+        while start >= lowest {
+            // Cheap filter first: a name list starts with a small `u32`.
+            let plausible = data[start..start + 3] == [0, 0, 0]
+                && (1..=MAX_NAME_PARTS as u8).contains(&data[start + 3]);
+            if plausible {
+                if let Some(names) = names_between(data, start, end) {
+                    return Some((link_type_before(data, start), names));
+                }
             }
-            if start <= lowest {
+            if start == 0 {
                 break;
             }
             start -= 1;
@@ -99,20 +168,23 @@ fn prefix_before(data: &[u8], path_at: usize) -> Option<(Option<FourCc>, Vec<Str
 }
 
 fn names_between(data: &[u8], start: usize, end: usize) -> Option<Vec<String>> {
-    let mut r = Reader::new(&data[start..end], "link name");
-    let count = r.u32().ok()?;
+    let count = Reader::new(&data[start..end], "link name").u32().ok()?;
     if count == 0 || count > MAX_NAME_PARTS {
         return None;
     }
-    let mut names = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        let raw = r.pstr().ok()?;
-        if raw.iter().any(|&b| b < 0x20) {
-            return None;
+    // Validate the layout before allocating anything.
+    let parts = |r: &mut Reader<'_>| -> Option<()> {
+        for _ in 0..count {
+            if r.pstr().ok()?.iter().any(|&b| b < 0x20) {
+                return None;
+            }
         }
-        names.push(decode_text(raw));
-    }
-    (r.remaining() == 0).then_some(names)
+        (r.remaining() == 0).then_some(())
+    };
+    parts(&mut Reader::new(&data[start + 4..end], "link name"))?;
+
+    let mut r = Reader::new(&data[start + 4..end], "link name");
+    (0..count).map(|_| r.pstr().ok().map(decode_text)).collect()
 }
 
 fn link_type_before(data: &[u8], names_at: usize) -> Option<FourCc> {
@@ -147,6 +219,58 @@ PTH0\x00\x00\x00\x0e\x00\x01\x00\x02\x00\x08empty.vi\x00\x00\x00\x00\x01\x42";
         assert_eq!(links[0].path.kind, PathKind::Relative);
         assert_eq!(links[0].path.to_string(), "../empty.vi");
         assert_eq!(links[0].name(), Some("empty.vi"));
+    }
+
+    #[test]
+    fn reads_heap_object_ids_of_diagram_links() {
+        // `LIbd` block of the same VI: the call node has heap uid 0x2b.
+        let data: &[u8] =
+            b"\x00\x01BDHP\x00\x00\x00\x01\x00\x02IUVI\x00\x00\x00\x01\x08empty.vi\x00\
+PTH0\x00\x00\x00\x0e\x00\x01\x00\x02\x00\x08empty.vi\x00\x00\x00\x00\x00\x00\x42\x00\x00\x00\x00\
+\x00\x00\x00\x01\x00\x00\x00\x2b\
+PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
+        let links = scan(data);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].link_type, Some(FourCc::new(b"IUVI")));
+        assert_eq!(links[0].heap_uids, [0x2b]);
+        // The VI-level link in `LIvi` has no trailing path, hence no ids.
+        assert!(scan(RELATIVE)[0].heap_uids.is_empty());
+    }
+
+    #[test]
+    fn uid_list_requires_a_matching_count() {
+        let words =
+            |values: &[u32]| -> Vec<u8> { values.iter().flat_map(|v| v.to_be_bytes()).collect() };
+        assert_eq!(
+            uid_list_before(&words(&[9, 9, 2, 0x30, 0x10])),
+            [0x10, 0x30]
+        );
+        assert_eq!(uid_list_before(&words(&[7, 7, 7])), Vec::<u32>::new());
+        assert_eq!(uid_list_before(&words(&[1, 0])), Vec::<u32>::new());
+        assert_eq!(uid_list_before(&[1, 2, 3]), Vec::<u32>::new());
+        assert_eq!(uid_list_before(&[]), Vec::<u32>::new());
+    }
+
+    #[test]
+    fn dense_lookalikes_are_scanned_in_bounded_time() {
+        // Minimal valid paths back to back: each used to cost a full
+        // lookbehind. 200,000 of them must now be quick.
+        let record = b"PTH0\x00\x00\x00\x05\x00\x01\x00\x01\x00";
+        let data = record.repeat(200_000);
+        let started = std::time::Instant::now();
+        assert_eq!(scan(&data).len(), 200_000);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+
+        // Signatures that each claim a huge body made of tiny components:
+        // every parse fails late, and the work budget cuts the scan short.
+        let mut hostile = Vec::new();
+        for _ in 0..20_000 {
+            hostile.extend_from_slice(b"PTH0\x00\x00\xff\x00\x00\x01\xff\xff");
+            hostile.extend_from_slice(&[0u8; 20]);
+        }
+        let started = std::time::Instant::now();
+        let _ = scan(&hostile);
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     #[test]

@@ -14,7 +14,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use buzzard_rsrc::blocks::zlib;
-use buzzard_rsrc::{FileKind, Reentrancy, RsrcFile, Stage, ViMetadata};
+use buzzard_rsrc::{
+    BlockDiagram, DataType, Direction, FileKind, Reentrancy, RsrcFile, Stage, ViMetadata,
+};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests")
@@ -46,9 +48,18 @@ fn fixture(name: &str) -> ViMetadata {
     ViMetadata::from_path(root().join("fixtures").join(name)).unwrap()
 }
 
+/// Compare `actual` with a snapshot file, or rewrite the file when blessing.
+fn check(snapshot: &Path, actual: String, failures: &mut Vec<String>) {
+    if std::env::var_os("BUZZARD_BLESS").is_some() {
+        fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+        fs::write(snapshot, actual).unwrap();
+    } else if fs::read_to_string(snapshot).ok().as_deref() != Some(actual.as_str()) {
+        failures.push(snapshot.display().to_string());
+    }
+}
+
 #[test]
 fn snapshots_match() {
-    let bless = std::env::var_os("BUZZARD_BLESS").is_some();
     let mut failures = Vec::new();
     for path in fixtures() {
         let rel = path.strip_prefix(root().join("fixtures")).unwrap();
@@ -58,11 +69,19 @@ fn snapshots_match() {
         let meta =
             ViMetadata::from_path(&path).unwrap_or_else(|e| panic!("{}: {e}", rel.display()));
         let actual = serde_json::to_string_pretty(&meta).unwrap() + "\n";
-        if bless {
-            fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
-            fs::write(&snapshot, actual).unwrap();
-        } else if fs::read_to_string(&snapshot).ok().as_deref() != Some(actual.as_str()) {
-            failures.push(rel.display().to_string());
+        check(&snapshot, actual, &mut failures);
+
+        // The block diagram, where the file has one, gets its own snapshot.
+        let bytes = fs::read(&path).unwrap();
+        let file = RsrcFile::parse(&bytes).unwrap();
+        let diagram = BlockDiagram::from_rsrc(&file)
+            .unwrap_or_else(|e| panic!("{}: diagram: {e}", rel.display()));
+        if let Some(diagram) = diagram {
+            let snapshot = root()
+                .join("snapshots")
+                .join(format!("{}.diagram.json", rel.display()));
+            let actual = serde_json::to_string_pretty(&diagram).unwrap() + "\n";
+            check(&snapshot, actual, &mut failures);
         }
     }
     assert!(
@@ -130,8 +149,14 @@ fn compressed_blocks_inflate() {
 fn hostile_input_never_panics() {
     for path in fixtures() {
         let bytes = fs::read(&path).unwrap();
+        let analyze = |bytes: &[u8]| {
+            let _ = ViMetadata::from_bytes(bytes);
+            if let Ok(file) = RsrcFile::parse(bytes) {
+                let _ = BlockDiagram::from_rsrc(&file);
+            }
+        };
         for len in (0..bytes.len()).step_by(7) {
-            let _ = ViMetadata::from_bytes(&bytes[..len]);
+            analyze(&bytes[..len]);
         }
         // Deterministic corruption: overwrite each byte of the directory and
         // a sample of the data section with hostile values.
@@ -143,10 +168,142 @@ fn hostile_input_never_panics() {
             for value in [0x00, 0x7f, 0xff] {
                 let mut copy = bytes.clone();
                 copy[pos] = value;
-                let _ = ViMetadata::from_bytes(&copy);
+                analyze(&copy);
             }
         }
     }
+}
+
+/// Corrupt the *decompressed* heap and type table, which the test above
+/// cannot reach through the zlib checksum.
+#[test]
+fn hostile_heap_and_types_never_panic() {
+    use buzzard_rsrc::blocks::heap::Heap;
+    use buzzard_rsrc::blocks::types::TypeTable;
+    use std::collections::HashMap;
+
+    for name in ["pylavi/add.vi", "pylavi/absolute_link_PTH.vi"] {
+        let bytes = fs::read(root().join("fixtures").join(name)).unwrap();
+        let file = RsrcFile::parse(&bytes).unwrap();
+        let heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+        let vctp = zlib::decompress(file.first(b"VCTP").unwrap()).unwrap();
+        let dthp = file.first(b"DTHP");
+        let types = TypeTable::parse(&vctp, dthp).unwrap();
+        let names = HashMap::new();
+
+        for len in 0..heap.len() {
+            if let Ok(parsed) = Heap::parse(&heap[..len]) {
+                let _ = BlockDiagram::from_heap(&parsed, &types, &names);
+            }
+        }
+        for pos in 0..heap.len() {
+            for value in [0x00, 0x13, 0x7f, 0xff] {
+                let mut copy = heap.clone();
+                copy[pos] = value;
+                if let Ok(parsed) = Heap::parse(&copy) {
+                    let _ = BlockDiagram::from_heap(&parsed, &types, &names);
+                }
+            }
+        }
+        for len in 0..vctp.len() {
+            let _ = TypeTable::parse(&vctp[..len], dthp);
+        }
+        for pos in 0..vctp.len() {
+            for value in [0x00, 0x7f, 0xff] {
+                let mut copy = vctp.clone();
+                copy[pos] = value;
+                if let Ok(table) = TypeTable::parse(&copy, dthp) {
+                    for id in 0..64 {
+                        let _ = table.heap_type(id);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn diagram(name: &str) -> BlockDiagram {
+    let bytes = fs::read(root().join("fixtures").join(name)).unwrap();
+    let file = RsrcFile::parse(&bytes).unwrap();
+    BlockDiagram::from_rsrc(&file).unwrap().unwrap()
+}
+
+/// `add.vi`: two numeric controls wired into an Add primitive, whose
+/// output is wired to an indicator.
+#[test]
+fn diagram_of_add_vi() {
+    let bd = diagram("pylavi/add.vi");
+    let classes: Vec<&str> = bd.root.nodes.iter().map(|n| n.class.as_str()).collect();
+    assert_eq!(classes, ["sRN", "prim"]);
+    assert_eq!(bd.root.wires.len(), 3);
+
+    let boundary = &bd.root.nodes[0];
+    let add = &bd.root.nodes[1];
+    assert_eq!(add.terminals.len(), 3);
+    assert!(add
+        .terminals
+        .iter()
+        .all(|t| t.wired && t.direction_is_reliable()));
+    assert!(add
+        .terminals
+        .iter()
+        .all(|t| t.data_type == Some(DataType::Numeric)));
+    let directions: Vec<Direction> = add.terminals.iter().map(|t| t.direction).collect();
+    assert_eq!(
+        directions,
+        [Direction::Output, Direction::Input, Direction::Input]
+    );
+
+    // Every wire joins a front-panel terminal and a terminal of the primitive.
+    let on = |node: &buzzard_rsrc::Node, uid: i32| node.terminals.iter().any(|t| t.uid == uid);
+    for wire in &bd.root.wires {
+        assert_eq!(wire.sinks.len(), 1);
+        let (a, b) = (wire.source, wire.sinks[0]);
+        assert!((on(boundary, a) && on(add, b)) || (on(add, a) && on(boundary, b)));
+    }
+    // Two controls feed the diagram, one indicator is fed by it.
+    let outputs = |n: &buzzard_rsrc::Node| {
+        n.terminals
+            .iter()
+            .filter(|t| t.direction == Direction::Output)
+            .count()
+    };
+    assert_eq!((outputs(boundary), boundary.terminals.len()), (2, 3));
+    // Their types come from the front-panel heap.
+    for terminal in &boundary.terminals {
+        assert_eq!(terminal.data_type, Some(DataType::Numeric));
+        assert_eq!(terminal.dco_class.as_deref(), Some("fPDCO"));
+    }
+}
+
+#[test]
+fn diagram_names_subvi_calls() {
+    let bd = diagram("pylavi/relative_link.vi");
+    let call = bd.nodes().find(|n| n.class == "iUse").unwrap();
+    assert_eq!(call.name.as_deref(), Some("empty.vi"));
+    assert_eq!(call.terminals.len(), 12);
+    assert!(call.terminals.iter().all(|t| !t.wired));
+
+    let bd = diagram("pylavi/absolute_link_PTH.vi");
+    let mut names: Vec<&str> = bd.nodes().filter_map(|n| n.name.as_deref()).collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["PTH empty PTH.vi", "Path To Command Line String.vi"]
+    );
+}
+
+#[test]
+fn empty_diagram_and_files_without_one() {
+    let bd = diagram("pylavi/empty.vi");
+    assert!(bd.root.wires.is_empty());
+    assert!(bd
+        .nodes()
+        .all(|n| n.class == "sRN" && n.terminals.is_empty()));
+
+    let bytes = fs::read(root().join("fixtures/pylabview/empty_libfile.llb")).unwrap();
+    let file = RsrcFile::parse(&bytes).unwrap();
+    assert!(BlockDiagram::from_rsrc(&file).unwrap().is_none());
 }
 
 // Hand-written expectations, independent of the snapshots. Each fixture was

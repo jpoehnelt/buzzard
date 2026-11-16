@@ -39,7 +39,10 @@
           "Desktop",
           "PTH empty PTH.vi"
         ]
-      }
+      },
+      "heap_uids": [
+        43
+      ]
     },
     {
       "link_type": "IUVI",
@@ -53,7 +56,10 @@
           "AdvancedString",
           "Path To Command Line String.vi"
         ]
-      }
+      },
+      "heap_uids": [
+        74
+      ]
     },
     {
       "link_type": "VIVI",
@@ -68,7 +74,8 @@
           "Desktop",
           "PTH empty PTH.vi"
         ]
-      }
+      },
+      "heap_uids": []
     },
     {
       "link_type": "VIVI",
@@ -82,7 +89,8 @@
           "AdvancedString",
           "Path To Command Line String.vi"
         ]
-      }
+      },
+      "heap_uids": []
     }
   ],
   "resource_types": [

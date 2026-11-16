@@ -37,7 +37,10 @@
           "",
           "empty.vi"
         ]
-      }
+      },
+      "heap_uids": [
+        43
+      ]
     },
     {
       "link_type": "VIVI",
@@ -50,7 +53,8 @@
           "",
           "empty.vi"
         ]
-      }
+      },
+      "heap_uids": []
     }
   ],
   "resource_types": [
