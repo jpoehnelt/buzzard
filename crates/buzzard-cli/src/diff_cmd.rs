@@ -1,0 +1,124 @@
+//! The `diff` subcommand: a semantic diff of two versions of one file.
+
+use std::io::ErrorKind;
+use std::path::Path;
+
+use buzzard_lint::diff::{self, DiffOptions, ViDiff};
+use buzzard_lint::Inspection;
+use buzzard_rsrc::RsrcError;
+use clap::ValueEnum;
+
+#[derive(clap::Args)]
+pub struct Args {
+    /// The old and the new file. A file that does not exist (or
+    /// `/dev/null`) counts as empty: everything is added or removed.
+    ///
+    /// With `--git`: the arguments git passes to an external diff driver.
+    #[arg(required = true, num_args = 1..=9, value_name = "FILE")]
+    files: Vec<String>,
+    #[arg(long, value_enum, default_value_t = Format::Text)]
+    format: Format,
+    /// Leave out nodes that only changed position or size.
+    #[arg(long)]
+    ignore_moves: bool,
+    /// Run as a git external diff driver. Expects git's seven arguments
+    /// (path old-file old-hex old-mode new-file new-hex new-mode) and
+    /// always exits with status 0, as git requires.
+    #[arg(long)]
+    git: bool,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Format {
+    Text,
+    Markdown,
+    Json,
+}
+
+/// One side of the comparison: the parsed file, or `None` with an optional
+/// note when it does not exist or may not be opened. Anything else that
+/// goes wrong (not an RSRC file, a truncated file) is an error.
+type Side = (Option<Inspection>, Option<String>);
+
+fn load(path: &str) -> Result<Side, String> {
+    if path == "/dev/null" {
+        return Ok((None, None));
+    }
+    let bytes = match buzzard_rsrc::read_file(Path::new(path)) {
+        Ok(bytes) => bytes,
+        Err(RsrcError::Io(err)) if err.kind() == ErrorKind::NotFound => return Ok((None, None)),
+        Err(RsrcError::Io(err)) if err.kind() == ErrorKind::PermissionDenied => {
+            return Ok((None, Some(format!("{path} cannot be read: {err}"))));
+        }
+        Err(err) => return Err(format!("{path}: {err}")),
+    };
+    match Inspection::from_bytes(&bytes) {
+        Ok(inspection) => Ok((Some(inspection), None)),
+        Err(err) => Err(format!("{path}: {err}")),
+    }
+}
+
+fn compare(old: &str, new: &str, options: DiffOptions) -> Result<ViDiff, String> {
+    let ((old_file, old_note), (new_file, new_note)) = (load(old)?, load(new)?);
+    if old_file.is_none() && new_file.is_none() {
+        return Err(format!("neither {old} nor {new} can be read"));
+    }
+    let mut result = diff::diff(old_file.as_ref(), new_file.as_ref(), options);
+    result.notes.extend(old_note.into_iter().chain(new_note));
+    Ok(result)
+}
+
+fn render(result: &ViDiff, format: Format) -> String {
+    match format {
+        Format::Text => diff::to_text(result),
+        Format::Markdown => diff::to_markdown(result),
+        Format::Json => {
+            serde_json::to_string_pretty(result).expect("a diff always serializes") + "\n"
+        }
+    }
+}
+
+/// Returns the report and the exit status: 0 when the files are the same,
+/// 1 when they differ. An `Err` is a message for stderr and status 2.
+pub fn run(args: &Args) -> Result<(String, u8), String> {
+    let options = DiffOptions {
+        ignore_moves: args.ignore_moves,
+    };
+    if args.git {
+        return Ok((git_driver(args, options)?, 0));
+    }
+    let [old, new] = args.files.as_slice() else {
+        return Err("expected two files: buzzard diff <OLD> <NEW>".to_owned());
+    };
+    let result = compare(old, new, options)?;
+    Ok((render(&result, args.format), u8::from(!result.identical)))
+}
+
+/// The calling convention of `GIT_EXTERNAL_DIFF` and `diff.<name>.command`:
+/// `path old-file old-hex old-mode new-file new-hex new-mode`, plus the new
+/// path and a similarity line for a rename, or the path alone when it is
+/// unmerged. Git treats any failure of the driver as fatal, so problems
+/// with the files become part of the output instead.
+fn git_driver(args: &Args, options: DiffOptions) -> Result<String, String> {
+    let files = &args.files;
+    let path = &files[0];
+    if files.len() == 1 {
+        return Ok(format!("buzzard diff {path}\nunmerged\n"));
+    }
+    if files.len() != 7 && files.len() != 9 {
+        return Err(format!(
+            "--git expects the 7 arguments of a git external diff driver, got {}",
+            files.len()
+        ));
+    }
+    let new_path = files.get(7).unwrap_or(path);
+    let header = format!("buzzard diff a/{path} b/{new_path}\n");
+    let body = match compare(&files[1], &files[4], options) {
+        Ok(result) if matches!(args.format, Format::Json) => {
+            return Ok(render(&result, args.format))
+        }
+        Ok(result) => render(&result, args.format),
+        Err(message) => format!("cannot compare: {message}\n"),
+    };
+    Ok(header + &body)
+}

@@ -6,6 +6,7 @@
 
 pub mod dataflow;
 pub mod diagnostic;
+pub mod diff;
 pub mod graph;
 pub mod inspector;
 pub mod project;

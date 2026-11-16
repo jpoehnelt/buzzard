@@ -52,6 +52,92 @@ for example) is an error, so a CI step never passes with an empty or
 truncated report. A reader that closes the pipe early, as in
 `buzzard check | head`, is not.
 
+## Semantic diff
+
+`buzzard diff` compares two versions of a VI and says what changed, as
+text. It works on the files alone, so it runs in CI and in `git diff`:
+
+```bash
+buzzard diff old/Main.vi new/Main.vi
+```
+
+```text
+1 node added, 1 removed, 2 moved; 2 wires added, 2 removed, 2 changed
+added: subVI `Conditional State String.vi` #42
+removed: subVI `Conditional State String.vi` #224
+moved: subVI `Build State String with Arguments.vi` #178 (484,192 -> 524,192)
+moved: subVI `Periodic State String.vi` #180 (486,314 -> 528,306)
+added: boolean wire from diagram boundary #7 to subVI `Conditional State String.vi` #42
+...
+changed: numeric wire from diagram boundary #7 to subVI `Periodic State String.vi` #180: attached to a different terminal
+```
+
+It compares:
+
+- **Settings**: saved version, compiled code separation, automatic error
+  handling, debugging, breakpoints, reentrancy, inlining, locked, password
+  protection, owning library and the other execution flags.
+- **Dependencies**: links added and removed, by path and name.
+- **Block diagram**: nodes added, removed and changed (relinked to another
+  file, terminals added or removed, put into or taken out of a structure),
+  and wires added, removed and re-attached. A node inside a structure is
+  located by the structures around it, e.g. `in case structure #50 frame 1
+  > while loop #60`. `#42` is the object's id, the same one that
+  `inspect --format json` prints.
+
+A node that only changed position or size is reported as `moved`, apart
+from real changes. `--ignore-moves` leaves those out, so that tidying up a
+diagram is not a difference at all.
+
+`--format markdown` gives the same report as a bullet list for a review
+comment, `--format json` as structured data.
+
+The exit status is that of `diff`: 0 when the files are the same, 1 when
+they differ, 2 for an error such as a file that is not an RSRC container.
+A file that does not exist (or `/dev/null`) is an empty side: everything in
+the other file is then reported as added or removed, with a note.
+
+Nodes are matched between the two versions by their object id, which the
+editor keeps across saves: over 1,340 pairs of consecutive revisions from
+two public repositories, 96% of nodes kept their id. Nodes whose id did
+change are matched by what they are and where they are (class, name,
+function id, terminal types, enclosing structures); what is left is
+reported as added or removed. Built-in functions are named by their
+function id, because the file does not hold their names.
+
+### In git
+
+There are two ways to make `git diff` show something better than "Binary
+files differ". Both start with one line in `.gitattributes`:
+
+```gitattributes
+*.vi diff=buzzard
+```
+
+**Text conversion** needs no more than one setting. Git converts both
+versions to the Markdown of `buzzard inspect` and shows an ordinary line
+diff of the two. It also works in `git log -p` and `git show`:
+
+```bash
+git config diff.buzzard.textconv "buzzard inspect --format markdown"
+```
+
+**External diff driver** gives the semantic diff described above:
+
+```bash
+git config diff.buzzard.command "buzzard diff --git"
+```
+
+Options go into the command, for example
+`"buzzard diff --git --ignore-moves"`. `git diff` uses the driver by
+default; `git log -p` and `git show` use it with `--ext-diff`. With
+`--git`, `buzzard diff` takes the seven arguments git passes to a driver
+and always exits with status 0, because git treats anything else as a
+failed diff; a file it cannot read is reported in the output instead.
+
+Set either with `git config --global` to have it in every repository; the
+`.gitattributes` line stays per repository.
+
 ## Rules
 
 | Code | Severity | Meaning |

@@ -11,6 +11,8 @@ use buzzard_lint::{
 use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod diff_cmd;
+
 /// Static analyzer and language server that reads binary .vi and .ctl files
 /// and .lvproj, .lvlib and .lvclass files directly, without the IDE.
 #[derive(Parser)]
@@ -45,6 +47,8 @@ enum Command {
         #[arg(long, value_enum, default_value_t = InspectFormat::Markdown)]
         format: InspectFormat,
     },
+    /// Compare two versions of a file: settings, dependencies, nodes, wires.
+    Diff(diff_cmd::Args),
     /// Run the language server over stdin/stdout.
     Lsp,
     /// Run the Model Context Protocol server over stdin/stdout, so that AI
@@ -188,6 +192,13 @@ fn main() -> ExitCode {
             }
             Err(err) => {
                 eprintln!("error: {}: {err}", file.display());
+                ExitCode::from(2)
+            }
+        },
+        Command::Diff(args) => match diff_cmd::run(&args) {
+            Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
+            Err(message) => {
+                eprintln!("error: {message}");
                 ExitCode::from(2)
             }
         },
