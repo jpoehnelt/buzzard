@@ -121,6 +121,20 @@ The licence of pylabview reads as follows:
     SOFTWARE.
 
 
+Three test fixtures, from pylabview
+===================================
+
+Files:    crates/buzzard-rsrc/tests/fixtures/pylabview/*
+Source:   pylabview, https://github.com/mefistotelis/pylabview, examples/
+          (byte-identical to the files at commit
+          5f20e23de6a386021eb955c825cc43d221f09ff1)
+Licence:  MIT, the text reproduced above
+
+What was taken: three small files saved by LabVIEW 2014, unchanged. They are
+test data only and are not part of any published package. Their upstream
+paths and checksums are in crates/buzzard-rsrc/tests/fixtures/README.md.
+
+
 A TDMS measurement file, from Zenodo
 ====================================
 
