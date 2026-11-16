@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use buzzard_lint::project::is_project_file;
+use buzzard_lint::verify::report::{self, Verified};
 use buzzard_lint::workspace::{discover, normalize};
 use buzzard_lint::{
     lint, render, summary, DependencyGraph, Diagnostic, FileState, Inspection, LintConfig,
@@ -20,8 +21,9 @@ use buzzard_lint::{
 use buzzard_rsrc::FileKind;
 use serde_json::{json, Map, Value};
 
-pub(crate) const NAMES: [&str; 7] = [
+pub(crate) const NAMES: [&str; 8] = [
     "buzzard_check",
+    "buzzard_verify",
     "buzzard_inspect",
     "buzzard_diagram",
     "buzzard_callers",
@@ -35,7 +37,8 @@ pub(crate) const INSTRUCTIONS: &str =
 files directly from disk, without the LabVIEW IDE. All tools are read-only. Relative paths are \
 resolved against the directory the server was started in. Start with buzzard_symbols to find \
 files, buzzard_inspect and buzzard_diagram to read one, buzzard_callers and buzzard_callees to \
-navigate, and buzzard_check to lint.";
+navigate, buzzard_check to lint, and buzzard_verify to check the state machines on block \
+diagrams.";
 
 /// Longest accepted path or query argument, in bytes.
 const MAX_TEXT_BYTES: usize = 4096;
@@ -245,6 +248,7 @@ pub(crate) fn call(
 ) -> Result<Output, String> {
     match name {
         "buzzard_check" => check(state, arguments),
+        "buzzard_verify" => verify(state, arguments),
         "buzzard_inspect" => inspect(state, arguments),
         "buzzard_diagram" => diagram(state, arguments),
         "buzzard_callers" => neighbors(state, arguments, Direction::Callers),
@@ -356,6 +360,65 @@ fn check(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, St
     Ok(Output {
         text,
         structured: Some(structured),
+    })
+}
+
+/// The state machines of the files under `paths`, as `buzzard verify`
+/// reports them. Files are read from disk on every call.
+fn verify(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, String> {
+    const FORMATS: [&str; 3] = ["text", "json", "dot"];
+    let args = Args::new(arguments, &["paths", "format"])?;
+    let raw_paths = args.text_list("paths", true)?;
+    if raw_paths.is_empty() {
+        return Err("argument `paths` must name at least one file or directory".to_owned());
+    }
+    let format = match arguments.get("format") {
+        None => "text",
+        Some(_) => args.text("format")?,
+    };
+    if !FORMATS.contains(&format) {
+        return Err(format!(
+            "argument `format` must be one of: {}",
+            FORMATS.join(", ")
+        ));
+    }
+    let mut roots = Vec::new();
+    for raw in raw_paths {
+        if raw.is_empty() {
+            return Err("argument `paths` contains an empty path".to_owned());
+        }
+        let root = state.resolve(raw);
+        if !root.exists() {
+            return Err(format!("path does not exist: {}", state.show(&root)));
+        }
+        roots.push(root);
+    }
+    roots.sort();
+    roots.dedup();
+    let mut verified = Verified::scan(&roots);
+    // Report paths the way every other tool does.
+    for file in &mut verified.files {
+        file.path = PathBuf::from(state.show(&file.path));
+    }
+    for (path, _) in &mut verified.unreadable {
+        *path = PathBuf::from(state.show(path));
+    }
+    for path in &mut verified.incomplete {
+        *path = PathBuf::from(state.show(path));
+    }
+    Ok(match format {
+        "dot" => plain(report::to_dot(&verified)),
+        "json" => {
+            let value = to_value(&verified)?;
+            Output {
+                text: pretty(&value),
+                structured: Some(value),
+            }
+        }
+        _ => Output {
+            text: report::to_text(&verified),
+            structured: Some(to_value(&verified)?),
+        },
     })
 }
 
@@ -634,7 +697,7 @@ fn rules(arguments: &Map<String, Value>) -> Result<Output, String> {
 /// The `tools/list` payload, in the order of [`NAMES`].
 #[expect(
     clippy::too_many_lines,
-    reason = "the schemas of all seven tools, kept together as one table"
+    reason = "the schemas of all eight tools, kept together as one table"
 )]
 pub(crate) fn definitions() -> Value {
     let path = |what: &str| {
@@ -710,6 +773,50 @@ pub(crate) fn definitions() -> Value {
                     "description": "Most diagnostics to return. The summary always counts all of them and says whether the list was truncated.",
                 },
                 "refresh": refresh,
+            }),
+            &["paths"],
+        ),
+        tool(
+            "buzzard_verify",
+            "Verify state machines",
+            "Find the state machines on the block diagrams of .vi files and check them. A \
+             state machine is a while loop around a case structure selected by a shift \
+             register. For each one the result gives its location, its states (the cases), \
+             the transitions between them, the initial and default state, whether the model \
+             is exact, and the findings: states that can never be reached, states from which \
+             the loop's condition terminal can never stop the loop, a loop whose condition \
+             terminal can never stop it, and constants no case handles that can reach the \
+             state register. Each finding is labelled PROVEN, STRUCTURAL or HEURISTIC with \
+             one sentence of justification. PROVEN findings hold on a model that \
+             over-approximates the diagram as saved in the file: wherever a next state or \
+             stop condition cannot be followed (a subVI, arithmetic, a control), every \
+             possibility is assumed, so a state reported as unreachable really is, while a \
+             state not reported may still be dead. STRUCTURAL findings are facts about the \
+             wiring that say nothing about what runs: a constant without a case, and a loop \
+             that its condition terminal cannot stop while the diagram holds subVI calls or \
+             other nodes (named in the finding) that could end the program some other way. \
+             A block diagram that did not decode completely is listed and not searched. \
+             String/queue state machines in the style of the JKI State Machine are \
+             recognised but not modelled; their only check, enqueued names without a case, \
+             is HEURISTIC. Files without a state machine are only counted. Formats: `text` \
+             (default), `json` (the same data, also returned as structuredContent) and `dot` \
+             (the transition graphs as Graphviz source). Files are read from disk on every \
+             call (never cached). Read-only."
+                .to_owned(),
+            json!({
+                "paths": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_LIST_ITEMS,
+                    "items": path("A file or directory to analyze; directories are scanned recursively."),
+                    "description": "Files and directories whose block diagrams to check.",
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["text", "json", "dot"],
+                    "default": "text",
+                    "description": "Output format.",
+                },
             }),
             &["paths"],
         ),

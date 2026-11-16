@@ -792,6 +792,41 @@ fn terminal_delta(old: &Node, new: &Node) -> String {
     parts.join(", ")
 }
 
+/// The label of each frame of a case structure whose selector is decoded.
+fn case_labels(node: &Node) -> Vec<String> {
+    let Some(selector) = &node.selector else {
+        return Vec::new();
+    };
+    (0..selector.frames.len())
+        .map(|frame| clean(&selector.label(frame)))
+        .collect()
+}
+
+/// Values of the constants on a diagram boundary that were removed and
+/// added, as a multiset difference, e.g. `constants -"Init" +"Idle"`.
+fn constant_delta(old: &Node, new: &Node) -> Option<String> {
+    let values = |node: &Node| {
+        let mut counts: BTreeMap<String, i64> = BTreeMap::new();
+        for value in node.terminals.iter().filter_map(|t| t.constant.as_ref()) {
+            *counts.entry(clean(&value.to_string())).or_default() += 1;
+        }
+        counts
+    };
+    let (before, mut after) = (values(old), values(new));
+    for (value, count) in before {
+        *after.entry(value).or_default() -= count;
+    }
+    let mut parts = Vec::new();
+    for (sign, wanted) in [('-', -1i64), ('+', 1)] {
+        for (value, count) in &after {
+            for _ in 0..(count * wanted).max(0) {
+                parts.push(format!("{sign}{value}"));
+            }
+        }
+    }
+    (!parts.is_empty()).then(|| format!("constants {}", parts.join(" ")))
+}
+
 fn quoted(name: Option<&str>) -> String {
     name.map_or_else(|| "none".to_owned(), |n| format!("`{}`", clean(n)))
 }
@@ -963,11 +998,22 @@ fn node_details(
     } else if !delta.is_empty() {
         details.push(format!("terminal types changed ({delta})"));
     }
+    if let Some(text) = constant_delta(old_node, new_node) {
+        details.push(text);
+    }
     if old_node.diagrams.len() != new_node.diagrams.len() {
         details.push(format!(
             "frames {} -> {}",
             old_node.diagrams.len(),
             new_node.diagrams.len()
+        ));
+    }
+    let (old_labels, new_labels) = (case_labels(old_node), case_labels(new_node));
+    if old_labels != new_labels && !old_labels.is_empty() && !new_labels.is_empty() {
+        details.push(format!(
+            "case labels [{}] -> [{}]",
+            old_labels.join("; "),
+            new_labels.join("; ")
         ));
     }
     if same_diagram.get(&old_flat.diagram) != Some(&new_flat.diagram) {

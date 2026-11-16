@@ -10,6 +10,7 @@ use crate::dataflow::Finding;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph::DependencyGraph;
 use crate::project::ProjectFile;
+use crate::verify::{Confidence, Problem};
 use crate::workspace::{Analysis, FileState, Workspace};
 
 /// One lint rule, as listed in [`RULES`].
@@ -88,6 +89,36 @@ pub const RULES: &[Rule] = &[
                   reaches anything that could close it.",
         severity: Severity::Warning,
     },
+    Rule {
+        code: "BZ201",
+        name: "unreachable-state",
+        summary: "A state of a state machine (a case of a case structure selected by a \
+                  shift register in a while loop) can never be reached. Proven on a model \
+                  that over-approximates the diagram as saved in the file.",
+        severity: Severity::Warning,
+    },
+    Rule {
+        code: "BZ202",
+        name: "state-machine-cannot-stop",
+        summary: "A state machine has a state from which the condition terminal of its loop \
+                  can never stop the loop (warning), or the terminal can never stop it at \
+                  all (info: a loop that runs until the program is aborted may be \
+                  intended). Proven on a model that over-approximates the diagram, unless \
+                  the diagram holds a subVI call or another node that could end the program \
+                  some other way; the finding then names those nodes and is structural, not \
+                  proven.",
+        severity: Severity::Warning,
+    },
+    Rule {
+        code: "BZ203",
+        name: "undefined-state",
+        summary: "A constant that no case handles can reach the state register of a state \
+                  machine, so the default case would run for it. This is a fact about the \
+                  wiring (structural), not a proof that the path runs. For a string/queue \
+                  state machine it is a heuristic over the string constants that are \
+                  enqueued.",
+        severity: Severity::Warning,
+    },
 ];
 
 /// The rule with this code, if there is one.
@@ -151,6 +182,7 @@ pub fn lint(
                     check_paths(&workspace.root_relative(path), meta, config, &mut emit);
                     check_debug_and_lock(meta, &mut emit);
                     found.extend(check_dataflow(path, analysis));
+                    found.extend(check_state_machines(path, analysis));
                 }
                 FileState::Project(project) => check_members(workspace, project, &mut emit),
             }
@@ -368,6 +400,38 @@ fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
                 code,
                 severity,
                 message,
+                related: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// The findings of the state machine verification, computed when the
+/// file was loaded. Each message names the machine and says whether the
+/// finding is proven or a heuristic.
+fn check_state_machines(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
+    analysis
+        .state_machines
+        .iter()
+        .map(|issue| {
+            let code = issue.code();
+            // A loop that never stops is often a daemon that is meant to
+            // run until the program is aborted.
+            let severity = match issue.problem {
+                Problem::NeverStops => Severity::Info,
+                _ => rule(code).expect("rule is registered").severity,
+            };
+            let confidence = issue.confidence();
+            let what = match confidence {
+                Confidence::Proven | Confidence::Structural => "state machine",
+                Confidence::Heuristic => "string/queue state machine",
+            };
+            let how = confidence.suffix();
+            Diagnostic {
+                path: path.to_path_buf(),
+                code,
+                severity,
+                message: format!("{what} at {}: {} ({how})", issue.location, issue.message()),
                 related: Vec::new(),
             }
         })

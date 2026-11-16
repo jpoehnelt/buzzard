@@ -176,8 +176,8 @@ fn consecutive_revisions_with_a_new_control() {
          \n\
          #### Block diagram\n\
          \n\
-         - changed: diagram boundary #7: terminals 3 -> 5 (+2 other)\n\
-         - added: wire from diagram boundary #7 to diagram boundary #7\n"
+         - changed: diagram boundary #7: terminals 3 -> 5 (+2 numeric)\n\
+         - added: numeric wire from diagram boundary #7 to diagram boundary #7\n"
     );
 }
 

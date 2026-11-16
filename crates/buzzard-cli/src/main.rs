@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use buzzard_lint::project::is_project_file;
+use buzzard_lint::verify::report::{self, Verified};
 use buzzard_lint::Inspection;
 use buzzard_lint::{
     lint, render, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity,
@@ -59,6 +60,16 @@ enum Command {
     },
     /// Compare two versions of a file: settings, dependencies, nodes, wires.
     Diff(diff_cmd::Args),
+    /// Find the state machines on block diagrams and check them: states
+    /// that can never be reached, loops that their condition terminal can
+    /// never stop, and constants that no case handles.
+    Verify {
+        /// Files or directories to analyze.
+        #[arg(default_value = ".")]
+        paths: Vec<PathBuf>,
+        #[arg(long, value_enum, default_value_t = VerifyFormat::Text)]
+        format: VerifyFormat,
+    },
     /// Run the language server over stdin/stdout.
     Lsp,
     /// Run the Model Context Protocol server over stdin/stdout, so that AI
@@ -71,6 +82,14 @@ enum CheckFormat {
     Human,
     Json,
     Sarif,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum VerifyFormat {
+    Text,
+    Json,
+    /// The transition graphs as a Graphviz graph.
+    Dot,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -106,6 +125,7 @@ fn main() -> ExitCode {
             inspect_project(&file, format)
         }
         Command::Inspect { file, format } => inspect_binary(&file, format),
+        Command::Verify { paths, format } => verify(&paths, format),
         Command::Diff(args) => match diff_cmd::run(&args) {
             Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
             Err(message) => {
@@ -166,6 +186,25 @@ fn check(
 }
 
 /// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
+fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
+    if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+        eprintln!("error: path does not exist: {}", missing.display());
+        return ExitCode::from(2);
+    }
+    let verified = Verified::scan(paths);
+    let rendered = match format {
+        VerifyFormat::Text => report::to_text(&verified),
+        VerifyFormat::Json => to_json(&verified),
+        VerifyFormat::Dot => report::to_dot(&verified),
+    };
+    let status = if verified.has_findings() {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    };
+    print(&rendered, status)
+}
+
 fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
     match ProjectFile::from_path(file) {
         Ok(project) => {
