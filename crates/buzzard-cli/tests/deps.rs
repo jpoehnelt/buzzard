@@ -407,8 +407,9 @@ fn letter_case_and_the_source_of_a_link_do_not_split_a_target() {
     );
     write(&dir, "install/vi.lib/utility/REAL.VI", b"x");
     let text = deps(&["ws", "--root", "vilib=install/vi.lib"], &dir.0);
+    // Referrers print with the separator of the operating system.
     assert_eq!(
-        text,
+        text.replace('\\', "/"),
         "<vilib> (checked in install/vi.lib: 1 found, 1 missing)
   UTILITY (2 files)
     found     <vilib>/UTILITY/REAL.vi
