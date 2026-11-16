@@ -10,18 +10,19 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use buzzard_lint::verify::report::{to_text, Verified};
 use buzzard_lint::verify::{
-    extract, verify, Confidence, Finding, Machine, Problem, State, Stop, Successors,
+    extract, verify, Confidence, Finding, Machine, Problem, State, Stop, Successors, MAX_STATES,
 };
 use buzzard_lint::Inspection;
-use buzzard_rsrc::{BlockDiagram, DataType, NumericType, SelectorKind, TunnelMode, Value};
+use buzzard_rsrc::{BlockDiagram, DataType, Loss, NumericType, SelectorKind, TunnelMode, Value};
 
 #[path = "verify/build.rs"]
 mod build;
 
 use build::{
-    boolean, integer, label, one, range, select, text, with_node, with_terminals, Expr, Spec, Wrap,
-    ADD, CASE, CONDITION, EQUAL, LEFT, LOOP, STOP,
+    boolean, integer, label, mark_wired, one, range, select, text, with_node, with_terminals, Expr,
+    Spec, Wrap, ADD, CASE, CONDITION, EQUAL, LEFT, LOOP, STOP,
 };
 
 // ------------------------------------------------------------- helpers
@@ -59,10 +60,13 @@ fn machine(states: Vec<State>, initial: Option<&[&str]>, default: Option<&str>) 
         states,
         initial: initial.map(names),
         default: default.map(str::to_owned),
+        ..Machine::default()
     }
 }
 
-/// The one machine of a diagram, without its location.
+/// The one machine of a diagram, without its location and without the
+/// list of nodes that could end the program some other way, which
+/// `other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven` covers.
 fn only(diagram: &BlockDiagram) -> Machine {
     let found = extract(diagram);
     assert!(found.queue_machines.is_empty());
@@ -71,6 +75,7 @@ fn only(diagram: &BlockDiagram) -> Machine {
     };
     Machine {
         location: String::new(),
+        other_exits: Vec::new(),
         ..machine.clone()
     }
 }
@@ -384,46 +389,55 @@ fn candle() -> (Spec, Machine) {
 type Twin = fn() -> (Spec, Machine);
 
 /// Where each real machine is, relative to a directory of clones named
-/// `<owner>_<repository>`, and the location it is expected at.
-const REAL: [(&str, &str, Twin); 8] = [
+/// `<owner>_<repository>`, the location it is expected at, and the type
+/// definition its selector is an instance of.
+const REAL: [(&str, &str, &str, Twin); 8] = [
     (
         "lallers_StateMachine/StateMachineP7.vi",
         "while loop #38, case structure #49",
+        "State.ctl",
         lallers,
     ),
     (
         "lallers_StateMachine/StatemMachineLV7/Main.vi",
         "while loop #38, case structure #49",
+        "State.ctl",
         lallers,
     ),
     (
         "AhmedDMoHassan_Simple-State-machine/Statemachine/Main.vi",
         "while loop #160, case structure #193",
+        "Selector.ctl",
         ahmed,
     ),
     (
         "frank1641_Multiple-consumer-State-machine/Queue State Machine Lib/Main.vi",
         "while loop #38, case structure #49",
+        "State.ctl",
         frank,
     ),
     (
         "Gluvertski1_StateMachine_LabVIEW/StateMachine.vi",
         "while loop #637, case structure #684",
+        "StateMachineController.ctl",
         gluvertski,
     ),
     (
         "GaborDernoczi_LabVIEW_State_Machine/State_Machine.vi",
         "while loop #70, case structure #117",
+        "Enum_Type_Def.ctl",
         gabor,
     ),
     (
         "TomsLabVIEWAdventure_Guessing-Game/Main.vi",
         "while loop #601, case structure #627",
+        "State.ctl",
         toms,
     ),
     (
         "CandleScience_Labview-State-Machine-Template/SimpleStateMachineTemplate.vi",
         "while loop #105, case structure #217",
+        "state.ctl",
         candle,
     ),
 ];
@@ -461,20 +475,114 @@ fn real_machines_outside_the_repository() {
     let root = PathBuf::from(
         std::env::var_os("BUZZARD_FSM_SAMPLES").expect("BUZZARD_FSM_SAMPLES is not set"),
     );
-    for (path, location, twin) in REAL {
+    for (path, location, type_definition, twin) in REAL {
         let file = root.join(path);
         let diagram = Inspection::from_path(&file)
             .unwrap_or_else(|e| panic!("{}: {e}", file.display()))
             .diagram
             .unwrap();
+        assert!(diagram.is_complete(), "{path}");
         let found = extract(&diagram);
         assert!(found.queue_machines.is_empty(), "{path}");
         let expected = Machine {
             location: location.to_owned(),
+            type_definition: Some(type_definition.to_owned()),
             ..twin().1
         };
-        assert_eq!(found.machines, [expected], "{path}");
+        let [machine] = &found.machines[..] else {
+            panic!("{path}: {} machines", found.machines.len());
+        };
+        let compared = Machine {
+            other_exits: Vec::new(),
+            ..machine.clone()
+        };
+        assert_eq!(compared, expected, "{path}");
     }
+}
+
+/// The single changed bytes of real files that were reported to give
+/// false proofs, as `(file, offset in the inflated heap, old byte, new
+/// byte, whether the damage is a recorded loss)`.
+///
+/// * The first renumbers the inner terminal of the next-state tunnel in
+///   one frame, so the wire into it ends nowhere.
+/// * The second makes that wire's signal object undecodable.
+///   Either way the frame looked unwired, the tunnel's default was taken
+///   for what the frame writes, and three states were "proven"
+///   unreachable.
+/// * The third takes the frame index out of a selector table entry. The
+///   value then selected frame 0, a state `frame 1` was made up for the
+///   frame left without a value, and five states were "proven"
+///   unreachable.
+const REPORTED_DAMAGE: [(&str, usize, u8, u8, bool); 3] = [
+    (
+        "GaborDernoczi_LabVIEW_State_Machine/State_Machine.vi",
+        4899,
+        0xf0,
+        0x00,
+        true,
+    ),
+    (
+        "GaborDernoczi_LabVIEW_State_Machine/State_Machine.vi",
+        5197,
+        0xfe,
+        0x00,
+        true,
+    ),
+    (
+        "TomsLabVIEWAdventure_Guessing-Game/Main.vi",
+        24731,
+        0x23,
+        0x21,
+        false,
+    ),
+];
+
+/// The invariant of `a_damaged_heap_never_adds_a_proven_finding` on the
+/// real enumeration machines, which cannot be redistributed: first the
+/// three reported bytes, then a sample of every heap.
+#[test]
+#[ignore = "needs BUZZARD_FSM_SAMPLES to point at clones of the sample repositories"]
+fn damage_to_the_real_machines_proves_nothing_new() {
+    use buzzard_rsrc::blocks::zlib;
+    use buzzard_rsrc::RsrcFile;
+
+    let root = PathBuf::from(
+        std::env::var_os("BUZZARD_FSM_SAMPLES").expect("BUZZARD_FSM_SAMPLES is not set"),
+    );
+    for (path, at, old, new, lossy) in REPORTED_DAMAGE {
+        let bytes = std::fs::read(root.join(path)).unwrap();
+        let file = RsrcFile::parse(&bytes).unwrap();
+        let mut heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+        let pristine = BlockDiagram::from_inflated_heap(&file, &heap)
+            .unwrap()
+            .unwrap();
+        assert_eq!(extract(&pristine).machines.len(), 1, "{path}");
+        assert_eq!(heap[at], old, "{path} byte {at}");
+        heap[at] = new;
+        let damaged = BlockDiagram::from_inflated_heap(&file, &heap)
+            .unwrap()
+            .unwrap();
+        assert_eq!(!damaged.is_complete(), lossy, "{path} byte {at}");
+        assert_eq!(extract(&damaged).machines, [], "{path} byte {at}");
+        assert_eq!(verify(&damaged).issues(), [], "{path} byte {at}");
+    }
+
+    let step = damage_step(53);
+    let mut total = Damage::default();
+    for (path, ..) in REAL {
+        let found = damage(&std::fs::read(root.join(path)).unwrap(), step);
+        assert_eq!(found.added, [] as [&str; 0], "{path}");
+        assert_eq!(found.vanished, [] as [&str; 0], "{path}");
+        total.trials += found.trials;
+        total.decoded += found.decoded;
+        total.incomplete += found.incomplete;
+        total.machines += found.machines;
+    }
+    println!(
+        "{} damaged heaps, {} decoded, {} of them with a recorded loss, {} still with a machine",
+        total.trials, total.decoded, total.incomplete, total.machines
+    );
 }
 
 /// The one real classic machine that may be redistributed: a string
@@ -494,6 +602,21 @@ fn real_string_machine_extracts_exactly() {
     assert!(found.queue_machines.is_empty());
     let expected = Machine {
         location: "while loop #3379, case structure #3023".to_owned(),
+        // The diagram calls 17 different subVIs, any of which could end
+        // the program; the first eight are named.
+        other_exits: [
+            "a subVI call",
+            "subVI `Add Registered Process.vi`",
+            "subVI `CleanDependencies.vi`",
+            "subVI `Clear Errors.vi`",
+            "subVI `Compute Shared Key.vi`",
+            "subVI `Destroy.vi`",
+            "subVI `FindDependency(byKey).vi`",
+            "subVI `Get CallerWatchdog Queue.vi`",
+            "9 more of these kinds",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
         ..machine(
             vec![
                 state("Init", &["Idle"], MAYBE),
@@ -1219,7 +1342,6 @@ fn strings_match_exactly_and_fall_to_the_default() {
         report.findings,
         [
             Finding::UndefinedTarget {
-                from: "Run".to_owned(),
                 target: "Rnu".to_owned(),
                 handled_by: Some("Idle".to_owned()),
             },
@@ -1436,7 +1558,6 @@ fn injected_bugs_in_a_real_machine_are_found() {
     assert_eq!(
         bug.check().findings,
         [Finding::UndefinedTarget {
-            from: "Init".to_owned(),
             target: "Idel".to_owned(),
             handled_by: Some("Idle".to_owned()),
         }]
@@ -1554,7 +1675,7 @@ fn damaged_diagrams_do_not_panic() {
                                 if let Some(selector) = &mut node.selector {
                                     selector.frames.pop();
                                     selector.default_frame = Some(u32::MAX);
-                                    selector.enum_items.clear();
+                                    selector.enum_items = [].into();
                                 }
                             }
                             _ => {
@@ -1662,6 +1783,10 @@ fn lint_reports_the_findings_under_three_rules() {
     let line = |severity: &str, code: &'static str, text: &str| {
         (severity.to_owned(), code, format!("{at}: {text} (proven)"))
     };
+    let structural = |severity: &str, code: &'static str, text: &str| {
+        let how = "(structural, not proven)";
+        (severity.to_owned(), code, format!("{at}: {text} {how}"))
+    };
 
     // Unreachable states are warnings; a loop that never stops at all is
     // informational, since a daemon is a legitimate design.
@@ -1670,7 +1795,11 @@ fn lint_reports_the_findings_under_three_rules() {
         [
             line("warning", "BZ201", "state `Exit` can never be reached"),
             line("warning", "BZ201", "state `Orphan` can never be reached"),
-            line("info", "BZ202", "the loop can never stop"),
+            line(
+                "info",
+                "BZ202",
+                "the loop's condition terminal can never stop the loop"
+            ),
         ]
     );
     // A trap state among states that can stop is a warning.
@@ -1684,7 +1813,7 @@ fn lint_reports_the_findings_under_three_rules() {
         [line(
             "warning",
             "BZ202",
-            "once in state `Stuck` the loop can never stop"
+            "once in state `Stuck` the loop's condition terminal can never stop the loop"
         )]
     );
     // A misspelled state name that the default case swallows.
@@ -1697,11 +1826,11 @@ fn lint_reports_the_findings_under_three_rules() {
         lint_diagram(typo.build()),
         [
             line("warning", "BZ201", "state `Run` can never be reached"),
-            line(
+            structural(
                 "warning",
                 "BZ203",
-                "state `Init` writes the next state `Rnu`, which no case handles; the default \
-                 case `Idle` runs instead"
+                "a constant `Rnu` that no case handles can reach the state register; the \
+                 default case `Idle` would run for it"
             ),
         ]
     );
@@ -1730,6 +1859,7 @@ fn issues_say_how_much_they_claim() {
     let codes: Vec<&str> = issues.iter().map(|issue| issue.code()).collect();
     assert_eq!(codes, ["BZ201", "BZ201", "BZ202"]);
     assert_eq!(Confidence::Proven.as_str(), "PROVEN");
+    assert_eq!(Confidence::Structural.as_str(), "STRUCTURAL");
     assert_eq!(Confidence::Heuristic.as_str(), "HEURISTIC");
 }
 
@@ -1750,4 +1880,779 @@ fn a_selector_table_that_contradicts_itself_is_tolerated() {
     assert_eq!(found.states[0].unmatched, names(&["Zzz"]));
     let _ = found.check();
     let _ = verify(&diagram).issues();
+}
+
+// ------------------------------------------- what a finding may claim
+
+/// The text report `buzzard verify` prints for one diagram.
+fn text_of(diagram: &BlockDiagram) -> String {
+    let result = Ok(Some(verify(diagram)));
+    to_text(&Verified::new(vec![(PathBuf::from("Main.vi"), result)]))
+}
+
+/// The messages of every issue with their confidence.
+fn claims(diagram: &BlockDiagram) -> Vec<(Confidence, &'static str, String)> {
+    verify(diagram)
+        .issues()
+        .iter()
+        .map(|issue| (issue.confidence(), issue.code(), issue.message()))
+        .collect()
+}
+
+/// Add a node of the given class next to the loop.
+fn with_extra_node(mut diagram: BlockDiagram, class: &str, name: Option<&str>) -> BlockDiagram {
+    diagram.root.nodes.push(buzzard_rsrc::Node {
+        uid: 70_000 + diagram.root.nodes.len() as i32,
+        class: class.to_owned(),
+        name: name.map(str::to_owned),
+        ..buzzard_rsrc::Node::default()
+    });
+    diagram
+}
+
+#[test]
+fn a_diagram_with_a_recorded_loss_is_not_searched() {
+    // The shape of the real file this was found on: one frame writes a
+    // constant through a wire and another leaves the tunnel unwired, so
+    // the tunnel is marked as using the default, which is "Wait".
+    let spec = Spec::enumeration(&["Wait", "Init", "Work"])
+        .starts_in("Wait")
+        .goes(0, "Init")
+        .goes(1, "Work")
+        .next(2, Expr::Unwired)
+        .stop(2, boolean(true));
+    let whole = spec.build();
+    assert!(whole.is_complete());
+    assert_eq!(verify(&whole).issues(), []);
+
+    // The wire from the constant "Init" is gone, as when the decoder
+    // skips a signal it cannot resolve or a wire end it cannot find.
+    let mut damaged = whole.clone();
+    with_node(&mut damaged, CASE, |case| {
+        case.diagrams[0].wires.remove(0);
+    });
+    mark_wired(&mut damaged);
+    // In a diagram that decoded completely a missing wire means that the
+    // tunnel is unwired, and two states are then rightly unreachable.
+    assert_eq!(
+        only(&damaged).check().findings,
+        [
+            unreachable("Init"),
+            unreachable("Work"),
+            Finding::NeverTerminates
+        ]
+    );
+
+    // With the loss on record nothing is claimed: no machine at all.
+    let lossy = |place: fn(&mut BlockDiagram) -> &mut buzzard_rsrc::Diagram, loss: Loss| {
+        let mut diagram = damaged.clone();
+        place(&mut diagram).losses = vec![loss];
+        assert!(!diagram.is_complete());
+        diagram
+    };
+    let in_the_frame = lossy(
+        |diagram| {
+            let inside = &mut diagram.root.nodes[1].diagrams[0];
+            let case = inside.nodes.iter_mut().find(|n| n.uid == CASE).unwrap();
+            &mut case.diagrams[0]
+        },
+        Loss::Wire,
+    );
+    let elsewhere = lossy(|diagram| &mut diagram.root, Loss::RepeatedObject);
+    for diagram in [in_the_frame, elsewhere] {
+        let found = extract(&diagram);
+        assert!(found.incomplete);
+        assert_eq!(found.machines, []);
+        let checked = verify(&diagram);
+        assert!(checked.incomplete);
+        assert_eq!(checked.issues(), []);
+        assert_eq!(lint_diagram(diagram.clone()), []);
+        let report = Verified::new(vec![(PathBuf::from("Main.vi"), Ok(Some(checked)))]);
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["incomplete"], serde_json::json!(["Main.vi"]));
+        assert_eq!(json["summary"]["incomplete"], 1);
+        assert_eq!(json["files"], serde_json::json!([]));
+        assert_eq!(
+            text_of(&diagram),
+            "Main.vi: the block diagram did not decode completely; it was not searched for \
+             state machines, because nothing could be proven about one\n\
+             Checked 1 file: 0 with a state machine (0 state machines, 0 string/queue \
+             machines), 1 without.\nNo findings.\n"
+        );
+    }
+    // Any loss on the undamaged diagram refuses it as well.
+    let mut diagram = whole;
+    diagram.root.losses = vec![Loss::WireEnd];
+    assert_eq!(extract(&diagram).machines, []);
+}
+
+#[test]
+fn a_frame_that_no_value_selects_gives_no_machine() {
+    // "Exit" has no entry and is not the default: the table contradicts
+    // the frame list. A state "frame 2" used to be made up for it.
+    let mut spec = base();
+    spec.frames[2].matches.clear();
+    let found = extract(&spec.build());
+    assert_eq!(found.machines, []);
+    assert!(!found.incomplete);
+    assert_eq!(verify(&spec.build()).issues(), []);
+    // Only the default frame may be without a value.
+    let found = only(&spec.default(2).build());
+    assert_eq!(found.states[2].name, "Default");
+    assert_eq!(found.default.as_deref(), Some("Default"));
+}
+
+#[test]
+fn a_state_named_after_several_values_reads_as_one_state() {
+    let mut spec = Spec::enumeration(&["A", "B", "C"])
+        .starts_in("A")
+        .goes(2, "A");
+    spec.frames.remove(1);
+    spec.frames[0].matches = vec![one(0), one(1)];
+    let text = text_of(&spec.build());
+    assert!(text.contains("    states (2): `A, B`, C\n"), "{text}");
+    assert!(text.contains("    initial state: `A, B`\n"), "{text}");
+    assert!(
+        text.contains("      C -> `A, B`; never stops the loop\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_constant_without_a_case_is_structural_and_reported_once() {
+    // The constant sits in a frame of a disable structure that may be
+    // the disabled one, so it may never be written.
+    let disabled = Spec::strings(&["Init", "Idle", "Exit"])
+        .default(1)
+        .starts(text("Init"))
+        .next(0, Expr::Disable(vec![text("Idle"), text("Bogus")]))
+        .stop(1, Expr::Control)
+        .stop(2, boolean(true));
+    let message = "a constant `Bogus` that no case handles can reach the state register; the \
+                   default case `Idle` would run for it";
+    assert_eq!(
+        claims(&disabled.build()),
+        [
+            (
+                Confidence::Proven,
+                "BZ201",
+                "state `Exit` can never be reached".to_owned()
+            ),
+            (Confidence::Structural, "BZ203", message.to_owned()),
+        ]
+    );
+    let report = text_of(&disabled.build());
+    assert!(
+        report.contains(&format!(
+            "    STRUCTURAL [BZ203] {message}\n      why: a constant"
+        )),
+        "{report}"
+    );
+    assert!(!report.contains("PROVEN [BZ203]"));
+    assert!(report.ends_with("2 findings: 1 proven, 1 structural, 0 heuristic.\n"));
+    let lint = lint_diagram(disabled.build());
+    assert!(lint[1]
+        .2
+        .ends_with(&format!("{message} (structural, not proven)")));
+    let issues = verify(&disabled.build()).issues();
+    assert!(issues[1].justification().contains("is not determined"));
+    assert!(!issues[1].message().contains("writes"));
+
+    // The case structure sits in one frame of an event structure and
+    // another event frame writes the constant: one finding for the
+    // machine, where every state used to be blamed for writing it.
+    let mut wrapped = Spec::strings(&["Init", "Run", "Exit"])
+        .default(0)
+        .starts(text("Init"))
+        .next(0, text("Run"))
+        .next(1, text("Exit"));
+    wrapped.wrap = Some(Wrap {
+        others: vec![(text("Shutdown"), boolean(false))],
+        timeout_wired: false,
+    });
+    let found = claims(&wrapped.build());
+    let about: Vec<&(Confidence, &str, String)> = found
+        .iter()
+        .filter(|(_, code, _)| *code == "BZ203")
+        .collect();
+    assert_eq!(about.len(), 1, "{found:?}");
+    assert_eq!(about[0].0, Confidence::Structural);
+    assert!(about[0]
+        .2
+        .starts_with("a constant `Shutdown` that no case handles"));
+
+    // A state that always stops the loop writes a value that is never
+    // used to select a case: nothing is reported.
+    let stopping = Spec::strings(&["Init", "Exit"])
+        .default(0)
+        .starts(text("Init"))
+        .next(0, text("Exit"))
+        .next(1, text("done"))
+        .stop(1, boolean(true));
+    assert_eq!(
+        only(&stopping.build()).states[1].unmatched,
+        names(&["done"])
+    );
+    assert_eq!(claims(&stopping.build()), []);
+}
+
+#[test]
+fn other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven() {
+    let never = "the loop's condition terminal can never stop the loop";
+    // Nothing but the loop on the diagram: proven.
+    let alone = doomed().build();
+    assert_eq!(extract(&alone).machines[0].other_exits, [] as [&str; 0]);
+    let found = claims(&alone);
+    assert_eq!(found[2], (Confidence::Proven, "BZ202", never.to_owned()));
+    // A built-in function that only computes changes nothing.
+    let computing = with_extra_node(doomed().build(), "prim", None);
+    assert_eq!(claims(&computing), found);
+
+    // Anything that could end the program or abort the VI: the finding
+    // is not proven and names what was found.
+    for (class, name, shown) in [
+        ("iUse", Some("Quit App.vi"), "subVI `Quit App.vi`"),
+        ("iUse", None, "a subVI call"),
+        ("polyIUse", Some("Close.vi"), "subVI `Close.vi`"),
+        ("dynIUse", Some("Stop.vi"), "subVI `Stop.vi`"),
+        ("callByRefNode", None, "a call by reference"),
+        ("invokeNode", None, "an invoke node"),
+        ("propNode", None, "a property node"),
+        ("extFunc", None, "a call into a library"),
+        ("xNode", None, "an XNode"),
+        ("neverSeenBefore", None, "a node of class `neverSeenBefore`"),
+    ] {
+        let diagram = with_extra_node(doomed().build(), class, name);
+        assert_eq!(extract(&diagram).machines[0].other_exits, [shown]);
+        let found = claims(&diagram);
+        // Reachability does not depend on it.
+        assert_eq!(found[0].0, Confidence::Proven);
+        assert_eq!(found[1].0, Confidence::Proven);
+        let expected = format!("{never}; the program could still be ended by: {shown}");
+        assert_eq!(
+            found[2],
+            (Confidence::Structural, "BZ202", expected),
+            "{class}"
+        );
+        let report = text_of(&diagram);
+        assert!(report.contains("    STRUCTURAL [BZ202] "), "{report}");
+        assert!(!report.contains("PROVEN [BZ202]"), "{report}");
+        assert!(report.contains("so this does not prove that the loop runs forever"));
+        let lint = lint_diagram(diagram);
+        assert!(lint[2].2.ends_with("(structural, not proven)"), "{lint:?}");
+    }
+
+    // The same for a single trap state, and the node may sit anywhere,
+    // here inside another frame than the trap's.
+    let trap = Spec::enumeration(&["Init", "Run", "Exit", "Stuck"])
+        .starts_in("Init")
+        .goes(1, "Exit")
+        .stop(2, boolean(true));
+    let either = select(trap.item("Stuck"), trap.item("Run"));
+    let trap = trap.next(0, either);
+    let stuck = "once in state `Stuck` the loop's condition terminal can never stop the loop";
+    assert_eq!(
+        claims(&trap.build()),
+        [(Confidence::Proven, "BZ202", stuck.to_owned())]
+    );
+    let mut diagram = trap.build();
+    with_node(&mut diagram, CASE, |case| {
+        case.diagrams[1].nodes.push(buzzard_rsrc::Node {
+            uid: 70_001,
+            class: "invokeNode".to_owned(),
+            ..buzzard_rsrc::Node::default()
+        });
+    });
+    assert_eq!(
+        claims(&diagram),
+        [(
+            Confidence::Structural,
+            "BZ202",
+            format!("{stuck}; the program could still be ended by: an invoke node")
+        )]
+    );
+
+    // A long list is cut short.
+    let mut crowded = doomed().build();
+    for index in 0..40 {
+        crowded = with_extra_node(crowded, "iUse", Some(&format!("Sub {index:02}.vi")));
+    }
+    let exits = &extract(&crowded).machines[0].other_exits;
+    assert_eq!(exits.len(), 9);
+    assert_eq!(exits[0], "subVI `Sub 00.vi`");
+    assert_eq!(exits[8], "32 more of these kinds");
+}
+
+#[test]
+fn only_selector_types_whose_table_was_seen_are_resolved() {
+    let ty = |numeric| build::Ty {
+        data: DataType::Numeric,
+        numeric: Some(numeric),
+    };
+    // Three frames `0`, `1`, `2` on a register of the given type, each
+    // writing the next number as a constant of that type.
+    let counter = |numeric, last: i32| {
+        let mut spec = Spec::integers(vec![vec![one(0)], vec![one(1)], vec![one(last)]])
+            .default(0)
+            .starts(integer(0))
+            .next(0, integer(1))
+            .next(1, integer(i64::from(last)))
+            .next(2, integer(0));
+        spec.state = ty(numeric);
+        spec.build()
+    };
+    let resolved = |diagram: &BlockDiagram| {
+        let found = only(diagram);
+        assert_eq!(found.states[0].successors, Successors::Known(names(&["1"])));
+        assert_eq!(found.initial, Some(names(&["0"])));
+    };
+    // An integer register of which no successor resolves is not reported
+    // as a machine at all.
+    let unresolved = |diagram: &BlockDiagram| assert_eq!(extract(diagram).machines, []);
+
+    // 32-bit signed tables were seen with negative numbers.
+    resolved(&counter(NumericType::I32, 2));
+    resolved(&counter(NumericType::I32, -1));
+    resolved(&counter(NumericType::I32, i32::MIN));
+    // U8 and I16 tables were seen with numbers that read the same
+    // whether a narrow value is sign-extended or zero-extended.
+    resolved(&counter(NumericType::U8, 255));
+    resolved(&counter(NumericType::I16, i32::from(i16::MAX)));
+    // Outside that range the encoding was never seen: -1 as an I16 could
+    // be stored as -1 or as 65,535, and one of the two would send the
+    // constant -1 to the default case instead of its own.
+    unresolved(&counter(NumericType::I16, -1));
+    unresolved(&counter(NumericType::I16, 65_535));
+    unresolved(&counter(NumericType::I16, 32_768));
+    unresolved(&counter(NumericType::U8, 256));
+    unresolved(&counter(NumericType::U8, -1));
+    // No table of these types was available at all.
+    for numeric in [
+        NumericType::I8,
+        NumericType::U16,
+        NumericType::U32,
+        NumericType::I64,
+        NumericType::U64,
+    ] {
+        unresolved(&counter(numeric, 2));
+    }
+
+    // Enumerations of every width were seen; a negative number in the
+    // table of one was not.
+    for numeric in [NumericType::Enum8, NumericType::Enum16, NumericType::Enum32] {
+        let mut spec = base();
+        spec.state = ty(numeric);
+        assert!(only(&spec.build()).check().exact);
+        spec.frames[2].matches = vec![one(-1)];
+        let found = only(&spec.build());
+        assert!(found
+            .states
+            .iter()
+            .all(|s| s.successors == Successors::Unknown));
+        assert_eq!(found.initial, None);
+    }
+    let mut spec = base();
+    spec.state = ty(NumericType::Enum8);
+    spec.frames[2].matches = vec![one(256)];
+    assert_eq!(only(&spec.build()).initial, None);
+}
+
+#[test]
+fn a_proof_about_a_type_definition_says_which_copy_it_is_about() {
+    let mut spec = doomed();
+    assert_eq!(only(&spec.build()).type_definition, None);
+    let plain = claims(&spec.build());
+    assert!(plain
+        .iter()
+        .all(|(_, _, message)| !message.contains("saved")));
+
+    spec.type_definition = Some("State.ctl");
+    let diagram = spec.build();
+    assert_eq!(only(&diagram).type_definition.as_deref(), Some("State.ctl"));
+    let saved = " (going by the items of the type definition `State.ctl` as saved in this file)";
+    assert_eq!(
+        claims(&diagram),
+        [
+            (
+                Confidence::Proven,
+                "BZ201",
+                format!("state `Exit` can never be reached{saved}")
+            ),
+            (
+                Confidence::Proven,
+                "BZ201",
+                format!("state `Orphan` can never be reached{saved}")
+            ),
+            (
+                Confidence::Proven,
+                "BZ202",
+                format!("the loop's condition terminal can never stop the loop{saved}")
+            ),
+        ]
+    );
+    let report = text_of(&diagram);
+    assert!(
+        report.contains(
+            "    states are the items of the type definition State.ctl as saved in this file; \
+             the type definition itself was not read\n"
+        ),
+        "{report}"
+    );
+    assert!(lint_diagram(diagram)[0]
+        .2
+        .ends_with(&format!("{saved} (proven)")));
+
+    // A string machine has no item list to go stale.
+    let mut strings = Spec::strings(&["Init", "Run"])
+        .default(0)
+        .starts(text("Init"));
+    strings.type_definition = Some("Name.ctl");
+    assert_eq!(only(&strings.build()).type_definition, None);
+}
+
+#[test]
+fn registers_that_do_not_pair_one_to_one_give_no_machine() {
+    let none = |diagram: &BlockDiagram| assert_eq!(extract(diagram).machines, []);
+    let register_terminal = |class: &str, dco: i32, uid: i32| buzzard_rsrc::Terminal {
+        uid,
+        dco: Some(dco),
+        dco_class: Some(class.to_owned()),
+        data_type: Some(DataType::Numeric),
+        numeric: Some(NumericType::Enum16),
+        ..buzzard_rsrc::Terminal::default()
+    };
+    // A second left terminal that the register does not list, as a
+    // stacked register stored one element per object would look: on the
+    // loop, on its diagram, and on both.
+    for (outer, inner) in [(true, false), (false, true), (true, true)] {
+        for class in ["lSR", "rSR"] {
+            let mut diagram = base().build();
+            with_node(&mut diagram, LOOP, |looping| {
+                if outer {
+                    looping
+                        .terminals
+                        .push(register_terminal(class, 88_000, 88_001));
+                }
+                if inner {
+                    let boundary = &mut looping.diagrams[0].nodes[0];
+                    boundary
+                        .terminals
+                        .push(register_terminal(class, 88_000, 88_002));
+                }
+            });
+            none(&diagram);
+        }
+    }
+    // A second register that is listed and paired is fine: it is data.
+    let mut diagram = base().build();
+    with_node(&mut diagram, LOOP, |looping| {
+        looping
+            .terminals
+            .push(register_terminal("lSR", 88_000, 88_001));
+        looping
+            .terminals
+            .push(register_terminal("rSR", 88_010, 88_011));
+        let boundary = &mut looping.diagrams[0].nodes[0];
+        boundary
+            .terminals
+            .push(register_terminal("lSR", 88_000, 88_002));
+        boundary
+            .terminals
+            .push(register_terminal("rSR", 88_010, 88_012));
+        let info = looping.loop_info.as_mut().unwrap();
+        info.shift_registers.push(buzzard_rsrc::ShiftRegister {
+            left: vec![88_000],
+            right: 88_010,
+        });
+    });
+    assert_eq!(extract(&diagram).machines.len(), 1);
+    // The other register is stacked: the loop is refused, even though
+    // the state register itself is a plain one.
+    with_node(&mut diagram, LOOP, |looping| {
+        let info = looping.loop_info.as_mut().unwrap();
+        info.shift_registers[1].left.push(88_020);
+        looping
+            .terminals
+            .push(register_terminal("lSR", 88_020, 88_021));
+        let boundary = &mut looping.diagrams[0].nodes[0];
+        boundary
+            .terminals
+            .push(register_terminal("lSR", 88_020, 88_022));
+    });
+    none(&diagram);
+}
+
+#[test]
+fn a_structure_is_what_its_class_says_only_when_the_rest_agrees() {
+    let count_terminal = || buzzard_rsrc::Terminal {
+        uid: 88_100,
+        dco: Some(88_101),
+        dco_class: Some("lMax".to_owned()),
+        data_type: Some(DataType::Numeric),
+        numeric: Some(NumericType::I32),
+        ..buzzard_rsrc::Terminal::default()
+    };
+    // "Init" chooses its successor in a nested case structure of which
+    // one frame is unwired.
+    let nested = Expr::Case {
+        frames: vec![base().item("Run"), Expr::Unwired],
+        default_if_unwired: true,
+    };
+    let mut diagram = base().next(0, nested).build();
+    let init = |diagram: &BlockDiagram| only(diagram).states[0].successors.clone();
+    assert_eq!(init(&diagram), Successors::Known(names(&["Init", "Run"])));
+    // Without a selector table for its frames it is not read as a case
+    // structure: an event structure whose class is misread would look
+    // like this, and one with a timeout can hand out a default that no
+    // frame writes.
+    let strip = |diagram: &mut BlockDiagram, change: fn(&mut buzzard_rsrc::Node)| {
+        build::visit(&mut diagram.root, &mut |node| {
+            if node.class == "select" && node.uid != CASE {
+                change(node);
+            }
+        });
+    };
+    strip(&mut diagram, |node| {
+        node.selector.as_mut().unwrap().frames.pop();
+    });
+    assert_eq!(init(&diagram), Successors::Unknown);
+    strip(&mut diagram, |node| node.selector = None);
+    assert_eq!(init(&diagram), Successors::Unknown);
+
+    // A nested while loop hands its value out; a loop with a count
+    // terminal is a for loop whatever its class says, and a for loop that
+    // runs zero times hands out a default.
+    let looped = Expr::While(Box::new(base().item("Run")));
+    let mut diagram = base().next(0, looped).build();
+    assert_eq!(init(&diagram), Successors::Known(names(&["Run"])));
+    build::visit(&mut diagram.root, &mut |node| {
+        if node.class == "whileLoop" && node.uid != LOOP {
+            node.terminals.push(count_terminal());
+        }
+    });
+    assert_eq!(init(&diagram), Successors::Unknown);
+
+    // The same for the machine's own loop, on either side of its border.
+    let mut diagram = base().build();
+    with_node(&mut diagram, LOOP, |looping| {
+        looping.terminals.push(count_terminal());
+    });
+    assert_eq!(extract(&diagram).machines, []);
+    let mut diagram = base().build();
+    with_node(&mut diagram, LOOP, |looping| {
+        looping.diagrams[0].nodes[0]
+            .terminals
+            .push(count_terminal());
+    });
+    assert_eq!(extract(&diagram).machines, []);
+}
+
+#[test]
+fn a_huge_case_structure_is_not_modelled_and_a_large_one_is_quick() {
+    let items = |count: usize| -> Vec<&'static str> {
+        (0..count)
+            .map(|index| &*Box::leak(format!("S{index}").into_boxed_str()))
+            .collect()
+    };
+    // Every next state comes from a subVI, so every state may go
+    // anywhere. That used to list every pair of states: 215 MB for 1,000
+    // states and 3.4 GB for 4,000.
+    let all_unknown = |count: usize| {
+        let mut spec = Spec::enumeration(&items(count));
+        for frame in &mut spec.frames {
+            frame.next = Expr::Call;
+        }
+        spec.initial = spec.item("S0");
+        spec.build()
+    };
+    let started = std::time::Instant::now();
+    let largest = verify(&all_unknown(MAX_STATES));
+    assert_eq!(largest.machines[0].machine.states.len(), MAX_STATES);
+    assert_eq!(largest.machines[0].transitions, []);
+    assert_eq!(
+        largest.machines[0].reachable.as_ref().map(Vec::len),
+        Some(MAX_STATES)
+    );
+    // Structural, because of the subVI.
+    assert_eq!(largest.issues().len(), 1);
+    let report = Verified::new(vec![(PathBuf::from("Main.vi"), Ok(Some(largest)))]);
+    assert!(to_text(&report).contains("      S1023 -> ? (any state); never stops the loop\n"));
+    assert!(buzzard_lint::verify::report::to_dot(&report).contains("m0_s1023 -> m0_any"));
+
+    // One frame more is not a machine, however many more there are.
+    for count in [MAX_STATES + 1, 8_000] {
+        let found = extract(&all_unknown(count));
+        assert_eq!(found.machines, []);
+        assert!(!found.incomplete);
+    }
+    // Generous: all of the above takes about a second in a debug build.
+    assert!(started.elapsed() < std::time::Duration::from_secs(60));
+}
+
+// ---------------------------------------------------------- damaged heaps
+//
+// The decoder skips what it cannot resolve. A wire it skipped used to
+// look like a tunnel left unwired, which the tracer reads as the type's
+// default, and that turned one changed byte in a real file into states
+// "proven" unreachable. The decoder now records every loss and a diagram
+// with a loss is not searched for classic machines.
+
+/// The proven findings of a diagram, one line each.
+fn proven(diagram: &BlockDiagram) -> BTreeSet<String> {
+    verify(diagram)
+        .issues()
+        .into_iter()
+        .filter(|issue| issue.confidence() == Confidence::Proven)
+        .map(|issue| {
+            format!(
+                "{} at {}: {}",
+                issue.code(),
+                issue.location,
+                issue.message()
+            )
+        })
+        .collect()
+}
+
+/// What changing single bytes of a file's block diagram heap did.
+#[derive(Debug, Default)]
+struct Damage {
+    /// Changed heaps tried.
+    trials: usize,
+    /// Of those, the ones that still decoded to a diagram.
+    decoded: usize,
+    /// Of those, the ones with a recorded loss.
+    incomplete: usize,
+    /// Of the decoded ones, those that still gave a classic machine.
+    machines: usize,
+    /// Proven findings the undamaged file does not have, with the place
+    /// and the byte that produced them.
+    added: Vec<String>,
+    /// Damaged heaps that decoded without a recorded loss to a diagram
+    /// with less on it than the undamaged one.
+    vanished: Vec<String>,
+}
+
+/// How much there is on a diagram: frames, nodes, terminals, wires and
+/// wire ends.
+fn amount(diagram: &BlockDiagram) -> [usize; 5] {
+    [
+        diagram.diagrams().len(),
+        diagram.nodes().count(),
+        diagram.nodes().map(|node| node.terminals.len()).sum(),
+        diagram.wires().count(),
+        diagram.wires().map(|wire| 1 + wire.sinks.len()).sum(),
+    ]
+}
+
+/// The values a byte is changed to: both extremes, single bits low, in
+/// the middle and high, and the neighbouring values.
+fn damaged_values(byte: u8) -> BTreeSet<u8> {
+    let mut values = BTreeSet::from([
+        0x00,
+        0xFF,
+        byte ^ 0x01,
+        byte ^ 0x02,
+        byte ^ 0x10,
+        byte ^ 0x80,
+        byte.wrapping_add(1),
+        byte.wrapping_sub(1),
+    ]);
+    values.remove(&byte);
+    values
+}
+
+/// Change one byte at a time of the inflated block diagram heap of a
+/// file, at every `step`-th position, to each of [`damaged_values`], and
+/// decode and verify the result with the file's own types, links and
+/// front panel.
+fn damage(bytes: &[u8], step: usize) -> Damage {
+    use buzzard_rsrc::blocks::zlib;
+    use buzzard_rsrc::RsrcFile;
+
+    let file = RsrcFile::parse(bytes).unwrap();
+    let heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+    let pristine = BlockDiagram::from_inflated_heap(&file, &heap)
+        .unwrap()
+        .unwrap();
+    assert!(pristine.is_complete());
+    let allowed = proven(&pristine);
+    let whole = amount(&pristine);
+
+    let mut out = Damage::default();
+    let mut copy = heap.clone();
+    for at in (0..heap.len()).step_by(step) {
+        for value in damaged_values(heap[at]) {
+            copy[at] = value;
+            out.trials += 1;
+            let Ok(Some(diagram)) = BlockDiagram::from_inflated_heap(&file, &copy) else {
+                continue;
+            };
+            out.decoded += 1;
+            out.incomplete += usize::from(!diagram.is_complete());
+            let left = amount(&diagram);
+            if diagram.is_complete() && left.iter().zip(&whole).any(|(now, before)| now < before) {
+                out.vanished.push(format!(
+                    "byte {at} {:#04x} -> {value:#04x}: {whole:?} -> {left:?}",
+                    heap[at]
+                ));
+            }
+            out.machines += usize::from(!extract(&diagram).machines.is_empty());
+            for finding in proven(&diagram).difference(&allowed) {
+                out.added.push(format!(
+                    "byte {at} {:#04x} -> {value:#04x}: {finding}",
+                    heap[at]
+                ));
+            }
+        }
+        copy[at] = heap[at];
+    }
+    out
+}
+
+/// Every `step`-th byte of the heap is damaged. Set
+/// `BUZZARD_HEAP_DAMAGE_STEP=1` to try every byte, which takes minutes.
+fn damage_step(default: usize) -> usize {
+    match std::env::var("BUZZARD_HEAP_DAMAGE_STEP") {
+        Ok(step) => step.parse().expect("BUZZARD_HEAP_DAMAGE_STEP is a number"),
+        Err(_) => default,
+    }
+}
+
+const FIXTURES: [&str; 5] = [
+    "jki-smo/process.vi",
+    "jki-state-machine/queued-state-machine-template.vi",
+    "jki-state-machine/new-support-vis-examples.vi",
+    "jki-state-machine/parse-state-queue-performance-test.vi",
+    "lv-mqtt-broker/test-simple-connection.vi",
+];
+
+/// The invariant behind the word "proven": damage to the file may remove
+/// findings, but no proven finding appears that the undamaged file does
+/// not have. And the property of the decoder that the invariant rests
+/// on: whenever a frame, a node, a terminal, a wire or a wire end is gone
+/// from the decoded diagram, a loss is on record.
+#[test]
+fn a_damaged_heap_never_adds_a_proven_finding() {
+    let step = damage_step(499);
+    let mut total = Damage::default();
+    for name in FIXTURES {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/verify")
+            .join(name);
+        let found = damage(&std::fs::read(path).unwrap(), step);
+        assert_eq!(found.added, [] as [&str; 0], "{name}");
+        assert_eq!(found.vanished, [] as [&str; 0], "{name}");
+        total.trials += found.trials;
+        total.decoded += found.decoded;
+        total.incomplete += found.incomplete;
+        total.machines += found.machines;
+    }
+    println!(
+        "{} damaged heaps, {} decoded, {} of them with a recorded loss, {} still with a machine",
+        total.trials, total.decoded, total.incomplete, total.machines
+    );
+    // The test means something only if damage is noticed and some
+    // damaged files still give a machine to make claims about.
+    assert!(total.decoded > 1_000 && total.incomplete > 100 && total.machines > 100);
 }

@@ -4,6 +4,7 @@
 //! diagram order, and states, transitions and findings in the order the
 //! model gives them.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -59,8 +60,12 @@ pub struct Summary {
     pub files_without_machines: usize,
     pub machines: usize,
     pub queue_machines: usize,
+    /// Files whose block diagram did not decode completely and was
+    /// therefore not searched for classic state machines.
+    pub incomplete: usize,
     pub findings: usize,
     pub proven: usize,
+    pub structural: usize,
     pub heuristic: usize,
 }
 
@@ -70,6 +75,9 @@ pub struct Verified {
     pub files: Vec<FileMachines>,
     /// Files that could not be read or parsed, with the reason.
     pub unreadable: Vec<(PathBuf, String)>,
+    /// Files whose block diagram did not decode completely. Nothing is
+    /// claimed about classic state machines on them.
+    pub incomplete: Vec<PathBuf>,
     pub summary: Summary,
 }
 
@@ -91,6 +99,10 @@ impl Verified {
                 }
             };
             out.summary.files += 1;
+            if verification.incomplete {
+                out.summary.incomplete += 1;
+                out.incomplete.push(path.clone());
+            }
             if verification.is_empty() {
                 out.summary.files_without_machines += 1;
                 continue;
@@ -100,16 +112,19 @@ impl Verified {
                 .into_iter()
                 .map(ShownIssue::from)
                 .collect();
-            let proven = findings
-                .iter()
-                .filter(|f| f.confidence == Confidence::Proven)
-                .count();
+            let count = |confidence: Confidence| {
+                findings
+                    .iter()
+                    .filter(|f| f.confidence == confidence)
+                    .count()
+            };
             out.summary.files_with_machines += 1;
             out.summary.machines += verification.machines.len();
             out.summary.queue_machines += verification.queue_machines.len();
             out.summary.findings += findings.len();
-            out.summary.proven += proven;
-            out.summary.heuristic += findings.len() - proven;
+            out.summary.proven += count(Confidence::Proven);
+            out.summary.structural += count(Confidence::Structural);
+            out.summary.heuristic += count(Confidence::Heuristic);
             out.files.push(FileMachines {
                 path,
                 machines: verification.machines,
@@ -152,13 +167,19 @@ fn plural(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
+/// Names separated by commas. A name that holds a comma itself (a case
+/// that handles several values is named `A, B`) is put in backticks, so
+/// that it cannot be read as two names.
 fn list(names: &[&str]) -> String {
     if names.is_empty() {
         "none".to_owned()
     } else {
         names
             .iter()
-            .map(|name| clean(name))
+            .map(|name| match name.contains(',') {
+                true => format!("`{}`", clean(name)),
+                false => clean(name),
+            })
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -200,6 +221,14 @@ pub fn to_text(verified: &Verified) -> String {
     for (path, reason) in &verified.unreadable {
         let _ = writeln!(out, "{}: cannot analyze file: {reason}", path.display());
     }
+    for path in &verified.incomplete {
+        let _ = writeln!(
+            out,
+            "{}: the block diagram did not decode completely; it was not searched for state \
+             machines, because nothing could be proven about one",
+            path.display()
+        );
+    }
     let s = &verified.summary;
     let _ = writeln!(
         out,
@@ -226,9 +255,10 @@ pub fn to_text(verified: &Verified) -> String {
     } else {
         let _ = writeln!(
             out,
-            "{}: {} proven, {} heuristic.",
+            "{}: {} proven, {} structural, {} heuristic.",
             plural(s.findings, "finding", "findings"),
             s.proven,
+            s.structural,
             s.heuristic
         );
     }
@@ -250,6 +280,14 @@ fn machine_text(out: &mut String, report: &Report) {
         "    default state: {}",
         machine.default.as_deref().map_or("none".to_owned(), clean)
     );
+    if let Some(file) = &machine.type_definition {
+        let _ = writeln!(
+            out,
+            "    states are the items of the type definition {} as saved in this file; the type \
+             definition itself was not read",
+            clean(file)
+        );
+    }
     let unknown = machine
         .states
         .iter()
@@ -280,6 +318,10 @@ fn machine_text(out: &mut String, report: &Report) {
         );
     }
     out.push_str("    transitions:\n");
+    let mut successors: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (from, to) in &report.transitions {
+        successors.entry(from).or_default().push(to);
+    }
     for state in &machine.states {
         let stop = match state.stop {
             Stop::Always => "stops the loop",
@@ -288,15 +330,11 @@ fn machine_text(out: &mut String, report: &Report) {
         };
         let targets = match &state.successors {
             Successors::Unknown => "? (any state)".to_owned(),
-            Successors::Known(_) => {
-                let targets: Vec<&str> = report
-                    .transitions
-                    .iter()
-                    .filter(|(from, _)| *from == state.name)
-                    .map(|(_, to)| to.as_str())
-                    .collect();
-                list(&targets)
-            }
+            Successors::Known(_) => list(
+                successors
+                    .get(state.name.as_str())
+                    .map_or(&[][..], Vec::as_slice),
+            ),
         };
         let _ = writeln!(out, "      {} -> {targets}; {stop}", clean(&state.name));
     }
@@ -328,16 +366,28 @@ fn quote(text: &str) -> String {
 /// machine. A state that stops the loop has a double border, one proven
 /// unreachable is dashed, and a next state that could not be followed is
 /// a dashed edge to `?`. String/queue machines are not drawn.
+///
+/// The work is linear in the number of states and transitions.
 pub fn to_dot(verified: &Verified) -> String {
     let mut out = String::from("digraph state_machines {\n  rankdir=LR;\n  node [shape=box];\n");
     let mut number = 0;
     for file in &verified.files {
         for report in &file.machines {
             let machine = &report.machine;
+            let position: BTreeMap<&str, usize> = machine
+                .states
+                .iter()
+                .enumerate()
+                .map(|(index, state)| (state.name.as_str(), index))
+                .collect();
             let id = |state: &str| {
-                let index = machine.states.iter().position(|s| s.name == state);
+                let index = position.get(state).copied();
                 format!("m{number}_s{}", index.unwrap_or(usize::MAX))
             };
+            let reachable: Option<std::collections::BTreeSet<&str>> = report
+                .reachable
+                .as_ref()
+                .map(|names| names.iter().map(String::as_str).collect());
             let _ = writeln!(
                 out,
                 "  subgraph cluster_{number} {{\n    label=\"{}: {}\";",
@@ -349,10 +399,9 @@ pub fn to_dot(verified: &Verified) -> String {
                 if state.stop == Stop::Always {
                     attributes.push("peripheries=2".to_owned());
                 }
-                let unreachable = report
-                    .reachable
+                let unreachable = reachable
                     .as_ref()
-                    .is_some_and(|reachable| !reachable.contains(&state.name));
+                    .is_some_and(|reachable| !reachable.contains(state.name.as_str()));
                 if unreachable {
                     attributes.push("style=dashed".to_owned());
                 }
@@ -364,14 +413,9 @@ pub fn to_dot(verified: &Verified) -> String {
                     let _ = writeln!(out, "    m{number}_start -> {};", id(state));
                 }
             }
+            // Only known successors are listed as transitions.
             for (from, to) in &report.transitions {
-                let known = machine
-                    .states
-                    .iter()
-                    .any(|s| s.name == *from && s.successors != Successors::Unknown);
-                if known {
-                    let _ = writeln!(out, "    {} -> {};", id(from), id(to));
-                }
+                let _ = writeln!(out, "    {} -> {};", id(from), id(to));
             }
             let unknown: Vec<&str> = machine
                 .states

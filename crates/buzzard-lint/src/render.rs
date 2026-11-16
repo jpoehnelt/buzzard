@@ -654,6 +654,7 @@ mod tests {
             uid,
             nodes: vec![node(inner, "prim", rect(10, 10, 42, 42), vec![])],
             wires: vec![],
+            losses: Vec::new(),
         };
         let case = node(
             5,
@@ -666,6 +667,7 @@ mod tests {
                 uid: 1,
                 nodes: vec![case],
                 wires: vec![],
+                losses: Vec::new(),
             },
         };
 
@@ -728,6 +730,7 @@ mod tests {
                 uid: 1,
                 nodes,
                 wires: vec![],
+                losses: Vec::new(),
             },
         };
         let svg = to_svg(&diagram);
@@ -778,6 +781,7 @@ mod tests {
             uid: 2,
             nodes: vec![node(3, "prim", None, vec![])],
             wires: vec![],
+            losses: Vec::new(),
         };
         let diagram = BlockDiagram {
             root: Diagram {
@@ -791,6 +795,7 @@ mod tests {
                     source: 1,
                     sinks: vec![2, 3],
                 }],
+                losses: Vec::new(),
             },
         };
         assert!(to_svg(&diagram).contains("</svg>"));

@@ -130,6 +130,8 @@ pub struct Spec {
     /// next-state tunnel.
     pub loop_next: Option<Expr>,
     pub wrap: Option<Wrap>,
+    /// The type definition file the selector's type is an instance of.
+    pub type_definition: Option<&'static str>,
 }
 
 /// A value of the frame: `one(3)` is the label `3`.
@@ -169,6 +171,7 @@ impl Spec {
             loop_stop: None,
             loop_next: None,
             wrap: None,
+            type_definition: None,
         }
     }
 
@@ -313,7 +316,7 @@ impl Build {
         Diagram {
             uid,
             nodes: vec![boundary],
-            wires: Vec::new(),
+            ..Diagram::default()
         }
     }
 
@@ -524,6 +527,18 @@ impl Build {
             uid: self.id(),
             class: class.to_owned(),
             terminals: vec![outer],
+            // A case structure has a selector table: here a Boolean or,
+            // for another number of frames, an integer one.
+            selector: (class == "select").then(|| CaseSelector {
+                kind: match frames.len() {
+                    2 => SelectorKind::Boolean,
+                    _ => SelectorKind::Integer,
+                },
+                enum_items: [].into(),
+                type_definition: None,
+                frames: (0..frames.len() as i32).map(|v| vec![one(v)]).collect(),
+                default_frame: (frames.len() != 2).then_some(0),
+            }),
             ..Node::default()
         };
         // The state enters through an input tunnel of its own.
@@ -709,6 +724,7 @@ impl Build {
             selector: Some(CaseSelector {
                 kind: spec.kind,
                 enum_items: spec.items.iter().map(|item| (*item).to_owned()).collect(),
+                type_definition: spec.type_definition.map(str::to_owned),
                 frames: spec.frames.iter().map(|f| f.matches.clone()).collect(),
                 default_frame: spec.default,
             }),

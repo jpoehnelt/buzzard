@@ -17,8 +17,8 @@
 //! proofs, not heuristics:
 //!
 //! * a state the model cannot reach is unreachable in the program;
-//! * a state from which the model cannot reach a stop cannot terminate in
-//!   the program.
+//! * a state from which the model cannot reach a stop is one from which
+//!   the loop's condition terminal can never stop the loop.
 //!
 //! The reverse does not hold: a state the model *can* reach may still be
 //! unreachable in practice. Each result says which kind it is.
@@ -27,15 +27,31 @@
 //!
 //! * the reading of the file format described in [`mod@extract`], which was
 //!   checked against real files but never against a running editor;
-//! * "terminate" means that the loop's own condition terminal ends the
-//!   loop. A program can also be aborted from inside a subVI, by an error
-//!   dialog or by the user, and none of that is modelled;
+//! * a block diagram that decoded completely. The decoder skips what it
+//!   cannot resolve, and a wire it skipped would look like a tunnel left
+//!   unwired. A diagram with any recorded [`buzzard_rsrc::Loss`] is
+//!   therefore not searched for classic machines at all;
+//! * "stop" means that the loop's own condition terminal ends the loop,
+//!   and nothing else. A program can also be ended from inside a subVI,
+//!   through a call by reference, an invoke or property node or a call
+//!   into a library, by an error dialog or by the user. None of that is
+//!   modelled. The second result is labelled as proven only when the
+//!   whole block diagram holds no node of those kinds (the conservative
+//!   reading: such a node anywhere on the diagram may run in the same
+//!   iteration or in parallel); otherwise it is reported one level lower,
+//!   as [`Confidence::Structural`], and names the nodes;
 //! * a state is "unreachable" from the loop's first iteration onwards; the
-//!   model says nothing about code outside the loop.
+//!   model says nothing about code outside the loop;
+//! * for an enumeration whose type is a type definition, the item list is
+//!   the copy stored in the file when it was saved. The type definition
+//!   file itself is not read or compared, so a proof is about the VI as
+//!   saved; the findings say so.
 //!
 //! A third result, a state name that no case handles, is a fact about the
-//! diagram (the value is wired to the state register and no case is
-//! labelled with it), not about which paths run.
+//! diagram (a constant with the value is wired toward the state register
+//! and no case is labelled with it), not about which paths run. It is
+//! labelled [`Confidence::Structural`], never as proven, and is reported
+//! once per machine and value.
 //!
 //! String/queue state machines in the style of the JKI State Machine are
 //! recognised but not modelled; they get one heuristic check, labelled as
@@ -48,16 +64,22 @@ pub mod report;
 use buzzard_rsrc::BlockDiagram;
 use serde::Serialize;
 
-pub use extract::{extract, Extraction, QueueMachine};
+pub use extract::{extract, Extraction, QueueMachine, MAX_STATES};
 pub use model::{Finding, Machine, Report, State, Stop, Successors};
 
 /// How much an [`Issue`] claims.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
-    /// Follows from the over-approximating model; see the module docs for
-    /// what the proof rests on.
+    /// Holds for every execution of the program, because it follows from
+    /// the over-approximating model; see the module docs for what the
+    /// proof rests on.
     Proven,
+    /// A fact about what is wired on the diagram. It is not a statement
+    /// about what the program does when it runs: the path in question may
+    /// never execute, or a node the model does not look into may end the
+    /// program first.
+    Structural,
     /// A pattern match on names. It can be wrong in both directions.
     Heuristic,
 }
@@ -66,7 +88,17 @@ impl Confidence {
     pub fn as_str(self) -> &'static str {
         match self {
             Confidence::Proven => "PROVEN",
+            Confidence::Structural => "STRUCTURAL",
             Confidence::Heuristic => "HEURISTIC",
+        }
+    }
+
+    /// The words a one-line message ends in, e.g. in a lint diagnostic.
+    pub fn suffix(self) -> &'static str {
+        match self {
+            Confidence::Proven => "proven",
+            Confidence::Structural => "structural, not proven",
+            Confidence::Heuristic => "heuristic, not proven",
         }
     }
 }
@@ -77,13 +109,15 @@ impl Confidence {
 pub enum Problem {
     /// No execution reaches this state.
     UnreachableState { state: String },
-    /// Once in this state the loop can never stop.
+    /// Once in this state the loop's condition terminal can never stop
+    /// the loop.
     TrapState { state: String },
-    /// The loop never stops, whatever state it is in.
+    /// The loop's condition terminal can never stop the loop, whatever
+    /// state it is in.
     NeverStops,
-    /// A state writes a name no case handles; the default case runs.
+    /// A constant that no case handles can reach the state register; the
+    /// default case would run for it.
     UndefinedState {
-        from: String,
         target: String,
         handled_by: Option<String>,
     },
@@ -99,6 +133,17 @@ pub struct Issue {
     pub location: String,
     #[serde(flatten)]
     pub problem: Problem,
+    /// For a finding that the loop cannot stop: the nodes on the block
+    /// diagram that could end the program some other way; see
+    /// [`Machine::other_exits`]. While there are any the finding is not
+    /// labelled as proven.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_exits: Vec<String>,
+    /// For a proof about an enumeration machine: the type definition
+    /// whose saved copy the proof is about; see
+    /// [`Machine::type_definition`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_definition: Option<String>,
 }
 
 impl Issue {
@@ -113,32 +158,52 @@ impl Issue {
 
     pub fn confidence(&self) -> Confidence {
         match self.problem {
+            Problem::UnreachableState { .. } => Confidence::Proven,
+            Problem::TrapState { .. } | Problem::NeverStops if self.other_exits.is_empty() => {
+                Confidence::Proven
+            }
+            Problem::TrapState { .. } | Problem::NeverStops | Problem::UndefinedState { .. } => {
+                Confidence::Structural
+            }
             Problem::UnhandledQueueState { .. } => Confidence::Heuristic,
-            _ => Confidence::Proven,
         }
     }
 
     /// What was found, in one line.
     pub fn message(&self) -> String {
-        let default = |handled_by: &Option<String>| match handled_by {
-            Some(state) => format!("the default case `{state}` runs instead"),
-            None => "there is no default case to run instead".to_owned(),
+        // What else could end the program, for a loop that cannot stop.
+        let exits = if self.other_exits.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; the program could still be ended by: {}",
+                self.other_exits.join(", ")
+            )
+        };
+        // Which copy of the item list a proof is about.
+        let saved = match &self.type_definition {
+            Some(file) => format!(
+                " (going by the items of the type definition `{file}` as saved in this file)"
+            ),
+            None => String::new(),
         };
         match &self.problem {
             Problem::UnreachableState { state } => {
-                format!("state `{state}` can never be reached")
+                format!("state `{state}` can never be reached{saved}")
             }
-            Problem::TrapState { state } => {
-                format!("once in state `{state}` the loop can never stop")
+            Problem::TrapState { state } => format!(
+                "once in state `{state}` the loop's condition terminal can never stop the \
+                 loop{exits}{saved}"
+            ),
+            Problem::NeverStops => {
+                format!("the loop's condition terminal can never stop the loop{exits}{saved}")
             }
-            Problem::NeverStops => "the loop can never stop".to_owned(),
-            Problem::UndefinedState {
-                from,
-                target,
-                handled_by,
-            } => format!(
-                "state `{from}` writes the next state `{target}`, which no case handles; {}",
-                default(handled_by)
+            Problem::UndefinedState { target, handled_by } => format!(
+                "a constant `{target}` that no case handles can reach the state register; {}",
+                match handled_by {
+                    Some(state) => format!("the default case `{state}` would run for it"),
+                    None => "there is no default case to run for it".to_owned(),
+                }
             ),
             Problem::UnhandledQueueState { name, handled_by } => format!(
                 "state `{name}` is enqueued but no case handles it; the default case \
@@ -149,25 +214,41 @@ impl Issue {
 
     /// Why the finding holds, in one sentence.
     pub fn justification(&self) -> &'static str {
+        let proven = self.confidence() == Confidence::Proven;
         match self.problem {
             Problem::UnreachableState { .. } => {
                 "no chain of next-state values the diagram can write leads from the initial \
                  state to this one, and every value the analysis could not follow was assumed \
                  to lead anywhere"
             }
+            Problem::TrapState { .. } if proven => {
+                "no state that can be reached from this one can make the loop's condition \
+                 terminal stop the loop, every condition the analysis could not read was \
+                 assumed able to stop it, and the block diagram holds no subVI call or other \
+                 node that could end the program some other way"
+            }
             Problem::TrapState { .. } => {
                 "no state that can be reached from this one can make the loop's condition \
                  terminal stop the loop, and every condition the analysis could not read was \
-                 assumed able to stop it"
+                 assumed able to stop it; but the nodes named are not looked into and could \
+                 end the program or abort the VI, so this does not prove that the loop runs \
+                 forever"
+            }
+            Problem::NeverStops if proven => {
+                "every reachable state feeds the loop's condition terminal a constant that \
+                 keeps the loop running, and the block diagram holds no subVI call or other \
+                 node that could end the program some other way"
             }
             Problem::NeverStops => {
                 "every reachable state feeds the loop's condition terminal a constant that \
-                 keeps the loop running"
+                 keeps the loop running; but the nodes named are not looked into and could \
+                 end the program or abort the VI, so this does not prove that the loop runs \
+                 forever"
             }
             Problem::UndefinedState { .. } => {
-                "a constant with this value is wired to the state register from this state \
-                 and no case is labelled with it, even ignoring letter case; whether that \
-                 path runs is not determined"
+                "a constant with this value is wired toward the state register and no case is \
+                 labelled with it, even ignoring letter case; whether a path that carries it \
+                 ever runs is not determined"
             }
             Problem::UnhandledQueueState { .. } => {
                 "the name appears in a string constant wired to the queue and matches no case \
@@ -184,6 +265,9 @@ pub struct Verification {
     pub machines: Vec<Report>,
     /// String/queue machines, which are not modelled.
     pub queue_machines: Vec<QueueMachine>,
+    /// The block diagram did not decode completely, so it was not
+    /// searched for classic machines; see [`Extraction::incomplete`].
+    pub incomplete: bool,
 }
 
 impl Verification {
@@ -195,23 +279,27 @@ impl Verification {
     pub fn issues(&self) -> Vec<Issue> {
         let mut issues = Vec::new();
         for report in &self.machines {
-            let location = &report.machine.location;
-            issues.extend(report.findings.iter().map(|finding| Issue {
-                location: location.clone(),
-                problem: match finding.clone() {
+            let machine = &report.machine;
+            issues.extend(report.findings.iter().map(|finding| {
+                let problem = match finding.clone() {
                     Finding::Unreachable { state } => Problem::UnreachableState { state },
                     Finding::CannotTerminate { state } => Problem::TrapState { state },
                     Finding::NeverTerminates => Problem::NeverStops,
-                    Finding::UndefinedTarget {
-                        from,
-                        target,
-                        handled_by,
-                    } => Problem::UndefinedState {
-                        from,
-                        target,
-                        handled_by,
+                    Finding::UndefinedTarget { target, handled_by } => {
+                        Problem::UndefinedState { target, handled_by }
+                    }
+                };
+                let stops = matches!(problem, Problem::TrapState { .. } | Problem::NeverStops);
+                let proof = !matches!(problem, Problem::UndefinedState { .. });
+                Issue {
+                    location: machine.location.clone(),
+                    problem,
+                    other_exits: match stops {
+                        true => machine.other_exits.clone(),
+                        false => Vec::new(),
                     },
-                },
+                    type_definition: machine.type_definition.clone().filter(|_| proof),
+                }
             }));
         }
         for machine in &self.queue_machines {
@@ -221,6 +309,8 @@ impl Verification {
                     name: name.clone(),
                     handled_by: machine.default.clone(),
                 },
+                other_exits: Vec::new(),
+                type_definition: None,
             }));
         }
         issues.sort();
@@ -236,5 +326,6 @@ pub fn verify(diagram: &BlockDiagram) -> Verification {
     Verification {
         machines: found.machines.iter().map(Machine::check).collect(),
         queue_machines: found.queue_machines,
+        incomplete: found.incomplete,
     }
 }

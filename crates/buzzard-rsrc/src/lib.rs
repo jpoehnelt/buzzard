@@ -22,7 +22,7 @@ pub use blocks::path::{LvPath, PathKind};
 pub use blocks::types::{DataType, NumericType, RefKind, TypeInfo, Value};
 pub use container::{Resource, RsrcFile};
 pub use diagram::{
-    BlockDiagram, CaseSelector, Diagram, Direction, LoopInfo, Node, Rect, SelectorKind,
+    BlockDiagram, CaseSelector, Diagram, Direction, LoopInfo, Loss, Node, Rect, SelectorKind,
     SelectorMatch, ShiftRegister, StopTerminal, Terminal, Tunnel, TunnelMode, Wire,
 };
 pub use error::{Result, RsrcError};

@@ -117,6 +117,7 @@ fn frame(uid: i32, nodes: Vec<Node>, wires: &[(i32, &[i32])]) -> Diagram {
                 sinks: sinks.to_vec(),
             })
             .collect(),
+        losses: Vec::new(),
     }
 }
 
@@ -889,7 +890,8 @@ fn changed_constants_and_case_labels_are_reported() {
     let case = |labels: &[&str]| Node {
         selector: Some(CaseSelector {
             kind: SelectorKind::String,
-            enum_items: Vec::new(),
+            enum_items: [].into(),
+            type_definition: None,
             frames: labels
                 .iter()
                 .map(|label| vec![SelectorMatch::Text((*label).to_owned())])

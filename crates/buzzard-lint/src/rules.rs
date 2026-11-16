@@ -87,24 +87,29 @@ pub const RULES: &[Rule] = &[
         name: "unreachable-state",
         summary: "A state of a state machine (a case of a case structure selected by a \
                   shift register in a while loop) can never be reached. Proven on a model \
-                  that over-approximates the diagram.",
+                  that over-approximates the diagram as saved in the file.",
         severity: Severity::Warning,
     },
     Rule {
         code: "BZ202",
         name: "state-machine-cannot-stop",
-        summary: "A state machine has a state from which its loop can never stop (warning), \
-                  or can never stop at all (info: a loop that runs until the program is \
-                  aborted may be intended). Proven on a model that over-approximates the \
-                  diagram.",
+        summary: "A state machine has a state from which the condition terminal of its loop \
+                  can never stop the loop (warning), or the terminal can never stop it at \
+                  all (info: a loop that runs until the program is aborted may be \
+                  intended). Proven on a model that over-approximates the diagram, unless \
+                  the diagram holds a subVI call or another node that could end the program \
+                  some other way; the finding then names those nodes and is structural, not \
+                  proven.",
         severity: Severity::Warning,
     },
     Rule {
         code: "BZ203",
         name: "undefined-state",
-        summary: "A state machine writes a next state that no case handles, so the default \
-                  case runs. For a string/queue state machine this is a heuristic over the \
-                  string constants that are enqueued, not a proof.",
+        summary: "A constant that no case handles can reach the state register of a state \
+                  machine, so the default case would run for it. This is a fact about the \
+                  wiring (structural), not a proof that the path runs. For a string/queue \
+                  state machine it is a heuristic over the string constants that are \
+                  enqueued.",
         severity: Severity::Warning,
     },
 ];
@@ -403,10 +408,12 @@ fn check_state_machines(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
                 Problem::NeverStops => Severity::Info,
                 _ => rule(code).expect("rule is registered").severity,
             };
-            let (what, how) = match issue.confidence() {
-                Confidence::Proven => ("state machine", "proven"),
-                Confidence::Heuristic => ("string/queue state machine", "heuristic, not proven"),
+            let confidence = issue.confidence();
+            let what = match confidence {
+                Confidence::Proven | Confidence::Structural => "state machine",
+                Confidence::Heuristic => "string/queue state machine",
             };
+            let how = confidence.suffix();
             Diagnostic {
                 path: path.to_path_buf(),
                 code,

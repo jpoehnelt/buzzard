@@ -403,6 +403,9 @@ fn verify(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, S
     for (path, _) in &mut verified.unreadable {
         *path = PathBuf::from(state.show(path));
     }
+    for path in &mut verified.incomplete {
+        *path = PathBuf::from(state.show(path));
+    }
     Ok(match format {
         "dot" => plain(report::to_dot(&verified)),
         "json" => {
@@ -777,12 +780,18 @@ pub fn definitions() -> Value {
              register. For each one the result gives its location, its states (the cases), \
              the transitions between them, the initial and default state, whether the model \
              is exact, and the findings: states that can never be reached, states from which \
-             the loop can never stop, a loop that can never stop, and state names that no \
-             case handles. Each finding is labelled PROVEN or HEURISTIC with one sentence of \
-             justification. PROVEN findings hold on a model that over-approximates the \
-             diagram: wherever a next state or stop condition cannot be followed (a subVI, \
-             arithmetic, a control), every possibility is assumed, so a state reported as \
-             unreachable really is, while a state not reported may still be dead. \
+             the loop's condition terminal can never stop the loop, a loop whose condition \
+             terminal can never stop it, and constants no case handles that can reach the \
+             state register. Each finding is labelled PROVEN, STRUCTURAL or HEURISTIC with \
+             one sentence of justification. PROVEN findings hold on a model that \
+             over-approximates the diagram as saved in the file: wherever a next state or \
+             stop condition cannot be followed (a subVI, arithmetic, a control), every \
+             possibility is assumed, so a state reported as unreachable really is, while a \
+             state not reported may still be dead. STRUCTURAL findings are facts about the \
+             wiring that say nothing about what runs: a constant without a case, and a loop \
+             that its condition terminal cannot stop while the diagram holds subVI calls or \
+             other nodes (named in the finding) that could end the program some other way. \
+             A block diagram that did not decode completely is listed and not searched. \
              String/queue state machines in the style of the JKI State Machine are \
              recognised but not modelled; their only check, enqueued names without a case, \
              is HEURISTIC. Files without a state machine are only counted. Formats: `text` \

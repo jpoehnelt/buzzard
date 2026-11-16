@@ -51,8 +51,8 @@ enum Command {
     /// Compare two versions of a file: settings, dependencies, nodes, wires.
     Diff(diff_cmd::Args),
     /// Find the state machines on block diagrams and check them: states
-    /// that can never be reached, states and loops that can never stop,
-    /// and state names that no case handles.
+    /// that can never be reached, loops that their condition terminal can
+    /// never stop, and constants that no case handles.
     Verify {
         /// Files or directories to analyze.
         #[arg(default_value = ".")]

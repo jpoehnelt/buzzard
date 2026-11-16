@@ -83,7 +83,7 @@ fn findings_are_labelled_justified_and_exit_one() {
          \n\
          Checked 3 files: 2 with a state machine (0 state machines, 2 string/queue machines), \
          1 without.\n\
-         3 findings: 0 proven, 3 heuristic.\n",
+         3 findings: 0 proven, 0 structural, 3 heuristic.\n",
         finding("Action: Clean up after doing work"),
         finding("Action: Step 1"),
         finding("Action: Step 2"),
@@ -113,12 +113,15 @@ fn json_carries_the_model_and_the_findings() {
             "files_without_machines": 2,
             "machines": 1,
             "queue_machines": 2,
+            "incomplete": 0,
             "findings": 3,
             "proven": 0,
+            "structural": 0,
             "heuristic": 3,
         })
     );
     assert_eq!(report["unreadable"], serde_json::json!([]));
+    assert_eq!(report["incomplete"], serde_json::json!([]));
     let files = report["files"].as_array().unwrap();
     assert_eq!(files.len(), 3);
 

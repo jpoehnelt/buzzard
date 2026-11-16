@@ -13,6 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use buzzard_rsrc::blocks::heap::{Heap, HeapNode};
 use buzzard_rsrc::blocks::zlib;
 use buzzard_rsrc::{
     BlockDiagram, DataType, Direction, FileKind, Reentrancy, RsrcFile, Stage, ViMetadata,
@@ -545,7 +546,7 @@ fn diagram_of_a_state_machine() {
     let nested = node(3934).selector.as_ref().unwrap();
     assert_eq!(nested.kind, SelectorKind::Enum);
     assert_eq!(
-        nested.enum_items,
+        nested.enum_items[..],
         ["unknown", "Created", "Started", "Stopped"]
     );
     assert_eq!(nested.default_frame, Some(0));
@@ -785,4 +786,352 @@ fn hostile_state_machine_fields_never_panic() {
             }
         }
     }
+}
+
+// What the decoder cannot carry over. The state machine verification
+// treats a missing wire as evidence that a tunnel is unwired, which is
+// only sound when nothing was lost on the way.
+
+/// The first node, depth first, that satisfies a condition.
+fn first_mut<'t, 'a>(
+    node: &'t mut HeapNode<'a>,
+    wanted: &dyn Fn(&HeapNode<'a>) -> bool,
+) -> Option<&'t mut HeapNode<'a>> {
+    if wanted(node) {
+        return Some(node);
+    }
+    node.children
+        .iter_mut()
+        .find_map(|child| first_mut(child, wanted))
+}
+
+/// The first list field with the given tag that has two elements or more.
+fn list_mut<'t, 'a>(root: &'t mut HeapNode<'a>, tag: i32) -> &'t mut HeapNode<'a> {
+    first_mut(root, &|n| n.tag == tag && n.children.len() >= 2).unwrap()
+}
+
+/// The elements of an object's own list field with the given tag.
+fn own_list<'t, 'a>(object: &'t mut HeapNode<'a>, tag: i32) -> &'t mut Vec<HeapNode<'a>> {
+    let list = object.children.iter_mut().find(|c| c.tag == tag);
+    &mut list.unwrap().children
+}
+
+/// Attribute ids of a heap object: its class and its unique id.
+const CLASS: i32 = -2;
+const UID: i32 = -3;
+/// Attribute of a list field: how many elements it has.
+const ELEMENTS: i32 = -5;
+/// An id no object of the fixtures has.
+const NOWHERE: i32 = 0x7fff_0000;
+/// A field tag nothing uses.
+const NO_FIELD: i32 = 30_000;
+
+fn set_attr(node: &mut HeapNode<'_>, id: i32, value: i32) {
+    for attr in &mut node.attrs {
+        if attr.0 == id {
+            attr.1 = value;
+        }
+    }
+}
+
+/// Make an element a reference to an object that does not exist.
+fn dangle(element: &mut HeapNode<'_>) {
+    element.attrs = vec![(UID, NOWHERE)];
+    element.children.clear();
+}
+
+#[test]
+fn every_loss_of_the_decoder_is_recorded() {
+    use buzzard_rsrc::blocks::heap::tag_id;
+    use buzzard_rsrc::blocks::types::TypeTable;
+    use buzzard_rsrc::Loss;
+    use std::collections::HashMap;
+
+    let bytes = machine_fixture("jki-smo/process.vi");
+    let file = RsrcFile::parse(&bytes).unwrap();
+    let heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+    let vctp = zlib::decompress(file.first(b"VCTP").unwrap()).unwrap();
+    let types = TypeTable::parse(&vctp, file.first(b"DTHP")).unwrap();
+    let names = HashMap::new();
+    let parsed = Heap::parse(&heap).unwrap();
+    let tag = |name: &str| tag_id(name).unwrap();
+    let (nodes, wires) = (tag("nodeList"), tag("signalList"));
+    let (terms, frames) = (tag("termList"), tag("diagramList"));
+
+    // The untouched file decodes completely, by either entry point.
+    let intact = BlockDiagram::from_heap(&parsed, &types, &names).unwrap();
+    assert!(intact.is_complete());
+    let whole = BlockDiagram::from_inflated_heap(&file, &heap)
+        .unwrap()
+        .unwrap();
+    assert!(whole.is_complete());
+    assert_eq!(Some(whole), BlockDiagram::from_rsrc(&file).unwrap());
+
+    // Every kind of loss in every diagram after a change to the heap.
+    let losses = |change: &dyn Fn(&mut HeapNode<'_>)| -> Vec<Loss> {
+        let mut copy = parsed.clone();
+        change(&mut copy.roots[0]);
+        let diagram = BlockDiagram::from_heap(&copy, &types, &names).unwrap();
+        let mut all: Vec<Loss> = diagram
+            .diagrams()
+            .iter()
+            .flat_map(|d| d.losses.clone())
+            .collect();
+        all.sort();
+        all.dedup();
+        assert_eq!(diagram.is_complete(), all.is_empty());
+        all
+    };
+    assert_eq!(losses(&|_| {}), []);
+
+    // A signal the decoder cannot resolve: the wire is dropped. This is
+    // what one changed byte did to a real state machine, where the
+    // dropped wire fed the next-state tunnel.
+    assert_eq!(
+        losses(&|root| dangle(&mut list_mut(root, wires).children[0])),
+        [Loss::Wire]
+    );
+    // A signal without an id, one with a single end, one with an end
+    // that has no id.
+    assert_eq!(
+        losses(&|root| list_mut(root, wires).children[0]
+            .attrs
+            .retain(|a| a.0 != UID)),
+        [Loss::Wire]
+    );
+    assert_eq!(
+        losses(&|root| own_list(&mut list_mut(root, wires).children[0], terms).truncate(1)),
+        [Loss::Wire]
+    );
+    assert_eq!(
+        losses(
+            &|root| own_list(&mut list_mut(root, wires).children[0], terms)[1]
+                .attrs
+                .clear()
+        ),
+        [Loss::Wire]
+    );
+    // A wire end that names no terminal of its diagram: the other thing
+    // one changed byte did, by renumbering the terminal of a tunnel.
+    assert_eq!(
+        losses(&|root| {
+            let ends = own_list(&mut list_mut(root, wires).children[0], terms);
+            set_attr(&mut ends[1], UID, NOWHERE);
+        }),
+        [Loss::WireEnd]
+    );
+    // The same signal listed twice. One of the two definitions is also
+    // a signal that no decoded wire stands for.
+    assert_eq!(
+        losses(&|root| {
+            let list = &mut list_mut(root, wires).children;
+            list.push(list[0].clone());
+        }),
+        [
+            Loss::Wire,
+            Loss::RepeatedWire,
+            Loss::WireConflict,
+            Loss::RepeatedObject
+        ]
+    );
+    // Two wires into one terminal.
+    assert_eq!(
+        losses(&|root| {
+            let list = &mut list_mut(root, wires).children;
+            let sink = own_list(&mut list[0], terms)[1].clone();
+            own_list(&mut list[1], terms)[1] = sink;
+        }),
+        [Loss::WireConflict]
+    );
+    // A whole signal list out of sight behind a damaged field tag: no
+    // element fails to resolve, but the signals are not accounted for.
+    assert_eq!(
+        losses(&|root| list_mut(root, wires).tag = NO_FIELD),
+        [Loss::Wire]
+    );
+
+    // An element gone from a list that still states its old length: the
+    // heap no longer holds the object at all, so only the length tells.
+    assert_eq!(
+        losses(&|root| drop(list_mut(root, wires).children.pop())),
+        [Loss::Wire]
+    );
+    let found = losses(&|root| drop(list_mut(root, nodes).children.pop()));
+    assert!(found.contains(&Loss::Node), "{found:?}");
+    let found = losses(&|root| drop(list_mut(root, frames).children.pop()));
+    assert!(found.contains(&Loss::Frame), "{found:?}");
+    let found = losses(&|root| {
+        own_list(&mut list_mut(root, nodes).children[0], terms).pop();
+    });
+    assert!(found.contains(&Loss::Terminal), "{found:?}");
+    let found = losses(&|root| {
+        own_list(&mut list_mut(root, wires).children[0], terms).push(HeapNode {
+            tag: 0,
+            attrs: vec![(UID, NOWHERE)],
+            content: buzzard_rsrc::blocks::heap::Content::None,
+            children: Vec::new(),
+        });
+    });
+    assert!(found.contains(&Loss::Wire), "{found:?}");
+
+    // A node the decoder cannot resolve takes its terminals with it.
+    let found = losses(&|root| dangle(&mut list_mut(root, nodes).children[1]));
+    assert!(found.contains(&Loss::Node), "{found:?}");
+    assert!(found.contains(&Loss::Terminal), "{found:?}");
+    // A node listed twice.
+    let found = losses(&|root| {
+        let list = &mut list_mut(root, nodes).children;
+        list.push(list[1].clone());
+    });
+    assert!(found.contains(&Loss::RepeatedNode), "{found:?}");
+    // A node list out of sight: its terminals are not accounted for.
+    let found = losses(&|root| list_mut(root, nodes).tag = NO_FIELD);
+    assert!(found.contains(&Loss::Terminal), "{found:?}");
+
+    // A terminal the decoder cannot resolve, one without an id, one
+    // listed twice and something that is not a terminal. The first node
+    // of a diagram defines its terminals in its own list.
+    let found = losses(&|root| {
+        dangle(&mut own_list(&mut list_mut(root, nodes).children[0], terms)[0]);
+    });
+    assert!(found.contains(&Loss::Terminal), "{found:?}");
+    let found = losses(&|root| {
+        own_list(&mut list_mut(root, nodes).children[0], terms)[0]
+            .attrs
+            .retain(|a| a.0 != UID);
+    });
+    assert!(found.contains(&Loss::Terminal), "{found:?}");
+    let found = losses(&|root| {
+        let list = own_list(&mut list_mut(root, nodes).children[0], terms);
+        list.push(list[0].clone());
+    });
+    assert!(found.contains(&Loss::RepeatedTerminal), "{found:?}");
+    assert!(found.contains(&Loss::RepeatedObject), "{found:?}");
+    let found = losses(&|root| {
+        let list = own_list(&mut list_mut(root, nodes).children[0], terms);
+        // Class 47 is a built-in function.
+        set_attr(&mut list[0], CLASS, 47);
+    });
+    assert!(found.contains(&Loss::Terminal), "{found:?}");
+
+    // A frame of a structure that the decoder cannot resolve, the frames
+    // of a structure out of sight, and a frame listed twice.
+    let found = losses(&|root| dangle(&mut list_mut(root, frames).children[1]));
+    assert!(found.contains(&Loss::Frame), "{found:?}");
+    let found = losses(&|root| list_mut(root, frames).tag = NO_FIELD);
+    assert!(found.contains(&Loss::Frame), "{found:?}");
+    let found = losses(&|root| {
+        let list = &mut list_mut(root, frames).children;
+        list.push(list[0].clone());
+    });
+    assert!(found.contains(&Loss::Frame), "{found:?}");
+}
+
+/// The enumeration case structure #3934 of `process.vi`: three frames, the
+/// first of them a default frame without values, on an enumeration of
+/// four items.
+#[test]
+fn a_selector_table_that_is_not_whole_is_absent() {
+    use buzzard_rsrc::blocks::heap::tag_id;
+    use buzzard_rsrc::blocks::types::TypeTable;
+    use buzzard_rsrc::CaseSelector;
+    use std::collections::HashMap;
+
+    let bytes = machine_fixture("jki-smo/process.vi");
+    let file = RsrcFile::parse(&bytes).unwrap();
+    let heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+    let vctp = zlib::decompress(file.first(b"VCTP").unwrap()).unwrap();
+    let types = TypeTable::parse(&vctp, file.first(b"DTHP")).unwrap();
+    let names = HashMap::new();
+    let parsed = Heap::parse(&heap).unwrap();
+    let table = tag_id("SelectRangeArray32").unwrap();
+
+    let selector = |change: &dyn Fn(&mut HeapNode<'_>)| -> Option<CaseSelector> {
+        let mut copy = parsed.clone();
+        let case = first_mut(&mut copy.roots[0], &|n| {
+            n.uid() == Some(3934) && n.class().is_some()
+        });
+        let list = case.unwrap().children.iter_mut().find(|c| c.tag == table);
+        change(list.unwrap());
+        let diagram = BlockDiagram::from_heap(&copy, &types, &names).unwrap();
+        let node = diagram.nodes().find(|n| n.uid == 3934).unwrap();
+        node.selector.clone()
+    };
+    let intact = selector(&|_| {}).unwrap();
+    assert_eq!(intact.frames.len(), 3);
+    assert_eq!(intact.default_frame, Some(0));
+    assert!(intact.frames[0].is_empty());
+    assert!(intact.frames[1..].iter().all(|frame| frame.len() == 1));
+    // The type is an instance of a type definition, which is named.
+    assert_eq!(
+        intact.type_definition.as_deref(),
+        Some("SMOState --Enum.ctl")
+    );
+
+    // An entry that lost its frame index used to read as frame 0, which
+    // moved its value to another case and left its own frame without
+    // any: the table was accepted and a state was made up for the frame.
+    assert_eq!(
+        selector(&|entries| entries.children[0].children.retain(|f| f.tag != 4)),
+        None
+    );
+    // Any other field missing, a field twice, a field too many.
+    for tag in 0..4 {
+        assert_eq!(
+            selector(&|entries| entries.children[1].children.retain(|f| f.tag != tag)),
+            None
+        );
+    }
+    assert_eq!(
+        selector(&|entries| {
+            let again = entries.children[1].children[0].clone();
+            entries.children[1].children.push(again);
+        }),
+        None
+    );
+    assert_eq!(
+        selector(&|entries| {
+            let mut other = entries.children[1].children[0].clone();
+            other.tag = 5;
+            entries.children[1].children.push(other);
+        }),
+        None
+    );
+    // A frame that is not the default and that no entry selects, with
+    // the list's stated length kept right.
+    let resize = |entries: &mut HeapNode<'_>| {
+        let length = entries.children.len() as i32;
+        set_attr(entries, ELEMENTS, length);
+    };
+    assert_eq!(
+        selector(&|entries| {
+            entries.children.remove(0);
+            resize(entries);
+        }),
+        None
+    );
+    assert_eq!(
+        selector(&|entries| {
+            entries.children.clear();
+            resize(entries);
+        }),
+        None
+    );
+    // Two entries for one frame are fine as long as every frame has one.
+    let doubled = selector(&|entries| {
+        let again = entries.children[0].clone();
+        entries.children.push(again);
+        resize(entries);
+    });
+    let doubled = doubled.unwrap();
+    assert_eq!(doubled.frames.iter().map(Vec::len).sum::<usize>(), 3);
+    // But not when the list holds another number of entries than it
+    // states: an entry was lost or made up on the way.
+    assert_eq!(
+        selector(&|entries| {
+            let again = entries.children[0].clone();
+            entries.children.push(again);
+        }),
+        None
+    );
 }

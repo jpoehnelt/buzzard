@@ -7,13 +7,15 @@
 //! Structures such as loops and case structures are nodes that own nested
 //! diagrams.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::blocks::heap::{Content, Heap, HeapNode};
 use crate::blocks::linkinfo;
-use crate::blocks::types::{printable, DataType, NumericType, TypeTable, Value};
+use crate::blocks::types::{printable, serialize_items, DataType, NumericType, TypeTable, Value};
 use crate::blocks::zlib;
 use crate::container::RsrcFile;
 use crate::error::Result;
@@ -68,6 +70,9 @@ const DEFAULT_IF_UNWIRED: u32 = 0x10_0000;
 /// files: one inner terminal per frame and one outer terminal, all sharing
 /// the data object, with the output flag agreeing with the wires.
 const TUNNEL_CLASSES: [&str; 4] = ["lpTun", "selTun", "seqTun", "commentTun"];
+
+/// Attribute of a list field that states how many elements it has.
+const ATTR_ELEMENTS: i32 = -5;
 
 /// Most selector table entries read from one case structure.
 const MAX_SELECTOR_ENTRIES: usize = 65_536;
@@ -144,11 +149,23 @@ pub enum SelectorMatch {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CaseSelector {
     pub kind: SelectorKind,
-    /// Item names of an enumeration selector, in value order.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub enum_items: Vec<String>,
+    /// Item names of an enumeration selector, in value order. The list
+    /// is shared with the type table, not copied per case structure.
+    #[serde(
+        skip_serializing_if = "<[String]>::is_empty",
+        serialize_with = "serialize_items"
+    )]
+    pub enum_items: Arc<[String]>,
+    /// File name of the type definition the selector's type is an
+    /// instance of, e.g. `State.ctl`. The item names above are then the
+    /// copy this file stored when it was saved, which the type definition
+    /// may no longer agree with.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_definition: Option<String>,
     /// The values that select each frame, one list per entry of
-    /// [`Node::diagrams`]. The default frame may have none.
+    /// [`Node::diagrams`]. Only the default frame may have none (and any
+    /// frame of a Boolean or error cluster selector, which has no
+    /// default).
     pub frames: Vec<Vec<SelectorMatch>>,
     /// Index of the frame that handles every value without an entry.
     /// Boolean and error cluster selectors have none.
@@ -359,11 +376,63 @@ pub struct Wire {
     pub sinks: Vec<i32>,
 }
 
+/// Something the heap holds that the decoded [`Diagram`] does not carry
+/// over faithfully.
+///
+/// The decoder is tolerant: it skips what it cannot resolve so that the
+/// rest of a damaged or unfamiliar file stays usable. That makes the
+/// *absence* of a wire or a node evidence only in a diagram without a
+/// recorded loss. No loss is recorded for any of the 1,773 real files the
+/// decoder was checked on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Loss {
+    /// An element of the node list that names no object or an object
+    /// without an id, or a node list that does not hold as many elements
+    /// as it states. A node that no list names at all is noticed through
+    /// its terminals; one without terminals is not noticed.
+    Node,
+    /// A node listed a second time, here or in another diagram.
+    RepeatedNode,
+    /// An element of a node's terminal list that names no terminal object
+    /// or one without an id, or a terminal object that no decoded node
+    /// lists.
+    Terminal,
+    /// A terminal id used by two terminals.
+    RepeatedTerminal,
+    /// An element of a structure's frame list that names no diagram, a
+    /// diagram reached a second time, or a diagram object that was never
+    /// reached.
+    Frame,
+    /// An element of the signal list that names no signal object, a
+    /// signal without an id, with fewer than two ends or with an end that
+    /// has no id, or a signal object that no decoded diagram lists.
+    Wire,
+    /// A signal id used by two wires.
+    RepeatedWire,
+    /// A wire end that is not a terminal of a node of the wire's diagram.
+    WireEnd,
+    /// A terminal that is the source of two wires, a sink of two wires,
+    /// listed twice by one wire, or both a source and a sink.
+    WireConflict,
+    /// An object id defined twice in the heap, so that references to it
+    /// are ambiguous.
+    RepeatedObject,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Diagram {
     pub uid: i32,
     pub nodes: Vec<Node>,
     pub wires: Vec<Wire>,
+    /// The kinds of loss met while decoding this diagram, sorted and
+    /// without repeats; empty for a diagram that decoded completely.
+    /// Losses that cannot be placed (an object nothing lists, an id
+    /// defined twice) are recorded on the root diagram. Losses inside a
+    /// nested diagram are recorded there, not here; see
+    /// [`BlockDiagram::is_complete`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub losses: Vec<Loss>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -379,7 +448,14 @@ impl BlockDiagram {
             return Ok(None);
         };
         let data = zlib::decompress(raw)?;
-        let heap = Heap::parse(&data)?;
+        Self::from_inflated_heap(file, &data)
+    }
+
+    /// Decode the block diagram from the already inflated `BDHb` heap,
+    /// taking the types, the names of linked files and the front panel
+    /// from the file. Returns `Ok(None)` when the heap holds no diagram.
+    pub fn from_inflated_heap(file: &RsrcFile<'_>, data: &[u8]) -> Result<Option<Self>> {
+        let heap = Heap::parse(data)?;
 
         // Types are best-effort: a diagram without them is still useful.
         let types = file
@@ -431,6 +507,11 @@ impl BlockDiagram {
             sources: HashSet::new(),
             sinks: HashSet::new(),
             seen: HashSet::new(),
+            terminal_uids: HashSet::new(),
+            wire_uids: HashSet::new(),
+            heap: Census::default(),
+            built: Census::default(),
+            repeated_object: false,
             types,
             names,
         };
@@ -446,9 +527,31 @@ impl BlockDiagram {
             .iter()
             .flat_map(|root| std::iter::once(root).chain(&root.children))
             .find(|node| node.class_name() == Some("diag"))?;
-        Some(Self {
-            root: builder.diagram(root),
-        })
+        let mut root = builder.diagram(root);
+        // What the heap defines must all have arrived somewhere: a list
+        // whose field tag is damaged takes its elements out of sight
+        // without leaving an element that fails to resolve.
+        let (heap, built) = (builder.heap, builder.built);
+        let unplaced = [
+            (heap.terminals != built.terminals, Loss::Terminal),
+            (heap.diagrams != built.diagrams, Loss::Frame),
+            (heap.signals != built.signals, Loss::Wire),
+            (builder.repeated_object, Loss::RepeatedObject),
+        ];
+        root.losses.extend(
+            unplaced
+                .into_iter()
+                .filter_map(|(lost, loss)| lost.then_some(loss)),
+        );
+        root.losses.sort();
+        root.losses.dedup();
+        Some(Self { root })
+    }
+
+    /// Whether every diagram decoded without a recorded [`Loss`]. Only
+    /// then does a missing wire or node mean that the file has none.
+    pub fn is_complete(&self) -> bool {
+        self.diagrams().iter().all(|d| d.losses.is_empty())
     }
 
     /// Every diagram, outermost first, depth-first.
@@ -474,6 +577,36 @@ impl BlockDiagram {
     }
 }
 
+/// How many objects of each kind there are, for checking that everything
+/// the heap defines arrived in the decoded diagram.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Census {
+    /// Objects of the terminal classes.
+    terminals: usize,
+    /// Objects of the class `diag`.
+    diagrams: usize,
+    /// Objects of the class `signal`.
+    signals: usize,
+}
+
+/// What an object of the diagram heap is, for the [`Census`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Terminal,
+    Diagram,
+    Signal,
+    Other,
+}
+
+fn kind_of(object: &HeapNode<'_>) -> Kind {
+    match object.class_name() {
+        Some("signal") => Kind::Signal,
+        Some("diag") => Kind::Diagram,
+        Some("term" | "fPTerm") => Kind::Terminal,
+        _ => Kind::Other,
+    }
+}
+
 struct Builder<'h, 'a> {
     /// Defined objects by unique id.
     objects: HashMap<i32, &'h HeapNode<'a>>,
@@ -481,6 +614,14 @@ struct Builder<'h, 'a> {
     sinks: HashSet<i32>,
     /// Diagrams and nodes already built, so a reference cycle cannot recurse.
     seen: HashSet<i32>,
+    /// Ids of the terminals and wires already built.
+    terminal_uids: HashSet<i32>,
+    wire_uids: HashSet<i32>,
+    /// What the heap defines and what was built from it.
+    heap: Census,
+    built: Census,
+    /// Whether an object id is defined twice in the diagram heap.
+    repeated_object: bool,
     types: &'h TypeTable,
     names: &'h HashMap<i32, String>,
 }
@@ -509,8 +650,16 @@ fn class_of(node: &HeapNode<'_>) -> Option<String> {
 
 impl<'h, 'a> Builder<'h, 'a> {
     fn index(&mut self, node: &'h HeapNode<'a>) {
-        if let (Some(_), Some(uid)) = (node.class(), node.uid()) {
-            self.objects.entry(uid).or_insert(node);
+        if node.class().is_some() {
+            Self::count(&mut self.heap, node);
+            if let Some(uid) = node.uid() {
+                match self.objects.entry(uid) {
+                    Entry::Occupied(_) => self.repeated_object = true,
+                    Entry::Vacant(entry) => {
+                        entry.insert(node);
+                    }
+                }
+            }
         }
         if node.class_name() == Some("signal") {
             let mut terminals = self.list(node, "termList").filter_map(HeapNode::uid);
@@ -519,6 +668,15 @@ impl<'h, 'a> Builder<'h, 'a> {
         }
         for child in &node.children {
             self.index(child);
+        }
+    }
+
+    fn count(census: &mut Census, object: &HeapNode<'_>) {
+        match kind_of(object) {
+            Kind::Terminal => census.terminals += 1,
+            Kind::Diagram => census.diagrams += 1,
+            Kind::Signal => census.signals += 1,
+            Kind::Other => {}
         }
     }
 
@@ -543,6 +701,18 @@ impl<'h, 'a> Builder<'h, 'a> {
             .flat_map(|list| &list.children)
     }
 
+    /// Whether a named list child, if there is one, holds as many
+    /// elements as it says it does. Every list states its length: all
+    /// 112,335 node, signal, terminal, frame and selector lists of 1,773
+    /// real files agree with theirs. A list that does not has lost or
+    /// gained elements in a way that left the heap readable.
+    fn counted(node: &HeapNode<'_>, name: &str) -> bool {
+        node.child_named(name).is_none_or(|list| {
+            list.attr(ATTR_ELEMENTS)
+                .is_some_and(|stated| usize::try_from(stated) == Ok(list.children.len()))
+        })
+    }
+
     /// The object an element stands for: itself if it is a definition,
     /// otherwise the object its `uid` refers to.
     fn resolve(&self, element: &'h HeapNode<'a>) -> Option<&'h HeapNode<'a>> {
@@ -559,49 +729,126 @@ impl<'h, 'a> Builder<'h, 'a> {
             uid,
             ..Diagram::default()
         };
-        if !self.seen.insert(uid) {
+        if diag.uid().is_none() || !self.seen.insert(uid) {
+            out.losses.push(Loss::Frame);
             return out;
+        }
+        Self::count(&mut self.built, diag);
+        let mut losses = Vec::new();
+        if !Self::counted(diag, "nodeList") {
+            losses.push(Loss::Node);
+        }
+        if !Self::counted(diag, "signalList") {
+            losses.push(Loss::Wire);
         }
         let elements: Vec<_> = self.list(diag, "nodeList").collect();
         for element in elements {
-            let Some(object) = self.resolve(element) else {
-                continue;
-            };
-            let Some(node_uid) = object.uid() else {
+            let Some((object, node_uid)) = self
+                .resolve(element)
+                .and_then(|object| Some((object, object.uid()?)))
+            else {
+                losses.push(Loss::Node);
                 continue;
             };
             if self.seen.insert(node_uid) {
-                out.nodes.push(self.node(object, node_uid));
+                out.nodes.push(self.node(object, node_uid, &mut losses));
+            } else {
+                losses.push(Loss::RepeatedNode);
             }
         }
+        let own: HashSet<i32> = out
+            .nodes
+            .iter()
+            .flat_map(|node| &node.terminals)
+            .map(|terminal| terminal.uid)
+            .collect();
+        let (mut sources, mut sinks) = (HashSet::new(), HashSet::new());
         let signals: Vec<_> = self.list(diag, "signalList").collect();
         for element in signals {
-            let Some(signal) = self.resolve(element) else {
+            let Some(signal) = self
+                .resolve(element)
+                .filter(|signal| kind_of(signal) == Kind::Signal)
+            else {
+                losses.push(Loss::Wire);
                 continue;
             };
+            let listed = self.list(signal, "termList").count();
             let mut terminals = self.list(signal, "termList").filter_map(HeapNode::uid);
-            if let (Some(wire_uid), Some(source)) = (signal.uid(), terminals.next()) {
-                out.wires.push(Wire {
-                    uid: wire_uid,
-                    source,
-                    sinks: terminals.collect(),
-                });
+            let (Some(wire_uid), Some(source)) = (signal.uid(), terminals.next()) else {
+                losses.push(Loss::Wire);
+                continue;
+            };
+            let wire = Wire {
+                uid: wire_uid,
+                source,
+                sinks: terminals.collect(),
+            };
+            if listed < 2 || wire.sinks.len() + 1 != listed || !Self::counted(signal, "termList") {
+                losses.push(Loss::Wire);
             }
+            if self.wire_uids.insert(wire_uid) {
+                Self::count(&mut self.built, signal);
+            } else {
+                losses.push(Loss::RepeatedWire);
+            }
+            if !sources.insert(wire.source) {
+                losses.push(Loss::WireConflict);
+            }
+            for sink in &wire.sinks {
+                if !sinks.insert(*sink) {
+                    losses.push(Loss::WireConflict);
+                }
+            }
+            if std::iter::once(&wire.source)
+                .chain(&wire.sinks)
+                .any(|end| !own.contains(end))
+            {
+                losses.push(Loss::WireEnd);
+            }
+            out.wires.push(wire);
         }
+        if !sources.is_disjoint(&sinks) {
+            losses.push(Loss::WireConflict);
+        }
+        losses.sort();
+        losses.dedup();
+        out.losses = losses;
         out
     }
 
-    fn node(&mut self, object: &'h HeapNode<'a>, uid: i32) -> Node {
-        let terminals = self
-            .list(object, "termList")
-            .filter_map(|element| self.resolve(element))
-            .filter_map(|term| self.terminal(term))
-            .collect();
+    fn node(&mut self, object: &'h HeapNode<'a>, uid: i32, losses: &mut Vec<Loss>) -> Node {
+        let mut terminals = Vec::new();
+        if !Self::counted(object, "termList") {
+            losses.push(Loss::Terminal);
+        }
+        if !Self::counted(object, "diagramList") {
+            losses.push(Loss::Frame);
+        }
+        for element in self.list(object, "termList") {
+            let term = self
+                .resolve(element)
+                .filter(|term| kind_of(term) == Kind::Terminal);
+            let Some((term, terminal)) = term.and_then(|term| Some((term, self.terminal(term)?)))
+            else {
+                losses.push(Loss::Terminal);
+                continue;
+            };
+            if self.terminal_uids.insert(terminal.uid) {
+                Self::count(&mut self.built, term);
+            } else {
+                losses.push(Loss::RepeatedTerminal);
+            }
+            terminals.push(terminal);
+        }
         let frames = self.list(object, "diagramList").count();
         let nested: Vec<_> = self
             .list(object, "diagramList")
             .filter_map(|element| self.resolve(element))
+            .filter(|diagram| kind_of(diagram) == Kind::Diagram)
             .collect();
+        if nested.len() != frames {
+            losses.push(Loss::Frame);
+        }
         let class = class_of(object).unwrap_or_default();
         // A frame that could not be resolved would shift the indices the
         // selector table refers to.
@@ -645,14 +892,25 @@ impl<'h, 'a> Builder<'h, 'a> {
             .collect();
         let mut table: Vec<Vec<SelectorMatch>> = vec![Vec::new(); frames];
         let entries = object.child_named("SelectRangeArray32")?;
+        if !Self::counted(object, "SelectRangeArray32") {
+            return None;
+        }
         if entries.children.len() > MAX_SELECTOR_ENTRIES {
             return None;
         }
         for entry in &entries.children {
             // The five fields are private to the entry's class and number
-            // 0 to 4; an absent field is zero.
+            // 0 to 4. Each of the 3,982 entries in 1,773 real files has
+            // every field exactly once and nothing else, so an entry of
+            // any other shape is damaged: a missing frame index would
+            // otherwise read as frame 0 and move a value to another case.
+            let complete = entry.children.len() == 5
+                && (0..5).all(|tag| entry.children.iter().filter(|c| c.tag == tag).count() == 1);
+            if !complete {
+                return None;
+            }
             let field = |tag: i32| match entry.child(tag) {
-                None => Some(0),
+                None => None,
                 Some(child) => match child.content {
                     Content::Bytes(_) => child.int(),
                     _ => Some(0),
@@ -701,9 +959,22 @@ impl<'h, 'a> Builder<'h, 'a> {
         if default_frame.is_some() && frames == 0 {
             return None;
         }
+        // A frame that no value selects and that is not the default
+        // cannot occur in a file the editor saved (0 of 287 enumeration,
+        // integer and string tables), so such a table contradicts the
+        // frame list. Boolean and error cluster selectors have no default
+        // and are left as they are.
+        let has_default = !matches!(kind, SelectorKind::Boolean | SelectorKind::ErrorCluster);
+        let uncovered = |(frame, entries): (usize, &Vec<SelectorMatch>)| {
+            entries.is_empty() && default_frame != Some(frame as u32)
+        };
+        if has_default && table.iter().enumerate().any(uncovered) {
+            return None;
+        }
         Some(CaseSelector {
             kind,
-            enum_items: info.enum_items.unwrap_or_default(),
+            enum_items: info.enum_items.unwrap_or_else(|| Arc::from([])),
+            type_definition: info.type_definition,
             frames: table,
             default_frame,
         })
@@ -781,7 +1052,7 @@ impl<'h, 'a> Builder<'h, 'a> {
             .and_then(|d| rect(d, "termBounds"))
             .or_else(|| rect(term, "termBounds"))
             .or_else(|| rect(term, "bounds"));
-        let info = type_id.and_then(|id| self.types.heap_type_info(id));
+        let kind = type_id.and_then(|id| self.types.heap_type_kind(id));
         let constant = (class == "bDConstDCO")
             .then(|| {
                 let bytes = dco?.child_named("ConstValue")?.bytes()?;
@@ -820,9 +1091,9 @@ impl<'h, 'a> Builder<'h, 'a> {
             bounds,
             direction,
             wired: is_source || is_sink,
-            data_type: info.as_ref().map(|info| info.data_type),
+            data_type: kind.map(|(data_type, _)| data_type),
             dco: dco_element.and_then(HeapNode::uid),
-            numeric: info.as_ref().and_then(|info| info.numeric),
+            numeric: kind.and_then(|(_, numeric)| numeric),
             constant,
             tunnel,
             param,

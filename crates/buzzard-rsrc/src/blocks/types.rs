@@ -7,7 +7,9 @@
 //! clusters refer to their elements by flat index. A heap object's
 //! `typeDesc` value is 1-based within the `DTHP` slice of the top-level list.
 
-use serde::Serialize;
+use std::sync::Arc;
+
+use serde::{Serialize, Serializer};
 
 use crate::error::{malformed, Result};
 use crate::reader::{decode_text, Reader};
@@ -33,7 +35,7 @@ enum Body {
     Cluster(Vec<u32>),
     Refnum(u16),
     /// An enumeration: the item names, in value order.
-    Enum(Vec<String>),
+    Enum(Arc<[String]>),
     /// A named type definition wrapping another descriptor. The names are
     /// the qualified name, outermost first; the last is the `.ctl` file.
     TypeDef(Vec<String>, Box<TypeDesc>),
@@ -237,8 +239,20 @@ impl TypeTable {
         unwrap(desc).code
     }
 
+    /// The class and the numeric storage of the type a heap object's
+    /// `typeDesc` value refers to. This is all a terminal needs, and it
+    /// costs the same whatever the size of the type.
+    pub fn heap_type_kind(&self, heap_type_id: u32) -> Option<(DataType, Option<NumericType>)> {
+        let desc = self.flat.get(self.heap_index(heap_type_id)?)?;
+        Some((
+            self.classify(desc),
+            NumericType::from_code(unwrap(desc).code),
+        ))
+    }
+
     /// Everything known about the type a heap object's `typeDesc` value
-    /// refers to.
+    /// refers to. The item list of an enumeration is shared with the
+    /// table, not copied.
     pub fn heap_type_info(&self, heap_type_id: u32) -> Option<TypeInfo> {
         let desc = self.flat.get(self.heap_index(heap_type_id)?)?;
         let base = unwrap(desc);
@@ -246,7 +260,7 @@ impl TypeTable {
             data_type: self.classify(desc),
             numeric: NumericType::from_code(base.code),
             enum_items: match &base.body {
-                Body::Enum(items) => Some(items.clone()),
+                Body::Enum(items) => Some(Arc::clone(items)),
                 _ => None,
             },
             type_definition: match &desc.body {
@@ -470,11 +484,31 @@ pub struct TypeInfo {
     pub data_type: DataType,
     /// Storage of a numeric type; `None` for anything else.
     pub numeric: Option<NumericType>,
-    /// Item names of an enumeration, in value order.
-    pub enum_items: Option<Vec<String>>,
+    /// Item names of an enumeration, in value order. The list is the
+    /// type table's own, shared by every [`TypeInfo`] of the type.
+    #[serde(serialize_with = "serialize_optional_items")]
+    pub enum_items: Option<Arc<[String]>>,
     /// File name of the type definition the type is an instance of, e.g.
     /// `State.ctl`.
     pub type_definition: Option<String>,
+}
+
+/// Serialize a shared item list as a plain list.
+pub(crate) fn serialize_items<S: Serializer>(
+    items: &Arc<[String]>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serializer.collect_seq(items.iter())
+}
+
+fn serialize_optional_items<S: Serializer>(
+    items: &Option<Arc<[String]>>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match items {
+        Some(items) => serializer.serialize_some(&items[..]),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// Longest list of enumeration items accepted.
@@ -489,7 +523,8 @@ fn parse_enum(body: &mut Reader<'_>) -> Result<Body> {
     Ok(Body::Enum(
         (0..count)
             .map(|_| body.pstr().map(decode_text))
-            .collect::<Result<Vec<String>>>()?,
+            .collect::<Result<Vec<String>>>()?
+            .into(),
     ))
 }
 
@@ -734,12 +769,20 @@ mod tests {
         );
         assert_eq!(info.type_definition, None);
 
-        let items = |id| t.heap_type_info(id).unwrap().enum_items.unwrap();
+        let items = |id| t.heap_type_info(id).unwrap().enum_items.unwrap().to_vec();
         assert_eq!(
             items(2),
             ["Start", "Process 1", "Process 2", "End", "Shutdown"]
         );
         assert_eq!(items(3), ["histogram", "peak", "auto select"]);
+        // The cheap accessor agrees with the full one on every id.
+        for id in 0..=6 {
+            let info = t.heap_type_info(id);
+            assert_eq!(
+                t.heap_type_kind(id),
+                info.map(|info| (info.data_type, info.numeric))
+            );
+        }
         assert_eq!(
             t.heap_type_info(3).unwrap().numeric,
             Some(NumericType::Enum32)
@@ -755,6 +798,59 @@ mod tests {
         assert_eq!(plain_number.enum_items, None);
         assert_eq!(t.heap_type_info(0), None);
         assert_eq!(t.heap_type_info(6), None);
+    }
+
+    /// An enumeration with the most items a 16-bit count can give.
+    fn huge_enumeration() -> TypeTable {
+        let mut body = 0xFFFFu16.to_be_bytes().to_vec();
+        for item in 0..0xFFFFu32 {
+            let name = format!("Item {item}");
+            body.push(name.len() as u8);
+            body.extend_from_slice(name.as_bytes());
+        }
+        // The descriptor is longer than a 16-bit length can say.
+        let len = (body.len() + 6) as u32 | 0x8000_0000;
+        let mut descriptor = len.to_be_bytes().to_vec();
+        descriptor.extend([0, 0x16]);
+        descriptor.extend_from_slice(&body);
+        raw_table(&[descriptor])
+    }
+
+    #[test]
+    fn the_item_list_of_an_enumeration_is_shared_not_copied() {
+        let t = huge_enumeration();
+        let first = t.heap_type_info(1).unwrap().enum_items.unwrap();
+        assert_eq!(first.len(), 65_535);
+        assert_eq!(first[65_534], "Item 65534");
+        // Every lookup hands out the table's own list. Each used to copy
+        // all 65,535 names, about 3 ms a time.
+        let again = t.heap_type_info(1).unwrap().enum_items.unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+    }
+
+    #[test]
+    fn looking_up_many_terminals_of_a_huge_enumeration_is_quick() {
+        // What decoding a diagram does: one lookup per terminal, which
+        // only needs the class of the type, and one per case structure.
+        // With a copy of the item list per lookup this took about 3 ms
+        // each, so ten minutes for the terminals below; it now takes
+        // milliseconds. The limit is generous to stay clear of slow
+        // machines.
+        let t = huge_enumeration();
+        let started = std::time::Instant::now();
+        for _ in 0..200_000 {
+            assert_eq!(
+                t.heap_type_kind(1),
+                Some((DataType::Numeric, Some(NumericType::Enum16)))
+            );
+        }
+        for _ in 0..20_000 {
+            assert_eq!(
+                t.heap_type_info(1).unwrap().enum_items.unwrap().len(),
+                65_535
+            );
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
     }
 
     #[test]

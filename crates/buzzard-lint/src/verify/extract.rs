@@ -38,10 +38,16 @@
 //!   the frame of the state in question counts. A frame that leaves the
 //!   tunnel unwired provides the type's default (zero, which is the first
 //!   item of an enumeration; False; the empty string), but only when the
-//!   file marks the tunnel as using the default;
+//!   file marks the tunnel as using the default, and only on a diagram
+//!   that decoded completely (see "A complete decode" below);
 //! * an **output tunnel of a stacked sequence** gives what its one wired
 //!   frame provides, and one of a **nested while loop** what the loop's
 //!   diagram provides.
+//!
+//! A structure is taken for what its class says only when the rest of
+//! it agrees: a case structure has a selector table with an entry per
+//! frame, and a while loop has no count terminal. Otherwise the value is
+//! unknown.
 //!
 //! Anything else makes the result unknown: a subVI, any other function
 //! (arithmetic, comparison, string functions), a control or indicator, a
@@ -68,8 +74,18 @@
 //!   the selector and of both register terminals, so that no hidden
 //!   conversion can change it. An enumeration constant must also carry
 //!   the name the selector's own item list has at its value.
-//! * Selectors wider than 32 bits, and unsigned ones whose table holds
-//!   negative numbers, are not resolved.
+//! * **Supported selector types.** A selector table stores every value
+//!   as a 32-bit signed number. How a narrower or an unsigned value is
+//!   widened into it was only observed for some types, so only these are
+//!   resolved; any other gives [`Successors::Unknown`] for every state:
+//!   strings; enumerations of 8, 16 and 32 bits (9, 52 and 43 tables in
+//!   1,773 real files) whose table holds no negative number; `I32` (67
+//!   tables, 27 of them with negative numbers); and `U8` (5 tables) and
+//!   `I16` (1 table) as long as every number in the table is between 0
+//!   and the type's largest value, where sign and zero extension agree.
+//!   Not resolved: `I8`, `U16`, `U32`, the 64-bit types, and a `U8` or
+//!   `I16` table with a number outside that range. No table of those
+//!   kinds was available to check.
 //! * A string that is not plain ASCII is not resolved, because its bytes
 //!   cannot be compared reliably after decoding. Whether a case structure
 //!   matches case-insensitively is not read from the file; a string that
@@ -87,8 +103,23 @@
 //!   left terminal keeps its value from the previous call of the VI, so
 //!   its first state is unknown and nothing is claimed about
 //!   reachability.
-//! * **Stacked registers** (several left terminals) are skipped: which
-//!   terminal holds the latest value was not verified on a real file.
+//! * **Stacked registers** (several left terminals) are **unverified**:
+//!   none of 634 loops in 1,773 real files has one, so how the file
+//!   stores them is known from third-party notes only. A loop gives no
+//!   machine unless its registers pair one to one: every register has
+//!   exactly one left side, and the loop and its diagram each carry
+//!   exactly as many left and as many right register terminals as the
+//!   loop has registers. A stacked register stored in any way that adds a
+//!   left terminal is refused by this; one stored without any trace on
+//!   the loop's terminals would not be noticed.
+//! * **A complete decode.** The decoder skips objects it cannot resolve.
+//!   A diagram with any recorded [`buzzard_rsrc::Loss`], anywhere in the
+//!   file, is not searched for classic machines: a wire that was lost
+//!   would look like a tunnel left unwired, and a node that was lost
+//!   could be the one that stops the program. No loss is recorded for any
+//!   of the 1,773 real files.
+//! * **Size.** A case structure with more than [`MAX_STATES`] frames is
+//!   not modelled.
 //! * **Several case structures** in one loop that select on the same
 //!   register give one machine each. Each is sound on its own; a case
 //!   structure other than `C` on the path is treated as any other case
@@ -110,8 +141,13 @@
 //!   unwired-default tunnels) can reach the terminal in that state, read
 //!   with the terminal's "stop if true" or "continue if true" setting.
 //!   When the diagram calls the built-in Stop or Quit function anywhere,
-//!   every state is `Maybe`. An abort from inside a subVI, by an error
-//!   dialog or by the user is outside the model.
+//!   every state is `Maybe`. Any other node that could end the program
+//!   or abort the VI (a subVI call, a call by reference, an invoke or
+//!   property node, a call into a library, an XNode, a node of a class
+//!   that is not known to be harmless) is listed in
+//!   [`Machine::other_exits`], wherever it sits on the block diagram,
+//!   and keeps a "cannot stop" finding from being labelled as proven. An
+//!   error dialog or an abort by the user is outside the model.
 //! * **Integer selectors** are reported only when at least one frame
 //!   writes a constant successor; otherwise the register is far more
 //!   likely a counter than a state.
@@ -124,9 +160,16 @@
 //!   a handful of wires per ten thousand. Every step checks the role of
 //!   both ends against independent facts (tunnel direction flags,
 //!   parameter indices, object classes) and gives up on a mismatch.
-//! * **Stale type definitions.** An enumeration's item names are the copy
-//!   stored in the file. If the type definition changed since the file
-//!   was saved, the names shown are the old ones; values are unaffected.
+//! * **Stale type definitions.** An enumeration's item list is the copy
+//!   stored in the file. The type definition file is never opened, so a
+//!   change to it since the VI was saved is not seen, and how the editor
+//!   then remaps constants and case labels on load is not modelled. Every
+//!   result about such a machine is about the VI as saved;
+//!   [`Machine::type_definition`] names the file and the findings say so.
+//! * **Unwired tunnels of an enumeration** are taken to provide item 0,
+//!   the default of the data type, also when the type is a type
+//!   definition whose control has another default value. That is what
+//!   the product documentation says and it was not checked in an editor.
 //! * Not compared with a running editor: the semantics above come from
 //!   the file format and the product documentation.
 //!
@@ -164,6 +207,53 @@ use super::model::{Machine, State, Stop, Successors};
 const SELECT: u32 = 1516;
 /// Built-in functions that end the program: Stop and Quit.
 const ABORTS: [u32; 2] = [1350, 1352];
+/// Most frames a case structure may have to be modelled as a machine.
+///
+/// The work per frame is bounded (20,000 steps per traced value), so
+/// this bounds the whole extraction, and the model of a machine at the
+/// limit stays small (at most a million successor names). The largest
+/// case structure in 1,773 real files has 28 frames.
+pub const MAX_STATES: usize = 1_024;
+/// Most kinds of node named in [`Machine::other_exits`].
+const MAX_EXITS_NAMED: usize = 8;
+/// Node classes that cannot end the program or abort the VI: structures,
+/// the diagram boundary, and nodes that only compute on their inputs.
+/// Checked against the classes met in 1,773 real files; every class not
+/// listed here counts as a possible way out.
+const HARMLESS: [&str; 32] = [
+    "aBuild",
+    "aDelete",
+    "aIndx",
+    "aInit",
+    "aInsert",
+    "aReplace",
+    "commentNode",
+    "concat",
+    "cpdArith",
+    "ctlRefConst",
+    "decomposeClusterNode",
+    "decomposeDataValRefNode",
+    "decomposeRecomposeStructure",
+    "demux",
+    "eventDataNode",
+    "eventRegNode",
+    "eventStruct",
+    "forLoop",
+    "hiddenFBNode",
+    "mergeErrors",
+    "mux",
+    "nMux",
+    "prim",
+    "printf",
+    "sRN",
+    "scanf",
+    "select",
+    "sequence",
+    "sequenceFrame",
+    "slaveFBInputNode",
+    "subset",
+    "whileLoop",
+];
 /// Deepest chain of steps followed for one value.
 const MAX_DEPTH: usize = 128;
 /// Most steps spent on one value, so that a diagram built to branch
@@ -194,12 +284,19 @@ pub struct QueueMachine {
 pub struct Extraction {
     pub machines: Vec<Machine>,
     pub queue_machines: Vec<QueueMachine>,
+    /// The diagram did not decode completely
+    /// ([`BlockDiagram::is_complete`]), so it was not searched for
+    /// classic machines: nothing could be proven about one.
+    pub incomplete: bool,
 }
 
 /// Find every state machine on the diagram. The result is deterministic.
 pub fn extract(diagram: &BlockDiagram) -> Extraction {
     let index = Index::new(diagram);
-    let mut out = Extraction::default();
+    let mut out = Extraction {
+        incomplete: !diagram.is_complete(),
+        ..Extraction::default()
+    };
     // Queue machine candidates: case structure, parser call, machine.
     let mut queues: Vec<(usize, usize, QueueMachine)> = Vec::new();
     for (case, node) in index.nodes.iter().enumerate() {
@@ -215,7 +312,14 @@ pub fn extract(diagram: &BlockDiagram) -> Extraction {
         let Some((origin, terminal)) = index.origin(selected_by) else {
             continue;
         };
-        if let Some(machine) = index.machine(case, selector, selected_by, origin, terminal) {
+        // On a diagram with a loss the absence of a wire or of a node is
+        // not evidence, and every claim about a classic machine rests on
+        // such absences.
+        let classic = match out.incomplete {
+            true => None,
+            false => index.machine(case, selector, selected_by, origin, terminal),
+        };
+        if let Some(machine) = classic {
             out.machines.push(machine);
         } else if let Some(machine) = index.queue_machine(case, selector, origin) {
             queues.push((case, origin, machine));
@@ -293,6 +397,9 @@ struct Index<'a> {
     source: HashMap<i32, i32>,
     /// Whether the diagram calls a function that ends the program.
     aborts: bool,
+    /// Descriptions of the nodes that could end the program or abort the
+    /// VI in a way the model does not see.
+    exits: BTreeSet<String>,
 }
 
 impl<'a> Index<'a> {
@@ -307,6 +414,7 @@ impl<'a> Index<'a> {
             dubious: HashSet::new(),
             source: HashMap::new(),
             aborts: false,
+            exits: BTreeSet::new(),
         };
         let mut sources: HashSet<i32> = HashSet::new();
         let mut stack: Vec<(&'a Diagram, Option<(usize, usize)>)> = vec![(&diagram.root, None)];
@@ -329,6 +437,7 @@ impl<'a> Index<'a> {
                 }
                 index.aborts |=
                     node.class == "prim" && node.primitive.is_some_and(|id| ABORTS.contains(&id));
+                index.exits.extend(exit(node));
                 for (place, terminal) in node.terminals.iter().enumerate() {
                     if index.owner.insert(terminal.uid, (number, place)).is_some() {
                         index.dubious.insert(terminal.uid);
@@ -412,6 +521,22 @@ impl<'a> Index<'a> {
         Some((node, terminal))
     }
 
+    /// Whether a node is a while loop by more than its class: it has one
+    /// diagram and no count terminal, which only a for loop has. The
+    /// classes of the two loops differ in one bit, and a for loop that
+    /// runs zero times hands out defaults that a while loop never does.
+    fn is_while(&self, node: usize) -> bool {
+        let looping = self.nodes[node];
+        let counts = |node: &Node| {
+            let is_count = |t: &Terminal| t.dco_class.as_deref() == Some("lMax");
+            node.terminals.iter().any(is_count)
+        };
+        looping.class == "whileLoop"
+            && looping.diagrams.len() == 1
+            && !counts(looping)
+            && !looping.diagrams[0].nodes.first().is_some_and(counts)
+    }
+
     /// Whether an event structure has nothing wired to its timeout
     /// terminal, so that it always runs exactly one frame.
     fn waits_forever(&self, structure: &Node) -> bool {
@@ -450,6 +575,7 @@ impl<'a> Index<'a> {
             selector.kind,
             SelectorKind::Enum | SelectorKind::Integer | SelectorKind::String
         ) || selector.frames.len() < 2
+            || selector.frames.len() > MAX_STATES
         {
             return None;
         }
@@ -458,21 +584,36 @@ impl<'a> Index<'a> {
         }
         let owner = self.structure_of(origin)?;
         let looping = self.nodes[owner];
-        if looping.class != "whileLoop" || looping.diagrams.len() != 1 {
+        if !self.is_while(owner) {
             return None;
         }
         let info = looping.loop_info.as_ref()?;
         let left = left_inner.dco?;
-        // A stacked register has several left sides and is not modelled.
-        let register = info.shift_registers.iter().find(|r| r.left == [left])?;
         let boundary = self.nodes[origin];
+        // Registers must pair one to one. A stacked register has several
+        // left sides; how the file stores one was never seen, so any
+        // left or right register terminal beyond one per register refuses
+        // the loop, whichever list it is or is not named in.
+        let terminals = |node: &Node, class: &str| {
+            let of_class = |t: &&Terminal| t.dco_class.as_deref() == Some(class);
+            node.terminals.iter().filter(of_class).count()
+        };
+        let registers = info.shift_registers.len();
+        let paired = info.shift_registers.iter().all(|r| r.left.len() == 1)
+            && [looping, boundary].iter().all(|node| {
+                terminals(node, "lSR") == registers && terminals(node, "rSR") == registers
+            });
+        if !paired {
+            return None;
+        }
+        let register = info.shift_registers.iter().find(|r| r.left == [left])?;
         with_dco(boundary, left)?;
         let right_inner = with_dco(boundary, register.right)?;
         let left_outer = with_dco(looping, left)?;
         with_dco(looping, register.right)?;
 
         let resolver = Resolver::new(selector, selected_by, left_inner, right_inner);
-        let names = state_names(selector);
+        let names = state_names(selector)?;
         let mut tracer = Tracer {
             index: self,
             state: Some((origin, left)),
@@ -538,7 +679,23 @@ impl<'a> Index<'a> {
             default: selector
                 .default_frame
                 .and_then(|frame| names.get(frame as usize).cloned()),
+            type_definition: match selector.kind {
+                SelectorKind::Enum => selector.type_definition.clone(),
+                _ => None,
+            },
+            other_exits: self.other_exits(),
         })
+    }
+
+    /// The nodes that could end the program, as [`Machine::other_exits`]
+    /// lists them: the first few kinds by name and a count of the rest.
+    fn other_exits(&self) -> Vec<String> {
+        let mut named: Vec<String> = self.exits.iter().take(MAX_EXITS_NAMED).cloned().collect();
+        let rest = self.exits.len() - named.len();
+        if rest > 0 {
+            named.push(format!("{rest} more of these kinds"));
+        }
+        named
     }
 
     /// The nearest while loop around a node, as a node index.
@@ -698,8 +855,33 @@ pub fn queued_names(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// One name per frame, unique within the machine.
-fn state_names(selector: &CaseSelector) -> Vec<String> {
+/// What a node could do to end the program or abort the VI without the
+/// model seeing it, as a description to show; `None` for a node of a
+/// class that cannot.
+fn exit(node: &Node) -> Option<String> {
+    let class = node.class.as_str();
+    if HARMLESS.contains(&class) {
+        return None;
+    }
+    Some(match class {
+        "iUse" | "polyIUse" | "dynIUse" | "callParentDynIUse" => match &node.name {
+            Some(name) => format!("subVI `{name}`"),
+            None => "a subVI call".to_owned(),
+        },
+        "callByRefNode" => "a call by reference".to_owned(),
+        "invokeNode" => "an invoke node".to_owned(),
+        "propNode" => "a property node".to_owned(),
+        "extFunc" => "a call into a library".to_owned(),
+        "xNode" | "xDataNode" => "an XNode".to_owned(),
+        _ => format!("a node of class `{class}`"),
+    })
+}
+
+/// One name per frame, unique within the machine. `None` when a frame
+/// has no value and is not the default frame: no value selects it, which
+/// the decoder refuses, so a table like that was built some other way
+/// and is not given a made-up name.
+fn state_names(selector: &CaseSelector) -> Option<Vec<String>> {
     let value = |value: i32| match selector.kind {
         SelectorKind::Enum => usize::try_from(value)
             .ok()
@@ -712,7 +894,7 @@ fn state_names(selector: &CaseSelector) -> Vec<String> {
         .frames
         .iter()
         .enumerate()
-        .map(|(frame, entries)| {
+        .map(|(frame, entries)| -> Option<String> {
             let parts: Vec<String> = entries
                 .iter()
                 .map(|entry| match entry {
@@ -729,14 +911,14 @@ fn state_names(selector: &CaseSelector) -> Vec<String> {
                 })
                 .collect();
             if !parts.is_empty() {
-                parts.join(", ")
+                Some(parts.join(", "))
             } else if selector.default_frame == Some(frame as u32) {
-                "Default".to_owned()
+                Some("Default".to_owned())
             } else {
-                format!("frame {frame}")
+                None
             }
         })
-        .collect();
+        .collect::<Option<_>>()?;
     // Two frames with one name would be one state to the model.
     let mut seen: HashMap<String, usize> = HashMap::new();
     for name in &names {
@@ -752,7 +934,7 @@ fn state_names(selector: &CaseSelector) -> Vec<String> {
             *name = renamed;
         }
     }
-    names
+    Some(names)
 }
 
 fn stop_of(values: Values, stop_if_true: bool) -> Stop {
@@ -806,30 +988,30 @@ impl<'s> Resolver<'s> {
                 return None;
             }
         } else {
-            let narrow = matches!(
-                numeric?,
-                NumericType::I8
-                    | NumericType::I16
-                    | NumericType::I32
-                    | NumericType::U8
-                    | NumericType::U16
-                    | NumericType::U32
-                    | NumericType::Enum8
-                    | NumericType::Enum16
-                    | NumericType::Enum32
-            );
-            if !narrow || ends.iter().any(|t| t.numeric != numeric) {
+            // The numbers a table of this type may hold for it to be
+            // read; see "Supported selector types" in the module docs.
+            // Only `I32` was seen with negative numbers. For the narrow
+            // types the range is the one in which sign extension and
+            // zero extension give the same 32-bit number.
+            let trusted = match numeric? {
+                NumericType::I32 => i32::MIN..=i32::MAX,
+                NumericType::Enum8 | NumericType::U8 => 0..=i32::from(u8::MAX),
+                NumericType::Enum16 => 0..=i32::from(u16::MAX),
+                NumericType::Enum32 => 0..=i32::MAX,
+                NumericType::I16 => 0..=i32::from(i16::MAX),
+                _ => return None,
+            };
+            if ends.iter().any(|t| t.numeric != numeric) {
                 return None;
             }
-            // An unsigned table that holds a negative number stores a
-            // value above the 32-bit signed range in a way not verified.
-            let negative = selector.frames.iter().flatten().any(|entry| match entry {
-                SelectorMatch::Range { start, end } => {
-                    start.is_some_and(|v| v < 0) || end.is_some_and(|v| v < 0)
-                }
+            let readable = selector.frames.iter().flatten().all(|entry| match entry {
+                SelectorMatch::Range { start, end } => [start, end]
+                    .into_iter()
+                    .flatten()
+                    .all(|bound| trusted.contains(bound)),
                 SelectorMatch::Text(_) => false,
             });
-            if numeric?.is_unsigned() && negative {
+            if !readable {
                 return None;
             }
         }
@@ -996,6 +1178,15 @@ impl<'a> Tracer<'_, 'a> {
         let class = source.dco_class.as_deref()?;
         match (node.class.as_str(), class) {
             ("select" | "eventStruct", "selTun") | ("commentNode", "commentTun") => {
+                // A case structure has a selector table with an entry
+                // for each of its frames. One without is not read as a
+                // case structure: it may be another structure whose
+                // class was misread, with other rules for what its
+                // tunnels hand out.
+                let is_case = |selector: &CaseSelector| selector.frames.len() == inner.len();
+                if node.class == "select" && !node.selector.as_ref().is_some_and(is_case) {
+                    return None;
+                }
                 let frames = match self.frame {
                     Some((case, frame)) if case == at => frame..frame + 1,
                     _ => 0..inner.len(),
@@ -1030,7 +1221,7 @@ impl<'a> Tracer<'_, 'a> {
                 };
                 self.sink(writer, None, depth)
             }
-            ("whileLoop", "lpTun") => match inner[..] {
+            ("whileLoop", "lpTun") if index.is_while(at) => match inner[..] {
                 [terminal] => self.sink(terminal, None, depth),
                 _ => None,
             },

@@ -1177,7 +1177,7 @@ fn verify_describes_machines_and_labels_findings() {
     ));
     assert!(text.ends_with(
         "Checked 5 files: 3 with a state machine (1 state machine, 2 string/queue machines), 2 \
-         without.\n3 findings: 0 proven, 3 heuristic.\n"
+         without.\n3 findings: 0 proven, 0 structural, 3 heuristic.\n"
     ));
 
     assert_eq!(structured["summary"]["files"], 5);

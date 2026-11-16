@@ -29,3 +29,8 @@ same shapes as `BlockDiagram` values instead, and
 default) checks the exact machine extracted from each real file when
 `BUZZARD_FSM_SAMPLES` points at a directory holding clones of those
 repositories, named `<owner>_<repository>`.
+`damage_to_the_real_machines_proves_nothing_new`, ignored likewise, changes
+single bytes of the inflated block diagram heap of each of those files,
+starting with the three bytes that were reported to give false proofs, and
+checks that no proven finding appears that the untouched file does not
+have.

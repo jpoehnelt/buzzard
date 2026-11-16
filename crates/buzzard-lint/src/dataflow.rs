@@ -344,6 +344,7 @@ mod tests {
                 uid: 1,
                 nodes,
                 wires,
+                losses: Vec::new(),
             },
         }
     }
