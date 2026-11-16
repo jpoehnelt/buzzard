@@ -5,6 +5,8 @@ use std::fmt::Write;
 
 use buzzard_rsrc::{FileKind, Reentrancy, ViMetadata};
 
+use crate::project::{ProjectFile, ProjectKind};
+
 fn yes_no(value: Option<bool>) -> &'static str {
     match value {
         Some(true) => "yes",
@@ -81,4 +83,79 @@ pub fn to_markdown(title: &str, meta: &ViMetadata, usage: Option<(usize, usize)>
         let _ = writeln!(out, "- `{target}`");
     }
     out
+}
+
+/// Graph facts about a project file, when a dependency graph is available.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProjectUsage {
+    /// Members that are files in the analyzed workspace.
+    pub members_in_workspace: usize,
+    /// Projects and libraries that list this file as a member.
+    pub owners: usize,
+    /// Classes in the workspace that inherit from this class.
+    pub child_classes: usize,
+}
+
+/// Render a summary of a project, library or class.
+pub fn project_to_markdown(
+    title: &str,
+    project: &ProjectFile,
+    usage: Option<ProjectUsage>,
+) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "### {title}\n");
+    let _ = writeln!(out, "| | |\n| --- | --- |");
+    let _ = writeln!(out, "| Kind | {} |", project.kind.label());
+    if let Some(version) = &project.lv_version {
+        let _ = writeln!(out, "| Saved version | {} |", cell(version));
+    }
+    let dependencies = project.members.iter().filter(|m| m.dependency).count();
+    let _ = writeln!(
+        out,
+        "| Members | {} |",
+        project.members.len() - dependencies
+    );
+    if dependencies > 0 {
+        let _ = writeln!(out, "| Dependencies | {dependencies} |");
+    }
+    match &project.parent_class {
+        Some(parent) => {
+            let _ = writeln!(
+                out,
+                "| Parent class | {} (`{}`) |",
+                cell(&parent.qualified_name.join(":")),
+                cell(&parent.link.to_string())
+            );
+        }
+        None if project.kind == ProjectKind::Class => {
+            let _ = writeln!(out, "| Parent class | none recorded |");
+        }
+        None => {}
+    }
+    if let Some(usage) = usage {
+        let _ = writeln!(
+            out,
+            "| Members in workspace | {} |",
+            usage.members_in_workspace
+        );
+        let _ = writeln!(out, "| Listed by | {} |", usage.owners);
+        if project.kind == ProjectKind::Class {
+            let _ = writeln!(
+                out,
+                "| Child classes in workspace | {} |",
+                usage.child_classes
+            );
+        }
+    }
+    out
+}
+
+/// Keep file-supplied text from breaking out of a table cell.
+fn cell(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '|' | '`' | '\n' | '\r' => ' ',
+            other => other,
+        })
+        .collect()
 }

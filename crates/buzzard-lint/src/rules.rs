@@ -8,6 +8,7 @@ use rayon::prelude::*;
 
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph::DependencyGraph;
+use crate::project::ProjectFile;
 use crate::workspace::{FileState, Workspace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +23,8 @@ pub const RULES: &[Rule] = &[
     Rule {
         code: "BZ000",
         name: "unreadable-file",
-        summary: "The file could not be read or is not a valid RSRC container.",
+        summary:
+            "The file could not be read, or is not a valid RSRC container or project XML file.",
         severity: Severity::Error,
     },
     Rule {
@@ -57,6 +59,12 @@ pub const RULES: &[Rule] = &[
         name: "circular-dependency",
         summary: "The file is part of a circular dependency.",
         severity: Severity::Error,
+    },
+    Rule {
+        code: "BZ006",
+        name: "missing-member",
+        summary: "A project, library or class lists a member whose file does not exist on disk.",
+        severity: Severity::Warning,
     },
 ];
 
@@ -114,6 +122,7 @@ pub fn lint(
                     check_paths(path, meta, config, &mut emit);
                     check_debug_and_lock(meta, &mut emit);
                 }
+                FileState::Project(project) => check_members(workspace, project, &mut emit),
             }
             found
         })
@@ -243,6 +252,31 @@ fn check_paths(
                 format!("dependency path `{target}` is {len} characters long, over the limit of {limit}"),
             );
         }
+    }
+}
+
+/// Members under a project's `Dependencies` node are skipped: the editor
+/// computes that list, so a stale entry there is not something the user
+/// listed. URLs that do not resolve to a path (installation paths, items
+/// embedded in the XML file) cannot be checked.
+fn check_members(
+    workspace: &Workspace,
+    project: &ProjectFile,
+    emit: &mut impl FnMut(&'static str, String),
+) {
+    let mut missing: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for member in project.members.iter().filter(|m| !m.dependency) {
+        let Some(path) = &member.path else { continue };
+        // A file the workspace has loaded exists; only stat the others.
+        if workspace.get(path).is_none() && !path.exists() {
+            missing.insert((&member.url, &member.name));
+        }
+    }
+    for (url, name) in missing {
+        emit(
+            "BZ006",
+            format!("member `{name}` does not exist on disk (`{url}`)"),
+        );
     }
 }
 

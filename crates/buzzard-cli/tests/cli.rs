@@ -139,3 +139,45 @@ fn inspect_prints_markdown_and_json() {
     assert_eq!(code, 2);
     assert!(stderr.contains("too small"), "{stderr}");
 }
+
+#[test]
+fn check_and_inspect_cover_project_files() {
+    let dir = TempDir::new("project");
+    dir.vi("Run.vi", &CLEAN, &[]);
+    std::fs::write(
+        dir.0.join("Kit.lvlib"),
+        "<Library LVVersion=\"23008000\">\n\
+         <Item Name=\"Run.vi\" Type=\"VI\" URL=\"../Run.vi\"/>\n\
+         <Item Name=\"Lost.vi\" Type=\"VI\" URL=\"../Lost.vi\"/>\n</Library>\n",
+    )
+    .unwrap();
+    let (code, stdout, _) = run(&["check"], &dir.0);
+    assert_eq!(code, 1);
+    assert_eq!(
+        stdout,
+        "Kit.lvlib: warning[BZ006]: member `Lost.vi` does not exist on disk (`../Lost.vi`)\n\
+         Found 1 problem (0 errors, 1 warning) in 2 files.\n"
+    );
+    let (code, stdout, _) = run(&["check", "--ignore", "BZ006"], &dir.0);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (0, "No problems found in 2 files.\n")
+    );
+
+    let (code, markdown, _) = run(&["inspect", "Kit.lvlib"], &dir.0);
+    assert_eq!(code, 0);
+    assert!(markdown.starts_with("### Kit.lvlib\n"), "{markdown}");
+    assert!(markdown.contains("| Kind | Library |"), "{markdown}");
+    assert!(markdown.contains("| Members | 2 |"), "{markdown}");
+    let (code, json, _) = run(&["inspect", "Kit.lvlib", "--format", "json"], &dir.0);
+    assert_eq!(code, 0);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["kind"], "library");
+    assert_eq!(parsed["lv_version"], "23.0.0");
+    assert_eq!(parsed["members"][1]["url"], "../Lost.vi");
+
+    std::fs::write(dir.0.join("Bad.lvproj"), "<Project>").unwrap();
+    let (code, _, stderr) = run(&["inspect", "Bad.lvproj"], &dir.0);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("invalid XML"), "{stderr}");
+}

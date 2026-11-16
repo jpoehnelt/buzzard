@@ -3,7 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use buzzard_lint::{lint, DependencyGraph, Diagnostic, LintConfig, Workspace};
+use buzzard_lint::project::encode_parent_link;
+use buzzard_lint::{lint, DependencyGraph, Diagnostic, EdgeKind, LintConfig, Workspace};
 use buzzard_rsrc::builder::RsrcBuilder;
 use buzzard_rsrc::LvPath;
 
@@ -361,4 +362,354 @@ fn sarif_output_is_well_formed() {
     let cycle = results.iter().find(|r| r["ruleId"] == "BZ005").unwrap();
     assert_eq!(cycle["level"], "error");
     assert_eq!(cycle["relatedLocations"].as_array().unwrap().len(), 1);
+}
+
+/// A project-level XML file whose members are siblings in the same directory.
+fn project_xml(root: &str, members: &[&str], extra: &str) -> Vec<u8> {
+    let mut xml =
+        format!("<?xml version='1.0' encoding='UTF-8'?>\n<{root} LVVersion=\"23008000\">\n");
+    xml.push_str(extra);
+    for member in members {
+        let item_type = match member.rsplit('.').next() {
+            Some("lvclass") => "LVClass",
+            Some("lvlib") => "Library",
+            _ => "VI",
+        };
+        xml.push_str(&format!(
+            "\t<Item Name=\"{member}\" Type=\"{item_type}\" URL=\"../{member}\"/>\n"
+        ));
+    }
+    xml.push_str(&format!("</{root}>\n"));
+    xml.into_bytes()
+}
+
+/// The property that names a parent class by a path relative to the child.
+fn parent_property(components: &[&str]) -> String {
+    let link = if components[0].starts_with('<') {
+        LvPath::absolute(components)
+    } else {
+        LvPath {
+            components: components.iter().map(|c| (*c).to_owned()).collect(),
+            ..LvPath::sibling("x")
+        }
+    };
+    let name = *components.last().unwrap();
+    let text = encode_parent_link(V23, &[name], &link)
+        .replace('&', "&amp;")
+        .replace('<', "&lt;");
+    format!("\t<Property Name=\"NI.LVClass.ParentClassLinkInfo\" Type=\"Bin\">{text}</Property>\n")
+}
+
+fn file_names(paths: Vec<&Path>) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn bz000_malformed_project_file() {
+    let dir = TempDir::new("bz000-xml");
+    dir.write("ok.lvlib", project_xml("Library", &[], ""));
+    dir.write("cut.lvproj", b"<Project><Item Name='a'".to_vec());
+    dir.write("wrong.lvclass", b"<html/>".to_vec());
+    dir.write(".hidden/skipped.lvproj", b"<<<".to_vec());
+    let found = dir.check();
+    assert_eq!(
+        codes(&found),
+        [("cut.lvproj", "BZ000"), ("wrong.lvclass", "BZ000")]
+    );
+    assert!(found[0].2.contains("invalid XML"), "{}", found[0].2);
+    assert!(
+        found[1].2.contains("unexpected root element"),
+        "{}",
+        found[1].2
+    );
+}
+
+#[test]
+fn bz006_missing_member() {
+    let dir = TempDir::new("bz006");
+    dir.vi("src/present.vi", V23, &CLEAN, &[]);
+    dir.write("src/notes.txt", b"not analyzed, but it exists".to_vec());
+    let xml = r#"<Project Type="Project" LVVersion="23008000">
+        <Item Name="My Computer" Type="My Computer">
+            <Item Name="src" Type="Folder" URL="../src">
+                <Item Name="present.vi" Type="VI" URL="../src/present.vi"/>
+                <Item Name="notes.txt" Type="Document" URL="../src/notes.txt"/>
+                <Item Name="gone.vi" Type="VI" URL="../src/gone.vi"/>
+                <Item Name="gone.vi" Type="VI" URL="../src/gone.vi"/>
+            </Item>
+            <Item Name="Lost.lvlib" Type="Library" URL="../lost/Lost.lvlib"/>
+            <Item Name="Inner.ctl" Type="Class Private Data" URL="Inner.ctl"/>
+            <Item Name="Dependencies" Type="Dependencies">
+                <Item Name="Clear Errors.vi" Type="VI" URL="/&lt;vilib&gt;/Utility/error.llb/Clear Errors.vi"/>
+                <Item Name="stale.vi" Type="VI" URL="../stale.vi"/>
+            </Item>
+        </Item>
+    </Project>"#;
+    dir.write("App.lvproj", xml.as_bytes().to_vec());
+    dir.write("src/Lib.lvlib", project_xml("Library", &["present.vi"], ""));
+    dir.write("src/Bad.lvclass", project_xml("LVClass", &["nope.vi"], ""));
+
+    let found = dir.check();
+    assert_eq!(
+        found,
+        [
+            (
+                "App.lvproj".to_owned(),
+                "BZ006",
+                "member `Lost.lvlib` does not exist on disk (`../lost/Lost.lvlib`)".to_owned()
+            ),
+            (
+                "App.lvproj".to_owned(),
+                "BZ006",
+                "member `gone.vi` does not exist on disk (`../src/gone.vi`)".to_owned()
+            ),
+            (
+                "src/Bad.lvclass".to_owned(),
+                "BZ006",
+                "member `nope.vi` does not exist on disk (`../nope.vi`)".to_owned()
+            ),
+        ]
+    );
+    let diagnostics = dir.diagnostics();
+    assert!(diagnostics
+        .iter()
+        .all(|d| d.severity == buzzard_lint::Severity::Warning));
+
+    // Creating the file fixes the finding; the rule can also be ignored.
+    dir.vi("src/nope.vi", V23, &CLEAN, &[]);
+    assert_eq!(
+        codes(&dir.check()),
+        [("App.lvproj", "BZ006"), ("App.lvproj", "BZ006")]
+    );
+    let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
+    let graph = DependencyGraph::build(&workspace);
+    let config = LintConfig {
+        ignore: ["BZ006".to_owned()].into(),
+        ..LintConfig::default()
+    };
+    assert_eq!(lint(&workspace, &graph, &config), []);
+    let rule = buzzard_lint::rules::rule("BZ006").unwrap();
+    assert_eq!(rule.name, "missing-member");
+}
+
+#[test]
+fn graph_answers_membership_and_inheritance() {
+    let dir = TempDir::new("graph-project");
+    dir.vi("Base/Init.vi", V23, &CLEAN, &[]);
+    dir.vi("Base/Run.vi", V23, &CLEAN, &["Init.vi"]);
+    dir.write(
+        "Base/Base.lvclass",
+        project_xml("LVClass", &["Run.vi", "Init.vi"], ""),
+    );
+    for child in ["Zeta", "Alpha"] {
+        dir.vi(&format!("{child}/Run {child}.vi"), V23, &CLEAN, &[]);
+        dir.write(
+            &format!("{child}/{child}.lvclass"),
+            project_xml(
+                "LVClass",
+                &[&format!("Run {child}.vi")],
+                &parent_property(&["", "", "Base", "Base.lvclass"]),
+            ),
+        );
+    }
+    dir.write(
+        "Alpha/Leaf/Leaf.lvclass",
+        project_xml("LVClass", &[], &parent_property(&["", "", "Alpha.lvclass"])),
+    );
+    // A parent stored by its installed location is found by its unique name.
+    dir.write(
+        "Installed.lvclass",
+        project_xml(
+            "LVClass",
+            &[],
+            &parent_property(&["<vilib>", "Vendor", "Base.lvclass"]),
+        ),
+    );
+    dir.write(
+        "Base/Kit.lvlib",
+        project_xml("Library", &["Base.lvclass", "Init.vi"], ""),
+    );
+    let project = r#"<Project Type="Project" LVVersion="23008000">
+        <Item Name="My Computer" Type="My Computer">
+            <Item Name="Kit.lvlib" Type="Library" URL="../Base/Kit.lvlib"/>
+            <Item Name="Zeta.lvclass" Type="LVClass" URL="../Zeta/Zeta.lvclass"/>
+            <Item Name="Alpha.lvclass" Type="LVClass" URL="../Alpha/Alpha.lvclass"/>
+            <Item Name="Dependencies" Type="Dependencies">
+                <Item Name="Init.vi" Type="VI" URL="../Base/Init.vi"/>
+            </Item>
+        </Item>
+    </Project>"#;
+    dir.write("App.lvproj", project.as_bytes().to_vec());
+    assert_eq!(dir.check(), []);
+
+    let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
+    let graph = DependencyGraph::build(&workspace);
+    let at = |rel: &str| dir.0.join(rel);
+
+    assert_eq!(
+        file_names(graph.members(&at("Base/Base.lvclass"))),
+        ["Init.vi", "Run.vi"]
+    );
+    assert_eq!(
+        file_names(graph.members(&at("App.lvproj"))),
+        ["Alpha.lvclass", "Kit.lvlib", "Zeta.lvclass"]
+    );
+    assert_eq!(
+        file_names(graph.owners(&at("Base/Init.vi"))),
+        ["Base.lvclass", "Kit.lvlib"]
+    );
+    assert_eq!(
+        file_names(graph.owners(&at("Base/Base.lvclass"))),
+        ["Kit.lvlib"]
+    );
+    assert!(graph.owners(&at("App.lvproj")).is_empty());
+    assert!(graph.members(&at("Base/Init.vi")).is_empty());
+    assert!(graph.members(&at("missing.lvlib")).is_empty());
+
+    assert_eq!(
+        graph.parent_class(&at("Zeta/Zeta.lvclass")),
+        Some(at("Base/Base.lvclass").as_path())
+    );
+    assert_eq!(
+        graph.parent_class(&at("Alpha/Leaf/Leaf.lvclass")),
+        Some(at("Alpha/Alpha.lvclass").as_path())
+    );
+    assert_eq!(
+        graph.parent_class(&at("Installed.lvclass")),
+        Some(at("Base/Base.lvclass").as_path())
+    );
+    assert_eq!(graph.parent_class(&at("Base/Base.lvclass")), None);
+    assert_eq!(graph.parent_class(&at("Base/Kit.lvlib")), None);
+    assert_eq!(
+        file_names(graph.child_classes(&at("Base/Base.lvclass"))),
+        ["Alpha.lvclass", "Installed.lvclass", "Zeta.lvclass"]
+    );
+    assert_eq!(
+        file_names(graph.child_classes(&at("Alpha/Alpha.lvclass"))),
+        ["Leaf.lvclass"]
+    );
+
+    // Callers and callees keep meaning "uses": neither membership nor
+    // inheritance shows up there.
+    assert_eq!(file_names(graph.callers(&at("Base/Init.vi"))), ["Run.vi"]);
+    assert!(graph.callers(&at("Base/Base.lvclass")).is_empty());
+    assert!(graph.callees(&at("Zeta/Zeta.lvclass")).is_empty());
+    assert!(graph.callees(&at("App.lvproj")).is_empty());
+
+    let count = |kind| graph.edges().iter().filter(|e| e.2 == kind).count();
+    assert_eq!(
+        (
+            count(EdgeKind::Uses),
+            count(EdgeKind::Contains),
+            count(EdgeKind::Inherits)
+        ),
+        (1, 9, 4)
+    );
+    assert_eq!(graph.edge_count(), 14);
+    let edges = graph.edges();
+    let mut sorted = edges.clone();
+    sorted.sort();
+    assert_eq!(edges, sorted);
+}
+
+#[test]
+fn bz005_membership_is_not_a_cycle_but_inheritance_is() {
+    let dir = TempDir::new("bz005-classes");
+    // A member that refers back to its owning class is normal.
+    dir.vi("Owner/Method.vi", V23, &CLEAN, &["Owner.lvclass"]);
+    dir.write(
+        "Owner/Owner.lvclass",
+        project_xml("LVClass", &["Method.vi"], ""),
+    );
+    assert_eq!(dir.check(), []);
+    let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
+    let graph = DependencyGraph::build(&workspace);
+    assert_eq!(
+        file_names(graph.callers(&dir.0.join("Owner/Owner.lvclass"))),
+        ["Method.vi"]
+    );
+
+    // Two classes that name each other as parent cannot be loaded.
+    for (class, parent) in [("A", "B"), ("B", "A")] {
+        let parent_file = format!("{parent}.lvclass");
+        dir.write(
+            &format!("{class}.lvclass"),
+            project_xml("LVClass", &[], &parent_property(&["", &parent_file])),
+        );
+    }
+    let found = dir.check();
+    assert_eq!(
+        codes(&found),
+        [("A.lvclass", "BZ005"), ("B.lvclass", "BZ005")]
+    );
+    assert_eq!(
+        found[0].2,
+        "part of a circular dependency: A.lvclass -> B.lvclass -> A.lvclass"
+    );
+}
+
+#[test]
+fn project_files_are_scanned_deterministically() {
+    let dir = TempDir::new("determinism-projects");
+    for i in 0..30usize {
+        let folder = format!("d{}", i % 5);
+        dir.vi(&format!("{folder}/f{i}.vi"), V23, &CLEAN, &[]);
+        let vi = format!("f{i}.vi");
+        let members: [&str; 2] = [&vi, "missing.vi"];
+        // Each class inherits from the previous one, in another directory.
+        let parent = match i.checked_sub(1) {
+            Some(p) => parent_property(&["", "", &format!("d{}", p % 5), &format!("C{p}.lvclass")]),
+            None => String::new(),
+        };
+        dir.write(
+            &format!("{folder}/C{i}.lvclass"),
+            project_xml("LVClass", &members[..1 + i % 2], &parent),
+        );
+    }
+    let first = dir.diagnostics();
+    assert_eq!(first.len(), 15);
+    assert!(first.iter().all(|d| d.code == "BZ006"));
+    let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
+    let paths: Vec<_> = workspace.files().keys().cloned().collect();
+    let mut sorted = paths.clone();
+    sorted.sort();
+    assert_eq!(paths, sorted);
+    assert_eq!(paths.len(), 60);
+    let graph = DependencyGraph::build(&workspace);
+    assert_eq!(
+        graph.parent_class(&dir.0.join("d0/C10.lvclass")),
+        Some(dir.0.join("d4/C9.lvclass").as_path())
+    );
+    let edges = graph
+        .edges()
+        .into_iter()
+        .map(|(a, b, k)| (a.to_path_buf(), b.to_path_buf(), k))
+        .collect::<Vec<_>>();
+    for _ in 0..5 {
+        assert_eq!(dir.diagnostics(), first);
+        let again = Workspace::scan(std::slice::from_ref(&dir.0));
+        assert_eq!(again, workspace);
+        let again_edges = DependencyGraph::build(&again)
+            .edges()
+            .into_iter()
+            .map(|(a, b, k)| (a.to_path_buf(), b.to_path_buf(), k))
+            .collect::<Vec<_>>();
+        assert_eq!(again_edges, edges);
+    }
+}
+
+#[test]
+fn real_project_fixtures_scan_without_parse_errors() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project");
+    let workspace = Workspace::scan(std::slice::from_ref(&fixtures));
+    assert_eq!(workspace.files().len(), 3);
+    assert!(workspace.files().values().all(|s| s.project().is_some()));
+    let graph = DependencyGraph::build(&workspace);
+    let found = lint(&workspace, &graph, &LintConfig::default());
+    // The members were not copied along with the three files.
+    assert!(!found.is_empty());
+    assert!(found.iter().all(|d| d.code == "BZ006"), "{found:#?}");
 }

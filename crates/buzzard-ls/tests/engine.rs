@@ -1,8 +1,9 @@
 //! Incremental behaviour of the analysis engine, without the protocol layer.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use buzzard_lint::project::encode_parent_link;
 use buzzard_lint::{FileState, LintConfig};
 use buzzard_ls::engine::{Engine, SymbolKind, Update};
 use buzzard_rsrc::builder::RsrcBuilder;
@@ -147,6 +148,9 @@ fn answers_navigation_queries() {
     assert!(hover.contains("| Saved version | 23.0.0 |"), "{hover}");
     assert!(hover.contains("| Callers in workspace | 2 |"), "{hover}");
     assert!(fx.engine.hover(&fx.dir.join("missing.vi")).is_none());
+    let hover = fx.engine.hover(&fx.dir.join("App.lvproj")).unwrap();
+    assert!(hover.contains("| Kind | Project |"), "{hover}");
+    assert!(hover.contains("| Members | 0 |"), "{hover}");
 
     let all = fx.engine.symbols("", 100);
     assert_eq!(all.len(), 6);
@@ -166,4 +170,186 @@ fn answers_navigation_queries() {
     assert_eq!(fx.engine.symbols("rdcfg", 100)[0].name, "Read Config.vi");
     assert_eq!(fx.engine.symbols("", 2).len(), 2);
     assert!(fx.engine.symbols("zzz", 100).is_empty());
+}
+
+fn class_xml(members: &[&str], parent: Option<&str>) -> String {
+    let mut xml = String::from("<LVClass LVVersion=\"23008000\">\n");
+    if let Some(parent) = parent {
+        let text = encode_parent_link(V23, &[parent], &LvPath::sibling(parent))
+            .replace('&', "&amp;")
+            .replace('<', "&lt;");
+        xml.push_str(&format!(
+            "<Property Name=\"NI.LVClass.ParentClassLinkInfo\" Type=\"Bin\">{text}</Property>\n"
+        ));
+    }
+    for member in members {
+        xml.push_str(&format!(
+            "<Item Name=\"{member}\" Type=\"VI\" URL=\"../{member}\"/>\n"
+        ));
+    }
+    xml.push_str("</LVClass>\n");
+    xml
+}
+
+fn project_xml(members: &[&str]) -> String {
+    let mut xml = String::from(
+        "<Project Type=\"Project\" LVVersion=\"23008000\">\n<Item Name=\"My Computer\" Type=\"My Computer\">\n",
+    );
+    for member in members {
+        xml.push_str(&format!(
+            "<Item Name=\"{member}\" Type=\"LVClass\" URL=\"../{member}\"/>\n"
+        ));
+    }
+    xml.push_str(
+        "<Item Name=\"Dependencies\" Type=\"Dependencies\">\n\
+         <Item Name=\"x.vi\" Type=\"VI\" URL=\"/&lt;vilib&gt;/x.vi\"/>\n</Item>\n</Item>\n</Project>\n",
+    );
+    xml
+}
+
+#[test]
+fn parses_and_tracks_project_files() {
+    let mut fx = Fixture::new("projects");
+    let names = |paths: Vec<PathBuf>| -> Vec<String> {
+        paths
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    };
+    let dir = fx.dir.clone();
+    let at = |name: &str| dir.join(name);
+    let write = |name: &str, text: &str| fs::write(at(name), text).unwrap();
+    fx.vi("Run.vi", &CLEAN, &[]);
+    fx.vi("Stop.vi", &CLEAN, &[]);
+    write("Base.lvclass", &class_xml(&["Run.vi", "Stop.vi"], None));
+    write("Child.lvclass", &class_xml(&[], Some("Base.lvclass")));
+    write(
+        "App.lvproj",
+        &project_xml(&["Base.lvclass", "Child.lvclass", "Gone.lvclass"]),
+    );
+    fs::create_dir_all(at(".cache")).unwrap();
+    write(".cache/Hidden.lvlib", "<Library/>");
+
+    // The one scan finds and parses the XML files along with the binaries.
+    let updates = fx.engine.scan();
+    assert_eq!(
+        fx.simplify(updates),
+        [("App.lvproj".to_owned(), vec!["BZ006"])]
+    );
+    assert!(fx.engine.project(&at("Base.lvclass")).is_some());
+    assert!(fx.engine.project(&at("Run.vi")).is_none());
+    assert!(fx.engine.metadata(&at("Base.lvclass")).is_none());
+    assert_eq!(
+        names(fx.engine.members(&at("Base.lvclass"))),
+        ["Run.vi", "Stop.vi"]
+    );
+    assert_eq!(
+        names(fx.engine.members(&at("App.lvproj"))),
+        ["Base.lvclass", "Child.lvclass"]
+    );
+    assert_eq!(names(fx.engine.owners(&at("Run.vi"))), ["Base.lvclass"]);
+    assert_eq!(
+        fx.engine.parent_class(&at("Child.lvclass")),
+        Some(at("Base.lvclass"))
+    );
+    assert_eq!(fx.engine.parent_class(&at("Base.lvclass")), None);
+    assert_eq!(
+        names(fx.engine.child_classes(&at("Base.lvclass"))),
+        ["Child.lvclass"]
+    );
+
+    // Symbols come from the parsed workspace; hidden directories stay out.
+    let all = fx.engine.symbols("", 100);
+    let listed: Vec<(&str, SymbolKind)> = all.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+    assert_eq!(
+        listed,
+        [
+            ("App.lvproj", SymbolKind::Project),
+            ("Base.lvclass", SymbolKind::Class),
+            ("Child.lvclass", SymbolKind::Class),
+            ("Run.vi", SymbolKind::Vi),
+            ("Stop.vi", SymbolKind::Vi),
+        ]
+    );
+
+    let hover = fx.engine.hover(&at("Child.lvclass")).unwrap();
+    assert!(hover.starts_with("### Child.lvclass\n"), "{hover}");
+    assert!(hover.contains("| Kind | Class |"), "{hover}");
+    assert!(hover.contains("| Saved version | 23.0.0 |"), "{hover}");
+    assert!(hover.contains("| Members | 0 |"), "{hover}");
+    assert!(
+        hover.contains("| Parent class | Base.lvclass (`../Base.lvclass`) |"),
+        "{hover}"
+    );
+    let hover = fx.engine.hover(&at("Base.lvclass")).unwrap();
+    assert!(hover.contains("| Members | 2 |"), "{hover}");
+    assert!(
+        hover.contains("| Parent class | none recorded |"),
+        "{hover}"
+    );
+    assert!(
+        hover.contains("| Child classes in workspace | 1 |"),
+        "{hover}"
+    );
+    let hover = fx.engine.hover(&at("App.lvproj")).unwrap();
+    assert!(hover.contains("| Kind | Project |"), "{hover}");
+    assert!(hover.contains("| Members | 3 |"), "{hover}");
+    assert!(hover.contains("| Dependencies | 1 |"), "{hover}");
+    assert!(hover.contains("| Members in workspace | 2 |"), "{hover}");
+    assert!(!hover.contains("Parent class"), "{hover}");
+
+    // The watcher reports all three extensions, in any letter case.
+    for name in ["a.lvproj", "a.lvlib", "a.LVCLASS", "a.vi", "a.ctl"] {
+        assert!(Engine::is_relevant(Path::new(name)), "{name}");
+    }
+    assert!(!Engine::is_relevant(Path::new("a.xml")));
+
+    // Saving the project without the missing member clears the finding.
+    fs::write(
+        at("App.lvproj"),
+        project_xml(&["Base.lvclass", "Child.lvclass"]),
+    )
+    .unwrap();
+    assert_eq!(fx.touch("App.lvproj"), [("App.lvproj".to_owned(), vec![])]);
+    assert_eq!(fx.touch("App.lvproj"), []);
+
+    // Deleting a member file is reported on the class that lists it.
+    fs::remove_file(at("Stop.vi")).unwrap();
+    assert_eq!(
+        fx.touch("Stop.vi"),
+        [("Base.lvclass".to_owned(), vec!["BZ006"])]
+    );
+    assert_eq!(names(fx.engine.members(&at("Base.lvclass"))), ["Run.vi"]);
+    fs::write(at("Base.lvclass"), class_xml(&["Run.vi"], None)).unwrap();
+    assert_eq!(
+        fx.touch("Base.lvclass"),
+        [("Base.lvclass".to_owned(), vec![])]
+    );
+
+    // Re-parenting a class is picked up from the re-parsed file.
+    fs::write(at("Child.lvclass"), class_xml(&[], None)).unwrap();
+    assert_eq!(fx.touch("Child.lvclass"), []);
+    assert_eq!(fx.engine.parent_class(&at("Child.lvclass")), None);
+    assert!(fx.engine.child_classes(&at("Base.lvclass")).is_empty());
+
+    // A file that stops being valid XML is reported and stays a symbol.
+    fs::write(at("App.lvproj"), "<Project><Item").unwrap();
+    assert_eq!(
+        fx.touch("App.lvproj"),
+        [("App.lvproj".to_owned(), vec!["BZ000"])]
+    );
+    assert!(fx.engine.project(&at("App.lvproj")).is_none());
+    assert!(fx.engine.members(&at("App.lvproj")).is_empty());
+    let hover = fx.engine.hover(&at("App.lvproj")).unwrap();
+    assert!(
+        hover.contains("Cannot analyze file: invalid XML"),
+        "{hover}"
+    );
+    assert_eq!(fx.engine.symbols("app", 10)[0].kind, SymbolKind::Project);
+
+    // Deleting it removes the diagnostics and the symbol.
+    fs::remove_file(at("App.lvproj")).unwrap();
+    assert_eq!(fx.touch("App.lvproj"), [("App.lvproj".to_owned(), vec![])]);
+    assert!(fx.engine.symbols("app", 10).is_empty());
+    assert!(fx.engine.hover(&at("App.lvproj")).is_none());
 }

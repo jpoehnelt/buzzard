@@ -7,15 +7,27 @@ use buzzard_rsrc::{ViMetadata, RSRC_EXTENSIONS};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
+use crate::project::{is_project_file, ProjectFile};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileState {
     Parsed(Box<ViMetadata>),
+    /// A parsed `.lvproj`, `.lvlib` or `.lvclass` file.
+    Project(Box<ProjectFile>),
     /// The file could not be read or parsed; the message says why.
     Failed(String),
 }
 
 impl FileState {
+    /// Read one file from disk. Project-level XML files are recognized by
+    /// extension; everything else is read as a binary resource file.
     pub fn load(path: &Path) -> Self {
+        if is_project_file(path) {
+            return match ProjectFile::from_path(path) {
+                Ok(project) => FileState::Project(Box::new(project)),
+                Err(reason) => FileState::Failed(reason),
+            };
+        }
         match ViMetadata::from_path(path) {
             Ok(meta) => FileState::Parsed(Box::new(meta)),
             Err(err) => FileState::Failed(err.to_string()),
@@ -25,7 +37,14 @@ impl FileState {
     pub fn metadata(&self) -> Option<&ViMetadata> {
         match self {
             FileState::Parsed(meta) => Some(meta),
-            FileState::Failed(_) => None,
+            FileState::Project(_) | FileState::Failed(_) => None,
+        }
+    }
+
+    pub fn project(&self) -> Option<&ProjectFile> {
+        match self {
+            FileState::Project(project) => Some(project),
+            FileState::Parsed(_) | FileState::Failed(_) => None,
         }
     }
 }
@@ -74,8 +93,13 @@ impl Workspace {
     }
 }
 
-/// True if the path has an extension this tool can parse.
+/// True if the path has an extension this tool can parse: a binary resource
+/// file or a project-level XML file.
 pub fn is_analyzable(path: &Path) -> bool {
+    is_project_file(path) || is_rsrc_file(path)
+}
+
+fn is_rsrc_file(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
         RSRC_EXTENSIONS
             .iter()
@@ -144,7 +168,10 @@ mod tests {
     fn recognizes_extensions() {
         assert!(is_analyzable(Path::new("x/Main.VI")));
         assert!(is_analyzable(Path::new("x/Type.ctl")));
-        assert!(!is_analyzable(Path::new("x/Proj.lvproj")));
+        assert!(is_analyzable(Path::new("x/Proj.lvproj")));
+        assert!(is_analyzable(Path::new("x/Lib.LVLIB")));
+        assert!(is_analyzable(Path::new("x/Motor.lvclass")));
+        assert!(!is_analyzable(Path::new("x/notes.xml")));
         assert!(!is_analyzable(Path::new("x/vi")));
     }
 }

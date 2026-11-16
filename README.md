@@ -3,9 +3,10 @@
 A fast, cross-platform static analyzer and language server for LabVIEW™
 projects, written in Rust.
 
-`buzzard` reads binary `.vi` and `.ctl` files directly from disk. It does not
-need the LabVIEW IDE or runtime, so it runs on Linux, macOS and Windows CI
-runners alike.
+`buzzard` reads binary `.vi` and `.ctl` files and the XML of `.lvproj`,
+`.lvlib` and `.lvclass` files directly from disk. It does not need the
+LabVIEW IDE or runtime, so it runs on Linux, macOS and Windows CI runners
+alike.
 
 ## Install
 
@@ -28,10 +29,12 @@ Write SARIF for GitHub or GitLab code scanning:
 buzzard check . --format sarif > buzzard.sarif
 ```
 
-Summarize one file as Markdown or JSON (handy as context for AI agents):
+Summarize one file as Markdown or JSON (handy as context for AI agents).
+Projects, libraries and classes work too:
 
 ```bash
 buzzard inspect Main.vi --format json
+buzzard inspect Motor.lvclass
 ```
 
 Run the language server over stdio:
@@ -47,12 +50,17 @@ buzzard lsp
 
 | Code | Severity | Meaning |
 | --- | --- | --- |
-| `BZ000` | error | File cannot be read or is not a valid RSRC container |
+| `BZ000` | error | File cannot be read, or is not a valid RSRC container or project XML file |
 | `BZ001` | warning | Compiled code is not separated from the source file |
 | `BZ002` | warning | Saved with a different version than most of the workspace |
 | `BZ003` | warning | Dependency linked by a machine-specific absolute path, or a path over the length limit |
 | `BZ004` | warning | Leftover breakpoints or suspend-when-called, or a password-protected block diagram |
-| `BZ005` | error | Part of a circular dependency |
+| `BZ005` | error | Part of a circular dependency (VI calls and class inheritance) |
+| `BZ006` | warning | A project, library or class lists a member whose file does not exist on disk |
+
+`BZ006` skips what it cannot check: installation paths such as
+`/<vilib>/...`, items stored inside the XML file itself, and the
+`Dependencies` list of a project, which the IDE computes on its own.
 
 ## Language server
 
@@ -64,9 +72,9 @@ edited as text buffers.
 | --- | --- |
 | `textDocument/publishDiagnostics` | All `BZxxx` findings, updated within about 150 ms of a save |
 | `workspace/symbol` | Fuzzy search over VIs, controls, classes, libraries and projects |
-| `textDocument/hover` | Saved version, execution flags, dependency and caller counts |
+| `textDocument/hover` | Saved version, execution flags, dependency and caller counts; for a project, library or class: kind, version, member count and parent class |
 | `textDocument/references` | Every file in the workspace that uses the target file |
-| `buzzard/inspect` | Custom request: `{ "uri": ... }` returns metadata, callers and callees as JSON |
+| `buzzard/inspect` | Custom request: `{ "uri": ... }` returns metadata, callers, callees and owners as JSON; for a project, library or class: the parsed file, its members, owners, parent and child classes |
 
 ## Design goals
 
@@ -85,7 +93,7 @@ edited as text buffers.
 | Crate | Purpose |
 | --- | --- |
 | `crates/buzzard-rsrc` | Parser for the binary RSRC resource container |
-| `crates/buzzard-lint` | Lint rules, dependency graph, SARIF, the `ViInspector` backend trait |
+| `crates/buzzard-lint` | Lint rules, project file parser, dependency graph, SARIF, the `ViInspector` backend trait |
 | `crates/buzzard-ls` | Language Server Protocol implementation |
 | `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `lsp`) |
 
@@ -108,13 +116,31 @@ BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance
 
 Review the generated snapshot before committing it.
 
+`crates/buzzard-lint/tests/fixtures/project` holds real `.lvproj`, `.lvlib`
+and `.lvclass` files; its README records where they come from and what they
+established about the format.
+
+### Dependency graph
+
+The graph has three kinds of edge. `Uses` is a VI referencing another file,
+`Contains` is a project, library or class listing a member, and `Inherits`
+is a class naming its parent. Callers, callees and references follow `Uses`
+only. Cycle detection follows `Uses` and `Inherits`; `Contains` is left out
+because a member normally refers back to its owner.
+
 ## Current limitations
 
 - Dependencies are read from the link-info blocks by locating each stored
   path and the name in front of it, rather than by decoding every link
   record variant. This holds on all fixtures but is a heuristic.
-- `.lvclass`, `.lvlib` and `.lvproj` files are listed as symbols but not yet
-  parsed, so class inheritance is not in the dependency graph.
+- The parent of a class is decoded from `NI.LVClass.ParentClassLinkInfo`.
+  The layout was verified on files saved by versions 13.0 and 19.0 only. A
+  value with any other layout is treated as "parent unknown", never guessed.
+- Item URLs that start with `/` are never resolved, so a member linked by a
+  machine-absolute URL is not checked by `BZ006` and gets no graph edge.
+- `BZ006` is re-evaluated when a watched `.vi`, `.ctl` or project file
+  changes. Deleting a member of another type (a `.dll`, a text file) is only
+  noticed at the next such change.
 - The block diagram itself is not decoded yet, so there are no dataflow
   rules.
 - The dependency graph is rebuilt from in-memory metadata on every change.
@@ -126,7 +152,11 @@ The RSRC container layout was learned from the open-source work of
 [mefistotelis/pylabview](https://github.com/mefistotelis/pylabview) (MIT) and
 [marcpage/pylavi](https://github.com/marcpage/pylavi) (public domain). The
 conformance fixtures under `crates/buzzard-rsrc/tests/fixtures` come from
-pylavi.
+pylavi. The project file fixtures under
+`crates/buzzard-lint/tests/fixtures/project` come from
+[JKISoftware/JKI-State-Machine-Objects](https://github.com/JKISoftware/JKI-State-Machine-Objects)
+(BSD 3-Clause) and [ni/grpc-labview](https://github.com/ni/grpc-labview)
+(MIT); their licence texts are kept next to the files.
 
 ## Trademark disclaimer
 

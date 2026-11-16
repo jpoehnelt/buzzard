@@ -2,14 +2,15 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use buzzard_lint::project::is_project_file;
 use buzzard_lint::{
-    lint, sarif, summary, DependencyGraph, Diagnostic, LintConfig, Severity, Workspace,
+    lint, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity, Workspace,
 };
 use buzzard_rsrc::ViMetadata;
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Static analyzer and language server that reads binary .vi and .ctl files
-/// directly, without the IDE.
+/// and .lvproj, .lvlib and .lvclass files directly, without the IDE.
 #[derive(Parser)]
 #[command(name = "buzzard", version, about)]
 struct Cli {
@@ -100,6 +101,24 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             } else {
                 ExitCode::SUCCESS
+            }
+        }
+        Command::Inspect { file, format } if is_project_file(&file) => {
+            match ProjectFile::from_path(&file) {
+                Ok(project) => {
+                    let rendered = match format {
+                        InspectFormat::Json => to_json(&project),
+                        InspectFormat::Markdown => {
+                            summary::project_to_markdown(&project.name, &project, None)
+                        }
+                    };
+                    print(&rendered);
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: {}: {err}", file.display());
+                    ExitCode::from(2)
+                }
             }
         }
         Command::Inspect { file, format } => match ViMetadata::from_path(&file) {

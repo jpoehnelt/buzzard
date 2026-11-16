@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use buzzard_lint::project::is_project_file;
 use buzzard_lint::{
     Diagnostic as Finding, FileState, LintConfig, RsrcInspector, Severity, ViInspector,
 };
@@ -105,13 +106,17 @@ async fn refresh(
         if !Engine::is_relevant(&path) {
             continue;
         }
-        let state = if path.is_file() {
+        let state = if !path.is_file() {
+            None
+        } else if is_project_file(&path) {
+            // Project-level XML is always read from disk; the inspector
+            // backend only knows binary files.
+            Some(FileState::load(&path))
+        } else {
             Some(match inspector.inspect(&path).await {
                 Ok(meta) => FileState::Parsed(Box::new(meta)),
                 Err(reason) => FileState::Failed(reason),
             })
-        } else {
-            None
         };
         changes.push((path, state));
     }
@@ -148,16 +153,29 @@ impl Backend {
     }
 
     /// `buzzard/inspect`: metadata and graph neighbours of one file as JSON.
+    /// A project, library or class answers with `project` instead of
+    /// `metadata`.
     async fn inspect(&self, params: InspectParams) -> Result<Value> {
         let path = to_path(&params.uri)?;
         let engine = lock(&self.engine);
         let uris =
             |paths: Vec<PathBuf>| -> Vec<Url> { paths.iter().filter_map(|p| to_url(p)).collect() };
+        if let Some(project) = engine.project(&path) {
+            return Ok(json!({
+                "project": project,
+                "members": uris(engine.members(&path)),
+                "owners": uris(engine.owners(&path)),
+                "parentClass": engine.parent_class(&path).and_then(|p| to_url(&p)),
+                "childClasses": uris(engine.child_classes(&path)),
+                "callers": uris(engine.callers(&path)),
+            }));
+        }
         Ok(match engine.metadata(&path) {
             Some(metadata) => json!({
                 "metadata": metadata,
                 "callers": uris(engine.callers(&path)),
                 "callees": uris(engine.callees(&path)),
+                "owners": uris(engine.owners(&path)),
             }),
             None => Value::Null,
         })

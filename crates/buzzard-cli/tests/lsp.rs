@@ -196,6 +196,34 @@ fn full_editor_session() {
     assert_eq!(inspected["callees"], json!([uri("util.vi")]));
     assert_eq!(inspected["callers"], json!([]));
 
+    // Project files are parsed too: hover, inspect, and re-parse on save.
+    let hover = session.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri("App.lvproj") }, "position": position }),
+    );
+    let text = hover["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("| Kind | Project |"), "{text}");
+    assert!(text.contains("| Members | 0 |"), "{text}");
+    std::fs::write(
+        dir.0.join("App.lvproj"),
+        "<Project Type=\"Project\" LVVersion=\"23008000\">\
+         <Item Name=\"main.vi\" Type=\"VI\" URL=\"../main.vi\"/>\
+         <Item Name=\"lost.vi\" Type=\"VI\" URL=\"../lost.vi\"/></Project>",
+    )
+    .unwrap();
+    let found = session.diagnostics_for("/App.lvproj", |d| !d.is_empty());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["code"], "BZ006");
+    assert_eq!(found[0]["severity"], 2);
+    let inspected = session.request("buzzard/inspect", json!({ "uri": uri("App.lvproj") }));
+    assert_eq!(inspected["project"]["kind"], "project");
+    assert_eq!(inspected["project"]["lv_version"], "23.0.0");
+    assert_eq!(inspected["members"], json!([uri("main.vi")]));
+    let inspected = session.request("buzzard/inspect", json!({ "uri": uri("main.vi") }));
+    assert_eq!(inspected["owners"], json!([uri("App.lvproj")]));
+    std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
+    session.diagnostics_for("/App.lvproj", |d| d.is_empty());
+
     // Saving a fixed file from the IDE is picked up by the file watcher.
     dir.vi("util.vi", &CLEAN, &[]);
     session.diagnostics_for("/util.vi", |d| d.is_empty());

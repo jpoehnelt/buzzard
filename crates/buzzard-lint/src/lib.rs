@@ -7,13 +7,15 @@
 pub mod diagnostic;
 pub mod graph;
 pub mod inspector;
+pub mod project;
 pub mod rules;
 pub mod sarif;
 pub mod summary;
 pub mod workspace;
 
 pub use diagnostic::{Diagnostic, Severity};
-pub use graph::DependencyGraph;
+pub use graph::{DependencyGraph, EdgeKind};
 pub use inspector::{RsrcInspector, ViInspector};
+pub use project::{Member, ParentClass, ProjectFile, ProjectKind};
 pub use rules::{lint, LintConfig, Rule, RULES};
 pub use workspace::{FileState, Workspace};

@@ -1,4 +1,9 @@
 //! Directed graph of file-to-file references inside a workspace.
+//!
+//! Edges come in three kinds (see [`EdgeKind`]). "Dependency" below means a
+//! `Uses` or `Inherits` edge; `Contains` edges describe ownership and never
+//! take part in cycle detection, because a member routinely refers back to
+//! the library or class that owns it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -6,14 +11,33 @@ use std::path::{Path, PathBuf};
 use buzzard_rsrc::{LvPath, PathKind};
 use petgraph::algo::tarjan_scc;
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::{EdgeFiltered, EdgeRef};
 use petgraph::Direction;
+use serde::Serialize;
 
 use crate::workspace::{normalize, Workspace};
 
-/// Edges point from a file to the files it uses (caller -> callee).
+/// What an edge from `a` to `b` means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeKind {
+    /// `a` references `b` in its link info (caller -> callee).
+    Uses,
+    /// `a` is a project, library or class that lists `b` as a member.
+    Contains,
+    /// `a` is a class whose parent class is `b`.
+    Inherits,
+}
+
+impl EdgeKind {
+    fn is_dependency(self) -> bool {
+        matches!(self, EdgeKind::Uses | EdgeKind::Inherits)
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DependencyGraph {
-    graph: DiGraph<PathBuf, ()>,
+    graph: DiGraph<PathBuf, EdgeKind>,
     index: HashMap<PathBuf, NodeIndex>,
 }
 
@@ -30,37 +54,54 @@ impl DependencyGraph {
             }
         }
 
+        // A stale path (moved checkout, absolute path from another machine,
+        // installation path of a library developed in this workspace) still
+        // identifies its target when the file name is unique.
+        let unique = |name: &str| match by_name.get(name)?.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        };
+
         for (path, state) in workspace.files() {
-            let Some(meta) = state.metadata() else {
-                continue;
-            };
             let from = index[path];
-            let mut targets = BTreeSet::new();
-            for link in &meta.links {
-                let exact = resolve(path, &link.path).and_then(|p| index.get(&p).copied());
-                // A stale path (moved checkout, absolute path from another
-                // machine) still identifies its target when the file name is
-                // unique in the workspace.
-                let target = exact.or_else(|| match by_name.get(link.name()?)?.as_slice() {
-                    [only] => Some(*only),
-                    _ => None,
-                });
-                targets.extend(target);
+            let mut targets: BTreeSet<(NodeIndex, EdgeKind)> = BTreeSet::new();
+            if let Some(project) = state.project() {
+                for member in project.members.iter().filter(|m| !m.dependency) {
+                    let target = member.path.as_ref().and_then(|p| index.get(p));
+                    targets.extend(target.map(|&to| (to, EdgeKind::Contains)));
+                }
+                if let Some(parent) = &project.parent_class {
+                    let exact = parent.path.as_ref().and_then(|p| index.get(p).copied());
+                    // No class is its own parent, whatever its name suggests.
+                    let target = exact.or_else(|| unique(&parent.name).filter(|&to| to != from));
+                    targets.extend(target.map(|to| (to, EdgeKind::Inherits)));
+                }
             }
-            for to in targets {
-                graph.add_edge(from, to, ());
+            let links = state.metadata().map_or(&[][..], |meta| &meta.links);
+            for link in links {
+                let exact = resolve(path, &link.path).and_then(|p| index.get(&p).copied());
+                let target = exact.or_else(|| unique(link.name()?));
+                targets.extend(target.map(|to| (to, EdgeKind::Uses)));
+            }
+            for (to, kind) in targets {
+                graph.add_edge(from, to, kind);
             }
         }
         Self { graph, index }
     }
 
-    fn neighbors(&self, path: &Path, direction: Direction) -> Vec<&Path> {
+    fn neighbors(&self, path: &Path, direction: Direction, kind: EdgeKind) -> Vec<&Path> {
         let Some(&node) = self.index.get(&normalize(path)) else {
             return Vec::new();
         };
         let mut out: Vec<&Path> = self
             .graph
-            .neighbors_directed(node, direction)
+            .edges_directed(node, direction)
+            .filter(|e| *e.weight() == kind)
+            .map(|e| match direction {
+                Direction::Outgoing => e.target(),
+                Direction::Incoming => e.source(),
+            })
             .map(|n| self.graph[n].as_path())
             .collect();
         out.sort();
@@ -68,22 +109,55 @@ impl DependencyGraph {
         out
     }
 
-    /// Files that reference `path`.
+    /// Files that reference `path` (`Uses` edges only).
     pub fn callers(&self, path: &Path) -> Vec<&Path> {
-        self.neighbors(path, Direction::Incoming)
+        self.neighbors(path, Direction::Incoming, EdgeKind::Uses)
     }
 
-    /// Files that `path` references.
+    /// Files that `path` references (`Uses` edges only).
     pub fn callees(&self, path: &Path) -> Vec<&Path> {
-        self.neighbors(path, Direction::Outgoing)
+        self.neighbors(path, Direction::Outgoing, EdgeKind::Uses)
+    }
+
+    /// Workspace files that the project, library or class at `path` lists
+    /// as members. Items under a project's `Dependencies` node are not
+    /// members.
+    pub fn members(&self, path: &Path) -> Vec<&Path> {
+        self.neighbors(path, Direction::Outgoing, EdgeKind::Contains)
+    }
+
+    /// Projects, libraries and classes that list `path` as a member.
+    pub fn owners(&self, path: &Path) -> Vec<&Path> {
+        self.neighbors(path, Direction::Incoming, EdgeKind::Contains)
+    }
+
+    /// The parent of the class at `path`, when it is in the workspace.
+    pub fn parent_class(&self, path: &Path) -> Option<&Path> {
+        self.neighbors(path, Direction::Outgoing, EdgeKind::Inherits)
+            .into_iter()
+            .next()
+    }
+
+    /// Classes in the workspace whose parent is the class at `path`.
+    pub fn child_classes(&self, path: &Path) -> Vec<&Path> {
+        self.neighbors(path, Direction::Incoming, EdgeKind::Inherits)
+    }
+
+    /// Successors along dependency edges, in no particular order.
+    fn dependencies(&self, node: NodeIndex) -> impl Iterator<Item = NodeIndex> + '_ {
+        self.graph
+            .edges(node)
+            .filter(|e| e.weight().is_dependency())
+            .map(|e| e.target())
     }
 
     /// Every group of mutually dependent files, with one concrete cycle
     /// through the group's first member. Groups and members are sorted.
     pub fn cycles(&self) -> Vec<Cycle> {
-        let mut out: Vec<Cycle> = tarjan_scc(&self.graph)
+        let dependencies = EdgeFiltered::from_fn(&self.graph, |e| e.weight().is_dependency());
+        let mut out: Vec<Cycle> = tarjan_scc(&dependencies)
             .into_iter()
-            .filter(|scc| scc.len() > 1 || self.graph.contains_edge(scc[0], scc[0]))
+            .filter(|scc| scc.len() > 1 || self.dependencies(scc[0]).any(|n| n == scc[0]))
             .map(|scc| {
                 let members: BTreeMap<&Path, NodeIndex> =
                     scc.iter().map(|&n| (self.graph[n].as_path(), n)).collect();
@@ -108,8 +182,7 @@ impl DependencyGraph {
     fn shortest_cycle(&self, start: NodeIndex, allowed: &BTreeSet<NodeIndex>) -> Vec<NodeIndex> {
         let successors = |n: NodeIndex| {
             let mut next: Vec<NodeIndex> = self
-                .graph
-                .neighbors(n)
+                .dependencies(n)
                 .filter(|m| allowed.contains(m))
                 .collect();
             next.sort_by(|a, b| self.graph[*a].cmp(&self.graph[*b]));
@@ -143,8 +216,26 @@ impl DependencyGraph {
         self.graph.node_count()
     }
 
+    /// Number of edges of every kind.
     pub fn edge_count(&self) -> usize {
         self.graph.edge_count()
+    }
+
+    /// Every edge as `(from, to, kind)`, sorted.
+    pub fn edges(&self) -> Vec<(&Path, &Path, EdgeKind)> {
+        let mut out: Vec<(&Path, &Path, EdgeKind)> = self
+            .graph
+            .edge_references()
+            .map(|e| {
+                (
+                    self.graph[e.source()].as_path(),
+                    self.graph[e.target()].as_path(),
+                    *e.weight(),
+                )
+            })
+            .collect();
+        out.sort();
+        out
     }
 }
 
@@ -152,8 +243,8 @@ impl DependencyGraph {
 pub struct Cycle {
     /// Every file in the strongly connected group, sorted.
     pub members: Vec<PathBuf>,
-    /// One concrete cycle: each file references the next, the last
-    /// references the first.
+    /// One concrete cycle: each file uses or inherits from the next, the
+    /// last from the first.
     pub example: Vec<PathBuf>,
 }
 
