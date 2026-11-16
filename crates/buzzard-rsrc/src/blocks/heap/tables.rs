@@ -1,7 +1,7 @@
 //! Tag and class name tables for heap objects.
 //!
 //! Generated from the enums in `pylabview/LVheap.py`
-//! (https://github.com/mefistotelis/pylabview, MIT licence,
+//! (<https://github.com/mefistotelis/pylabview>, MIT licence,
 //! Copyright (C) 2013 Jessica Creighton, Copyright (C) 2019-2020 Mefistotelis).
 //! Each table is sorted by id for binary search. Do not edit by hand.
 
