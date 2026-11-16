@@ -1633,3 +1633,109 @@ fn a_walk_that_branches_without_end_gives_up() {
     assert_eq!(found.states[1].successors, Successors::Unknown);
     assert!(started.elapsed().as_secs() < 20);
 }
+
+// ------------------------------------------------------------ lint rules
+
+/// The diagnostics `lint` gives for a file with the given diagram.
+fn lint_diagram(diagram: BlockDiagram) -> Vec<(String, &'static str, String)> {
+    use buzzard_lint::{lint, DependencyGraph, FileState, LintConfig, Workspace};
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify/jki-smo");
+    let mut inspection = Inspection::from_path(&path.join("process.vi")).unwrap();
+    inspection.diagram = Some(diagram);
+    let mut workspace = Workspace::default();
+    workspace.insert(
+        Path::new("Main.vi"),
+        FileState::from_inspection(Ok(inspection)),
+    );
+    let graph = DependencyGraph::build(&workspace);
+    lint(&workspace, &graph, &LintConfig::default())
+        .into_iter()
+        .filter(|d| d.code.starts_with("BZ2"))
+        .map(|d| (d.severity.as_str().to_owned(), d.code, d.message))
+        .collect()
+}
+
+#[test]
+fn lint_reports_the_findings_under_three_rules() {
+    let at = format!("state machine at while loop #{LOOP}, case structure #{CASE}");
+    let line = |severity: &str, code: &'static str, text: &str| {
+        (severity.to_owned(), code, format!("{at}: {text} (proven)"))
+    };
+
+    // Unreachable states are warnings; a loop that never stops at all is
+    // informational, since a daemon is a legitimate design.
+    assert_eq!(
+        lint_diagram(doomed().build()),
+        [
+            line("warning", "BZ201", "state `Exit` can never be reached"),
+            line("warning", "BZ201", "state `Orphan` can never be reached"),
+            line("info", "BZ202", "the loop can never stop"),
+        ]
+    );
+    // A trap state among states that can stop is a warning.
+    let trap = base().next(1, select(base().item("Exit"), base().item("Init")));
+    let trap = Spec {
+        items: vec!["Init", "Run", "Exit", "Stuck"],
+        ..trap
+    };
+    let mut trap = trap;
+    trap.frames.push(build::Frame {
+        matches: vec![one(3)],
+        next: Expr::Current,
+        stop: boolean(false),
+    });
+    let stuck = trap.item("Stuck");
+    assert_eq!(
+        lint_diagram(trap.next(0, select(stuck, base().item("Run"))).build()),
+        [line(
+            "warning",
+            "BZ202",
+            "once in state `Stuck` the loop can never stop"
+        )]
+    );
+    // A misspelled state name that the default case swallows.
+    let typo = Spec::strings(&["Init", "Run", "Idle"])
+        .default(2)
+        .starts(text("Init"))
+        .next(0, text("Rnu"))
+        .stop(2, boolean(true));
+    assert_eq!(
+        lint_diagram(typo.build()),
+        [
+            line("warning", "BZ201", "state `Run` can never be reached"),
+            line(
+                "warning",
+                "BZ203",
+                "state `Init` writes the next state `Rnu`, which no case handles; the default \
+                 case `Idle` runs instead"
+            ),
+        ]
+    );
+    // A healthy machine, and a machine whose wiring cannot be followed,
+    // report nothing.
+    assert_eq!(lint_diagram(base().build()), []);
+    assert_eq!(lint_diagram(doomed().next(1, Expr::Call).build()), []);
+
+    for code in ["BZ201", "BZ202", "BZ203"] {
+        let rule = buzzard_lint::rules::rule(code).unwrap();
+        assert_eq!(rule.severity, buzzard_lint::Severity::Warning);
+        assert!(!rule.summary.is_empty() && !rule.name.is_empty());
+    }
+}
+
+#[test]
+fn issues_say_how_much_they_claim() {
+    let report = verify(&doomed().build());
+    let issues = report.issues();
+    assert_eq!(issues.len(), 3);
+    for issue in &issues {
+        assert_eq!(issue.confidence(), Confidence::Proven);
+        assert!(issue.justification().ends_with(char::is_alphabetic));
+        assert!(!issue.justification().contains('\n'));
+    }
+    let codes: Vec<&str> = issues.iter().map(|issue| issue.code()).collect();
+    assert_eq!(codes, ["BZ201", "BZ201", "BZ202"]);
+    assert_eq!(Confidence::Proven.as_str(), "PROVEN");
+    assert_eq!(Confidence::Heuristic.as_str(), "HEURISTIC");
+}

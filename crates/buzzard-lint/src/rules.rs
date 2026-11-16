@@ -10,6 +10,7 @@ use crate::dataflow::Finding;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph::DependencyGraph;
 use crate::project::ProjectFile;
+use crate::verify::{Confidence, Problem};
 use crate::workspace::{Analysis, FileState, Workspace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +82,31 @@ pub const RULES: &[Rule] = &[
                   reaches anything that could close it.",
         severity: Severity::Warning,
     },
+    Rule {
+        code: "BZ201",
+        name: "unreachable-state",
+        summary: "A state of a state machine (a case of a case structure selected by a \
+                  shift register in a while loop) can never be reached. Proven on a model \
+                  that over-approximates the diagram.",
+        severity: Severity::Warning,
+    },
+    Rule {
+        code: "BZ202",
+        name: "state-machine-cannot-stop",
+        summary: "A state machine has a state from which its loop can never stop (warning), \
+                  or can never stop at all (info: a loop that runs until the program is \
+                  aborted may be intended). Proven on a model that over-approximates the \
+                  diagram.",
+        severity: Severity::Warning,
+    },
+    Rule {
+        code: "BZ203",
+        name: "undefined-state",
+        summary: "A state machine writes a next state that no case handles, so the default \
+                  case runs. For a string/queue state machine this is a heuristic over the \
+                  string constants that are enqueued, not a proof.",
+        severity: Severity::Warning,
+    },
 ];
 
 pub fn rule(code: &str) -> Option<&'static Rule> {
@@ -138,6 +164,7 @@ pub fn lint(
                     check_paths(&workspace.root_relative(path), meta, config, &mut emit);
                     check_debug_and_lock(meta, &mut emit);
                     found.extend(check_dataflow(path, analysis));
+                    found.extend(check_state_machines(path, analysis));
                 }
                 FileState::Project(project) => check_members(workspace, project, &mut emit),
             }
@@ -355,6 +382,36 @@ fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
                 code,
                 severity,
                 message,
+                related: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+/// The findings of the state machine verification, computed when the
+/// file was loaded. Each message names the machine and says whether the
+/// finding is proven or a heuristic.
+fn check_state_machines(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
+    analysis
+        .state_machines
+        .iter()
+        .map(|issue| {
+            let code = issue.code();
+            // A loop that never stops is often a daemon that is meant to
+            // run until the program is aborted.
+            let severity = match issue.problem {
+                Problem::NeverStops => Severity::Info,
+                _ => rule(code).expect("rule is registered").severity,
+            };
+            let (what, how) = match issue.confidence() {
+                Confidence::Proven => ("state machine", "proven"),
+                Confidence::Heuristic => ("string/queue state machine", "heuristic, not proven"),
+            };
+            Diagnostic {
+                path: path.to_path_buf(),
+                code,
+                severity,
+                message: format!("{what} at {}: {} ({how})", issue.location, issue.message()),
                 related: Vec::new(),
             }
         })

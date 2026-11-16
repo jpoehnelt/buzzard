@@ -24,8 +24,8 @@
 //!
 //! A value is followed backwards from the terminal that consumes it. Only
 //! these steps are understood; they are the only things found between a
-//! constant and the register in the eight real machines the pattern was
-//! studied on (editor versions 13, 17, 20 and 25):
+//! constant and the register in the nine real state machine files the
+//! pattern was studied on (editor versions 13, 17, 20 and 25):
 //!
 //! * a **constant** of a simple type ends the walk with its value;
 //! * the **left terminal of the machine's own register** means "the
@@ -141,10 +141,12 @@
 //! outside, that match no case label and so run the default case. A queue
 //! string is read the way the real files use it: one state per line, the
 //! name ending at `>>` (arguments follow), `//` starting a comment and
-//! `/* */` enclosing one. In the 17 real machines studied, every enqueued
-//! name that is not a comment has a case. The check proves nothing: names
-//! built at run time or enqueued by other VIs are not seen, and the
-//! comment syntax is inferred from those files.
+//! `/* */` enclosing one. In 16 of the 17 real machines studied every
+//! enqueued name read this way has a case; the other, a documentation
+//! example, enqueues three names it has no case for. The check proves
+//! nothing: names built at run time or enqueued by other VIs are not
+//! seen, the comment syntax is inferred from those files alone, and the
+//! library is recognised by the names of its subVIs.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
