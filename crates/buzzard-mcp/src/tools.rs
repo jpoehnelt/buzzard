@@ -477,7 +477,11 @@ fn root_directories(state: &State, args: &Args<'_>) -> Result<Roots, String> {
 /// deps` reports them.
 fn deps(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, String> {
     const FORMATS: [&str; 3] = ["text", "json", "markdown"];
-    let args = Args::new(arguments, &["paths", "format", "roots", "refresh"])?;
+    const DETAILS: [&str; 2] = ["packages", "files"];
+    let args = Args::new(
+        arguments,
+        &["paths", "format", "detail", "roots", "refresh"],
+    )?;
     let raw_paths = args.text_list("paths", true)?;
     if raw_paths.is_empty() {
         return Err("argument `paths` must name at least one file or directory".to_owned());
@@ -490,6 +494,16 @@ fn deps(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, Str
         return Err(format!(
             "argument `format` must be one of: {}",
             FORMATS.join(", ")
+        ));
+    }
+    let detail = match arguments.get("detail") {
+        None => "packages",
+        Some(_) => args.text("detail")?,
+    };
+    if !DETAILS.contains(&detail) {
+        return Err(format!(
+            "argument `detail` must be one of: {}",
+            DETAILS.join(", ")
         ));
     }
     let refresh = args.flag("refresh")?;
@@ -509,22 +523,41 @@ fn deps(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, Str
     let mut found = dependencies::scan(&scan.workspace, &scan.graph, &roots);
     // Report paths the way every other tool does.
     found.map_paths(|path| state.show(Path::new(path)));
-    let value = to_value(&found)?;
-    let text = match format {
-        // Serialized from the report, not from `value`, so that the fields
-        // come in the order the command line prints them.
-        "json" => {
-            serde_json::to_string_pretty(&found)
-                .map_err(|err| format!("cannot serialize result: {err}"))?
-                + "\n"
-        }
-        "markdown" => dependencies::to_markdown(&found),
-        _ => dependencies::to_text(&found),
+    let (text, value) = if detail == "files" {
+        let text = match format {
+            "json" => ordered_json(&found)?,
+            "markdown" => dependencies::to_markdown(&found),
+            _ => dependencies::to_text(&found),
+        };
+        (text, to_value(&found)?)
+    } else {
+        // Counts per package: the size of the answer follows the number
+        // of packages, where the full report lists every referrer of
+        // every file and is megabytes for a large workspace.
+        let overview = found.overview();
+        let text = match format {
+            "json" => ordered_json(&overview)?,
+            "markdown" => dependencies::overview_to_markdown(&found) + "\n" + DETAIL_NOTE + "\n",
+            _ => dependencies::overview_to_text(&found) + DETAIL_NOTE + "\n",
+        };
+        (text, to_value(&overview)?)
     };
     Ok(Output {
         text,
         structured: Some(value),
     })
+}
+
+/// The last line of an answer of `buzzard_deps` that holds counts only.
+const DETAIL_NOTE: &str = "Counts only. Call again with `detail: \"files\"`, and narrower \
+                           `paths` in a large workspace, for each file and the files that use it.";
+
+/// Pretty JSON of a report, with its fields in the order of the struct,
+/// as the command line prints them.
+fn ordered_json<T: serde::Serialize>(value: &T) -> Result<String, String> {
+    serde_json::to_string_pretty(value)
+        .map(|text| text + "\n")
+        .map_err(|err| format!("cannot serialize result: {err}"))
 }
 
 fn diagnostic_json(state: &State, diagnostic: &Diagnostic) -> Value {
@@ -940,10 +973,15 @@ pub(crate) fn definitions() -> Value {
                  Relative links with no file at their location. Each file under a root has a \
                  status: `unchecked` unless `roots` maps that root to a directory, then \
                  `found` or `missing` by a look at the disk; a file inside an .llb or another \
-                 file counts as found when that file exists. Files that cannot be parsed are \
-                 listed under `unparsed` and are not an error. Formats: `text` (default), \
-                 `json` and `markdown`; the JSON is always returned as structuredContent. \
-                 Read-only. {CACHE_NOTE}"
+                 file counts as found when that file exists, and letter case is ignored. Files \
+                 that cannot be parsed are listed under `unparsed` and are not an error. By \
+                 default (`detail` \"packages\") the answer holds counts: per package the \
+                 number of files, their statuses and the number of files that use them, and \
+                 per link the number of files that hold it. `detail` \"files\" returns what \
+                 `buzzard deps` prints, every file with every file that uses it; that is \
+                 megabytes for a workspace of a thousand files, so narrow `paths` first. \
+                 Formats: `text` (default), `json` and `markdown`; the JSON of the chosen \
+                 detail is always returned as structuredContent. Read-only. {CACHE_NOTE}"
             ),
             json!({
                 "paths": {
@@ -958,6 +996,12 @@ pub(crate) fn definitions() -> Value {
                     "enum": ["text", "json", "markdown"],
                     "default": "text",
                     "description": "Output format.",
+                },
+                "detail": {
+                    "type": "string",
+                    "enum": ["packages", "files"],
+                    "default": "packages",
+                    "description": "`packages`: counts per package and per link. `files`: every file and the files that use it, as `buzzard deps` prints.",
                 },
                 "roots": {
                     "description": "Directories of symbolic roots, to look their files up on disk: an object such as {\"vilib\": \"/opt/labview/vi.lib\"}, or an array of NAME=DIR strings. Names are written without angle brackets and matched without regard to case. Each directory must exist.",

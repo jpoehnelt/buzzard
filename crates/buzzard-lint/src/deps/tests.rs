@@ -172,9 +172,180 @@ fn a_library_ends_the_package_name() {
 fn a_file_directly_under_the_root_is_its_own_package() {
     assert_eq!(package(&parts("lvanlys.dll")), "lvanlys.dll");
     assert_eq!(package(&parts("Top.lvlib")), "Top.lvlib");
-    assert_eq!(package(&[]), ".");
-    // A parent step is shown the way stored paths show it.
-    assert_eq!(package(&parts("/x.vi")), "..");
+}
+
+#[test]
+fn the_package_name_stops_in_front_of_a_component_that_is_not_a_name() {
+    // The bare root, and paths that start with a parent step.
+    assert_eq!(package(&[]), IRREGULAR);
+    assert_eq!(package(&parts("/x.vi")), IRREGULAR);
+    assert_eq!(package(&parts("../x.vi")), IRREGULAR);
+    assert_eq!(package(&parts("./x.vi")), IRREGULAR);
+    assert_eq!(package(&parts("")), IRREGULAR);
+    assert_eq!(package(&["/etc/passwd".to_owned()]), IRREGULAR);
+    assert_eq!(package(&["/etc".to_owned(), "x".to_owned()]), IRREGULAR);
+    // A step further down ends the name where it is.
+    assert_eq!(package(&parts("Utility//q.vi")), "Utility");
+    assert_eq!(package(&parts("Utility/../Utility/q.vi")), "Utility");
+    assert_eq!(
+        package(&parts("addons/Vendor//Product/q.vi")),
+        "addons/Vendor"
+    );
+    assert_eq!(package(&parts("addons//x.llb")), "addons");
+    assert_eq!(package(&["a\\b".to_owned(), "q.vi".to_owned()]), IRREGULAR);
+}
+
+/// Packages by name, each with its targets and their referrers.
+type Listed<'a> = Vec<(&'a str, Vec<(&'a str, &'a [String])>)>;
+
+#[test]
+fn spellings_of_one_file_are_one_target_in_one_package() {
+    let found = report(
+        vec![
+            (
+                at("a.vi"),
+                vi(&[
+                    symbolic("<vilib>/Platform/TimedLoop/x.vi"),
+                    symbolic("<vilib>/platform/TimedLoop/y.vi"),
+                    symbolic("<vilib>/Utility/_JKI_lib.llb/Add.vi"),
+                ]),
+            ),
+            (
+                at("b.vi"),
+                vi(&[
+                    symbolic("<VILIB>/platform/timedloop/X.vi"),
+                    symbolic("<vilib>/Utility/_jki_lib.llb/Add.vi"),
+                    // Two stored paths that print the same.
+                    symbolic("<vilib>//secret.vi"),
+                    symbolic("<vilib>/../secret.vi"),
+                ]),
+            ),
+        ],
+        &Roots::default(),
+    );
+    assert_eq!(found.roots.len(), 1);
+    let listed: Listed<'_> = found.roots[0]
+        .packages
+        .iter()
+        .map(|package| {
+            let targets = package
+                .targets
+                .iter()
+                .map(|t| (t.path.as_str(), t.referrers.as_slice()))
+                .collect();
+            (package.name.as_str(), targets)
+        })
+        .collect();
+    let (a, b) = (at("a.vi"), at("b.vi"));
+    assert_eq!(
+        listed,
+        [
+            (IRREGULAR, vec![("<vilib>/../secret.vi", &[b.clone()][..])]),
+            (
+                // Of the spellings, the one that sorts first is printed.
+                "Platform/TimedLoop",
+                vec![
+                    (
+                        "<vilib>/Platform/TimedLoop/x.vi",
+                        &[a.clone(), b.clone()][..]
+                    ),
+                    ("<vilib>/platform/TimedLoop/y.vi", &[a.clone()][..]),
+                ]
+            ),
+            (
+                "Utility/_JKI_lib.llb",
+                vec![("<vilib>/Utility/_JKI_lib.llb/Add.vi", &[a, b][..])]
+            ),
+        ]
+    );
+    assert_eq!(found.totals().targets, 4);
+}
+
+#[test]
+fn a_location_is_one_link_whether_a_vi_or_a_project_file_stores_it() {
+    let lvlib = r#"<Library LVVersion="23008000">
+        <Item Name="x.vi" Type="VI" URL="/C/Users/me/x.vi"/>
+        <Item Name="y.vi" Type="VI" URL="/home/me/y.vi"/>
+        <Item Name="z.vi" Type="VI" URL="/&lt;vilib&gt;/Utility/z.vi"/>
+        <Item Name="root" Type="VI" URL="/&lt;vilib&gt;"/>
+    </Library>"#;
+    let found = report(
+        vec![
+            (at("L.lvlib"), project(&at("L.lvlib"), lvlib)),
+            (
+                at("a.vi"),
+                vi(&[
+                    LvPath::absolute(&["C", "Users", "me", "x.vi"]),
+                    LvPath::absolute(&["home", "me", "y.vi"]),
+                    symbolic("<vilib>/Utility/z.vi"),
+                    symbolic("<vilib>"),
+                ]),
+            ),
+        ],
+        &Roots::default(),
+    );
+    let both = [at("L.lvlib"), at("a.vi")];
+    let absolute: Vec<(&str, &[String])> = found
+        .absolute
+        .iter()
+        .map(|l| (l.target.as_str(), l.referrers.as_slice()))
+        .collect();
+    assert_eq!(
+        absolute,
+        [
+            ("/home/me/y.vi", &both[..]),
+            ("C:/Users/me/x.vi", &both[..])
+        ]
+    );
+    let targets: Vec<(&str, &str, &[String])> = found.roots[0]
+        .packages
+        .iter()
+        .flat_map(|p| p.targets.iter().map(|t| (p.name.as_str(), t)))
+        .map(|(name, t)| (name, t.path.as_str(), t.referrers.as_slice()))
+        .collect();
+    assert_eq!(
+        targets,
+        [
+            (IRREGULAR, "<vilib>", &both[..]),
+            ("Utility", "<vilib>/Utility/z.vi", &both[..]),
+        ]
+    );
+}
+
+#[test]
+fn member_urls_in_the_shapes_of_a_stored_path_are_listed() {
+    // Not what LabVIEW writes, but what a hand-edited file may hold.
+    let lvproj = r#"<Project Type="Project" LVVersion="23008000">
+        <Item Name="y.vi" Type="VI" URL="C:/Users/me/y.vi"/>
+        <Item Name="z.vi" Type="VI" URL="C:\Users\me\z.vi"/>
+        <Item Name="n.vi" Type="VI" URL="\\server\share\n.vi"/>
+        <Item Name="r.vi" Type="VI" URL="&lt;vilib&gt;/Utility/Real.vi"/>
+        <Item Name="odd.vi" Type="VI" URL="sub/&lt;odd&gt;.vi"/>
+        <Item Name="back.vi" Type="VI" URL="sub\back.vi"/>
+        <Item Name="scheme" Type="VI" URL="http://example.com/a.vi"/>
+        <Item Name="inner" Type="VI" URL="inner.ctl"/>
+    </Project>"#;
+    let found = report(
+        vec![(at("App.lvproj"), project(&at("App.lvproj"), lvproj))],
+        &Roots::default(),
+    );
+    let absolute: Vec<&str> = found.absolute.iter().map(|l| l.target.as_str()).collect();
+    assert_eq!(
+        absolute,
+        [
+            "//server/share/n.vi",
+            "C:/Users/me/y.vi",
+            "C:/Users/me/z.vi"
+        ]
+    );
+    assert_eq!(found.roots.len(), 1);
+    assert_eq!(
+        found.roots[0].packages[0].targets[0].path,
+        "<vilib>/Utility/Real.vi"
+    );
+    assert_eq!(found.totals().targets, 1);
+    // The others have no shape to file them under and are left out.
+    assert_eq!(found.missing, []);
 }
 
 #[test]
@@ -397,7 +568,7 @@ fn project_files_contribute_member_urls_and_parent_links() {
         ]
     );
     let absolute: Vec<&str> = found.absolute.iter().map(|l| l.target.as_str()).collect();
-    assert_eq!(absolute, ["/C/work/pinned.vi", "D:/classes/Far.lvclass"]);
+    assert_eq!(absolute, ["C:/work/pinned.vi", "D:/classes/Far.lvclass"]);
     // `stale.vi` is under `Dependencies`, which rule BZ006 skips too, and
     // `Inner.ctl` is inside the project file.
     let missing: Vec<(&str, &[String])> = found
@@ -513,6 +684,204 @@ fn a_root_with_a_directory_is_looked_up_on_disk() {
     );
     let totals = found.totals();
     assert_eq!((totals.found, totals.missing, totals.unchecked), (4, 2, 3));
+    assert_eq!(found.unused_roots, Vec::<String>::new());
+}
+
+fn statuses(found: &DepsReport) -> Vec<(&str, Status)> {
+    found
+        .roots
+        .iter()
+        .flat_map(|root| &root.packages)
+        .flat_map(|package| &package.targets)
+        .map(|target| (target.path.as_str(), target.status))
+        .collect()
+}
+
+#[test]
+fn a_file_under_another_letter_case_is_found() {
+    let dir = TempDir::new("case");
+    dir.file("vi.lib/Utility/Real.vi");
+    dir.file("vi.lib/addons/_JKI Toolkits/_JKI_lib_State_Machine.llb");
+    dir.file("vi.lib/Platform/TimedLoop/a.vi");
+    let mut roots = Roots::default();
+    roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
+    let found = report(
+        vec![(
+            at("main.vi"),
+            vi(&[
+                symbolic("<vilib>/utility/REAL.vi"),
+                symbolic("<vilib>/Addons/_JKI Toolkits/_jki_lib_state_machine.llb/Add.vi"),
+                symbolic("<vilib>/platform/timedloop/a.vi"),
+                symbolic("<vilib>/platform/timedloop/b.vi"),
+                symbolic("<vilib>/utility/real.vi/inside.ctl"),
+                symbolic("<vilib>/utility/other.vi"),
+            ]),
+        )],
+        &roots,
+    );
+    assert_eq!(
+        statuses(&found),
+        [
+            (
+                "<vilib>/Addons/_JKI Toolkits/_jki_lib_state_machine.llb/Add.vi",
+                Status::Found
+            ),
+            ("<vilib>/platform/timedloop/a.vi", Status::Found),
+            ("<vilib>/platform/timedloop/b.vi", Status::Missing),
+            ("<vilib>/utility/REAL.vi", Status::Found),
+            ("<vilib>/utility/other.vi", Status::Missing),
+            ("<vilib>/utility/real.vi/inside.ctl", Status::Found),
+        ]
+    );
+}
+
+/// `text` as a file saved it in `encoding` and a reader shows it: one
+/// character per byte.
+fn stored_in(encoding: &'static encoding_rs::Encoding, text: &str) -> String {
+    let (bytes, _, lossy) = encoding.encode(text);
+    assert!(!lossy, "{text} is not in the code page");
+    bytes.iter().map(|&b| char::from(b)).collect()
+}
+
+#[test]
+fn a_target_stored_in_a_legacy_code_page_is_found() {
+    let dir = TempDir::new("code-page");
+    dir.file("vi.lib/日本ysis/NI_AALBase.lvlib");
+    dir.file("vi.lib/日本ysis/1siggen.llb");
+    let mut roots = Roots::default();
+    roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
+    let folder = stored_in(encoding_rs::SHIFT_JIS, "日本ysis");
+    let found = report(
+        vec![(
+            at("main.vi"),
+            vi(&[
+                symbolic(&format!("<vilib>/{folder}/NI_AALBase.lvlib")),
+                symbolic(&format!("<vilib>/{folder}/1siggen.llb/Noise.vi")),
+                symbolic(&format!("<vilib>/{folder}/Gone.vi")),
+            ]),
+        )],
+        &roots,
+    );
+    let found: Vec<(&str, Status)> = statuses(&found)
+        .into_iter()
+        .map(|(path, status)| (path.rsplit('/').next().unwrap_or(path), status))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("Gone.vi", Status::Missing),
+            ("NI_AALBase.lvlib", Status::Found),
+            ("Noise.vi", Status::Found),
+        ]
+    );
+}
+
+#[test]
+fn a_relative_link_stored_in_a_legacy_code_page_is_not_missing() {
+    let dir = TempDir::new("code-page-relative");
+    dir.file("lib/日本.vi");
+    let main = text_of(&dir.0.join("main.vi"));
+    let found = report(
+        vec![(
+            main.clone(),
+            vi(&[
+                relative(&format!(
+                    "/lib/{}",
+                    stored_in(encoding_rs::SHIFT_JIS, "日本.vi")
+                )),
+                relative(&format!(
+                    "/lib/{}",
+                    stored_in(encoding_rs::SHIFT_JIS, "東京.vi")
+                )),
+            ]),
+        )],
+        &Roots::default(),
+    );
+    // The first is on disk under its Shift-JIS reading; the second is not
+    // there under any.
+    assert_eq!(found.missing.len(), 1, "{:?}", found.missing);
+    assert_eq!(found.missing[0].referrers, [shown(&main)]);
+}
+
+#[test]
+fn a_path_that_is_not_stored_as_absolute_is_not_looked_up() {
+    let dir = TempDir::new("kinds");
+    dir.file("vi.lib/abs.vi");
+    dir.file("vi.lib/rel.vi");
+    let mut roots = Roots::default();
+    roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
+    let of_kind = |kind: PathKind, name: &str| LvPath {
+        kind,
+        components: vec!["<vilib>".to_owned(), name.to_owned()],
+    };
+    let found = report(
+        vec![(
+            at("main.vi"),
+            vi(&[
+                of_kind(PathKind::Absolute, "abs.vi"),
+                // One target with the link above; the spelling that can be
+                // looked up decides.
+                of_kind(PathKind::Unc, "ABS.vi"),
+                of_kind(PathKind::Relative, "rel.vi"),
+                of_kind(PathKind::NotAPath, "nap.vi"),
+                of_kind(PathKind::Unc, "unc.vi"),
+            ]),
+        )],
+        &roots,
+    );
+    assert_eq!(
+        statuses(&found),
+        [
+            ("<vilib>/ABS.vi", Status::Found),
+            ("<vilib>/nap.vi", Status::Unchecked),
+            ("<vilib>/rel.vi", Status::Unchecked),
+            ("<vilib>/unc.vi", Status::Unchecked),
+        ]
+    );
+}
+
+#[test]
+fn a_root_that_no_link_is_under_is_reported_as_unused() {
+    let dir = TempDir::new("unused");
+    let mut roots = Roots::default();
+    for name in ["vilib", "vi.lib", "userlib"] {
+        roots.add(name, &dir.0).unwrap();
+    }
+    let mut found = report(
+        vec![(at("main.vi"), vi(&[symbolic("<vilib>/Utility/x.vi")]))],
+        &roots,
+    );
+    assert_eq!(found.unused_roots, ["userlib", "vi.lib"]);
+    found.map_paths(|_| "dir".to_owned());
+    let text = to_text(&found);
+    assert!(
+        text.contains(
+            "\nUnused roots (2)\n  userlib: no link is under <userlib>, so its directory was \
+             not used\n  vi.lib: no link is under <vi.lib>, so its directory was not used\n\n\
+             Scanned 1 file"
+        ),
+        "{text}"
+    );
+    assert!(overview_to_text(&found).contains("\nUnused roots (2)\n  userlib: "));
+    for markdown in [to_markdown(&found), overview_to_markdown(&found)] {
+        assert!(
+            markdown.ends_with(
+                "\n## Unused roots\n\n- userlib: no link is under <userlib>, so its directory \
+                 was not used\n- vi.lib: no link is under <vi.lib>, so its directory was not \
+                 used\n"
+            ),
+            "{markdown}"
+        );
+    }
+    let value = serde_json::to_value(&found).unwrap();
+    assert_eq!(
+        value["unused_roots"],
+        serde_json::json!(["userlib", "vi.lib"])
+    );
+    assert_eq!(
+        serde_json::to_value(found.overview()).unwrap()["unused_roots"],
+        value["unused_roots"]
+    );
 }
 
 #[test]
@@ -533,7 +902,16 @@ fn root_specifications_are_checked() {
     }
     let missing = roots.add("vilib", &dir.0.join("nowhere")).unwrap_err();
     assert!(missing.contains("does not exist"), "{missing}");
+    dir.file("a file");
+    let file = roots.add("vilib", &dir.0.join("a file")).unwrap_err();
+    assert!(file.contains("is not a directory"), "{file}");
     roots.add("vilib", &dir.0).unwrap();
+    // The same directory in another spelling is not a second directory,
+    // and the first spelling stays the one that is reported.
+    roots.add("vilib", &dir.0.join(".")).unwrap();
+    fs::create_dir(dir.0.join("sub")).unwrap();
+    roots.add("vilib", &dir.0.join("sub").join("..")).unwrap();
+    assert_eq!(roots.names().collect::<Vec<_>>(), ["vilib"]);
     // The same directory again is fine, under any spelling of the name.
     roots.add("<ViLib>", &dir.0).unwrap();
     fs::create_dir(dir.0.join("other")).unwrap();
@@ -623,6 +1001,7 @@ fn json_has_the_documented_fields_and_leaves_out_an_absent_directory() {
     let keys = |value: &serde_json::Value| -> Vec<String> {
         value.as_object().unwrap().keys().cloned().collect()
     };
+    // `unused_roots` is left out when it is empty.
     assert_eq!(
         keys(&value),
         ["absolute", "files", "missing", "roots", "unparsed"]
@@ -651,7 +1030,11 @@ fn mapping_paths_keeps_stored_paths_and_sorts_again() {
         vec![
             (
                 at("a.vi"),
-                vi(&[symbolic("<vilib>/x/y.vi"), LvPath::sibling("gone.vi")]),
+                vi(&[
+                    symbolic("<vilib>/x/y.vi"),
+                    LvPath::sibling("gone.vi"),
+                    LvPath::sibling("lost.vi"),
+                ]),
             ),
             (at("b.vi"), vi(&[symbolic("<vilib>/x/y.vi")])),
             (at("c.vi"), FileState::Failed("bad".to_owned())),
@@ -667,7 +1050,97 @@ fn mapping_paths_keeps_stored_paths_and_sorts_again() {
     let target = &found.roots[0].packages[0].targets[0];
     assert_eq!(target.path, "<vilib>/x/y.vi");
     assert_eq!(target.referrers, ["24-b.vi", "25-a.vi"]);
-    assert_eq!(found.missing[0].target, "19-gone.vi");
+    let missing: Vec<&str> = found.missing.iter().map(|l| l.target.as_str()).collect();
+    assert_eq!(missing, ["14-lost.vi", "19-gone.vi"]);
     assert_eq!(found.unparsed[0].path, "22-d.vi");
     assert_eq!(found.unparsed[1].path, "23-c.vi");
+}
+
+#[test]
+fn the_overview_counts_what_the_report_lists() {
+    let dir = TempDir::new("overview");
+    dir.file("vi.lib/Utility/error.llb");
+    let mut roots = Roots::default();
+    roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
+    let mut found = report(
+        vec![
+            (
+                at("a.vi"),
+                vi(&[
+                    symbolic("<vilib>/Utility/error.llb/Clear Errors.vi"),
+                    symbolic("<vilib>/Utility/error.llb/Other.vi"),
+                    symbolic("<vilib>/Utility/Gone.vi"),
+                    symbolic("<userlib>/x/y.vi"),
+                    LvPath::absolute(&["C", "far.vi"]),
+                    LvPath::sibling("gone.vi"),
+                ]),
+            ),
+            (
+                at("b.vi"),
+                vi(&[
+                    symbolic("<vilib>/Utility/error.llb/Clear Errors.vi"),
+                    symbolic("<vilib>/Utility//odd.vi"),
+                    LvPath::sibling("gone.vi"),
+                ]),
+            ),
+            (at("bad.vi"), FileState::Failed("short".to_owned())),
+        ],
+        &roots,
+    );
+    found.map_paths(|path| {
+        path.replace(&text_of(&dir.0), "install")
+            .replace(DIR, "ws")
+            .replace('\\', "/")
+    });
+    let overview = found.overview();
+    assert_eq!(
+        serde_json::to_value(&overview).unwrap(),
+        serde_json::json!({
+            "files": 3,
+            "roots": [
+                { "root": "userlib", "packages": [
+                    { "name": "x", "files": 1, "found": 0, "missing": 0, "unchecked": 1, "referrers": 1 },
+                ] },
+                { "root": "vilib", "directory": "install/vi.lib", "packages": [
+                    { "name": "Utility", "files": 2, "found": 0, "missing": 1, "unchecked": 1, "referrers": 2 },
+                    { "name": "Utility/error.llb", "files": 2, "found": 2, "missing": 0, "unchecked": 0, "referrers": 2 },
+                ] },
+            ],
+            "absolute": [{ "target": "C:/far.vi", "referrers": 1 }],
+            "missing": [{ "target": "ws/gone.vi", "referrers": 2 }],
+            "unparsed": [{ "path": "ws/bad.vi", "message": "short" }],
+        })
+    );
+    assert_eq!(
+        overview_to_text(&found),
+        "<userlib> (not checked: no directory was given for root userlib)
+  x: 1 file (1 unchecked), used by 1 file
+
+<vilib> (checked in install/vi.lib: 2 found, 1 missing, 1 unchecked)
+  Utility: 2 files (1 missing, 1 unchecked), used by 2 files
+  Utility/error.llb: 2 files (2 found), used by 2 files
+
+Machine-absolute links (1)
+  C:/far.vi (used by 1 file)
+
+Missing relative links (1)
+  ws/gone.vi (used by 2 files)
+
+Unparsed files (1)
+  ws/bad.vi: cannot analyze file: short
+
+Scanned 3 files: 5 external files in 3 packages under 2 symbolic roots (2 found, 1 missing, 2 \
+         unchecked), 1 machine-absolute link, 1 missing relative link, 1 unparsed file.
+"
+    );
+    let markdown = overview_to_markdown(&found);
+    assert!(markdown.starts_with("# External dependencies\n\nScanned 3 files"));
+    assert!(markdown.contains(
+        "\n## `<vilib>`\n\nChecked in install/vi.lib: 2 found, 1 missing, 1 unchecked.\n\n\
+         | Package | Files | Status | Used by |\n| --- | --- | --- | --- |\n\
+         | `Utility` | 2 | 1 missing, 1 unchecked | 2 files |\n\
+         | `Utility/error.llb` | 2 | 2 found | 2 files |\n"
+    ));
+    assert!(markdown.contains("| `ws/gone.vi` | 2 files |"));
+    assert!(markdown.contains("| `ws/bad.vi` | short |"));
 }

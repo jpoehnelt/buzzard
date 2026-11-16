@@ -52,5 +52,19 @@ pub(crate) fn run(args: &Args) -> Result<String, String> {
     }
     let workspace = Workspace::scan(&args.paths);
     let graph = DependencyGraph::build(&workspace);
-    Ok(render(&deps::scan(&workspace, &graph, &roots), args.format))
+    let report = deps::scan(&workspace, &graph, &roots);
+    // The report says so too; on stderr it is seen whatever reads stdout.
+    let used: Vec<String> = report.roots.iter().map(|r| r.root.clone()).collect();
+    for root in &report.unused_roots {
+        eprintln!(
+            "warning: --root {root}: no link is under <{root}>, so its directory was not used \
+             (roots with links: {})",
+            if used.is_empty() {
+                "none".to_owned()
+            } else {
+                used.join(", ")
+            }
+        );
+    }
+    Ok(render(&report, args.format))
 }

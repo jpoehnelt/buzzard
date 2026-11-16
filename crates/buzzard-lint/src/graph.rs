@@ -73,7 +73,9 @@ static CODE_PAGES: [&Encoding; 8] = [
     encoding_rs::MACINTOSH,
 ];
 
-fn fold(text: &str) -> String {
+/// Text without its letter case, for comparing names of file systems that
+/// ignore case.
+pub(crate) fn fold(text: &str) -> String {
     text.to_lowercase()
 }
 
@@ -288,6 +290,21 @@ pub fn candidate_paths(from: &Path, link: &LvPath, name: Option<&str>) -> Vec<Pa
         }
     }
     out
+}
+
+/// The readings of path components under the legacy code pages the graph
+/// tries, without the components as stored. Empty unless a component
+/// looks like undecoded code page bytes.
+pub(crate) fn code_page_readings(components: &[String]) -> Vec<Vec<String>> {
+    let link = LvPath {
+        kind: PathKind::Absolute,
+        components: components.to_vec(),
+    };
+    recode(&link, None)
+        .into_iter()
+        .map(|(reading, _)| reading.components)
+        .filter(|reading| reading != components)
+        .collect()
 }
 
 /// Every file of a workspace and the edges between them.

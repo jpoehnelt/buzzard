@@ -19,6 +19,10 @@
 //!
 //! Nothing is reported as present or absent without a look at the disk: a
 //! target under a root that was given no directory is [`Status::Unchecked`].
+//!
+//! Stored paths that differ only in letter case, or that print the same,
+//! are one target: links are saved on file systems that ignore case, and
+//! the same file is stored in several spellings.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -27,7 +31,7 @@ use std::path::{Component, Path, PathBuf};
 use buzzard_rsrc::{LvPath, PathKind};
 use serde::Serialize;
 
-use crate::graph::{candidate_paths, resolve, DependencyGraph};
+use crate::graph::{candidate_paths, code_page_readings, fold, resolve, DependencyGraph};
 use crate::rules::member_is_missing;
 use crate::workspace::{normalize, FileState, Workspace};
 
@@ -38,6 +42,9 @@ const PACKAGE_DEPTH: usize = 2;
 const ADDONS: &str = "addons";
 /// The depth of a package under [`ADDONS`].
 const ADDONS_DEPTH: usize = 3;
+/// The package of a stored path that has no plain directory or file name
+/// to name one: a bare root, or a path that starts with a parent step.
+pub const IRREGULAR: &str = "(irregular path)";
 
 /// Whether a target under a symbolic root is on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -91,8 +98,9 @@ impl Roots {
     /// # Errors
     ///
     /// When the name is empty or holds anything but letters, digits, `_`,
-    /// `-` and `.`; when `dir` is not an existing directory; or when the
-    /// root was already given another directory.
+    /// `-` and `.`; when `dir` does not exist or is not a directory; or
+    /// when the root was already given another directory. The same
+    /// directory in another spelling (`src` and `./src`) is not another.
     pub fn add(&mut self, name: &str, dir: &Path) -> Result<(), String> {
         let trimmed = name.trim();
         let bare = trimmed
@@ -109,23 +117,36 @@ impl Roots {
             ));
         }
         if !dir.is_dir() {
+            let problem = if dir.exists() {
+                "is not a directory"
+            } else {
+                "does not exist"
+            };
             return Err(format!(
-                "the directory given for root {bare} does not exist: {}",
+                "the directory given for root {bare} {problem}: {}",
                 dir.display()
             ));
         }
         let key = bare.to_lowercase();
         match self.map.get(&key) {
-            Some(known) if known != dir => Err(format!(
+            Some(known) if !same_directory(known, dir) => Err(format!(
                 "root {bare} was given two directories: {} and {}",
                 known.display(),
                 dir.display()
             )),
-            _ => {
+            // The first spelling of a directory is the one reported.
+            Some(_) => Ok(()),
+            None => {
                 self.map.insert(key, dir.to_path_buf());
                 Ok(())
             }
         }
+    }
+
+    /// The names of the roots that were given a directory, in lowercase
+    /// and sorted.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.map.keys().map(String::as_str)
     }
 
     fn get(&self, root: &str) -> Option<&Path> {
@@ -147,6 +168,10 @@ pub struct DepsReport {
     pub missing: Vec<Link>,
     /// Files that could not be read or parsed. Their links are unknown.
     pub unparsed: Vec<Unparsed>,
+    /// The roots that were given a directory although no link is under
+    /// them, in lowercase and sorted: the directory was not used.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unused_roots: Vec<String>,
 }
 
 /// Everything linked under one symbolic root.
@@ -174,6 +199,8 @@ pub struct Package {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Target {
     /// The stored path, e.g. `<vilib>/Utility/error.llb/Clear Errors.vi`.
+    /// Of stored paths that differ only in letter case, the one that
+    /// sorts first.
     pub path: String,
     /// Whether the file is in the directory given for its root.
     pub status: Status,
@@ -289,40 +316,52 @@ impl Totals {
 ///    `.lvlib` or `.lvclass`. `Utility/error.llb/x.vi` and a link to
 ///    `Utility/error.llb` itself are both in `Utility/error.llb`.
 /// 4. A file directly below the root is its own package.
+/// 5. The name stops in front of a component that is not a plain name: a
+///    parent step (stored as an empty component, or `.` or `..` in a
+///    member URL) or text with a path separator. A path with no plain name
+///    to start from, such as the bare root, is in [`IRREGULAR`].
 ///
-/// Letter case is kept as stored. An empty path gives `.`.
+/// Letter case is kept as stored; [`scan`] groups packages whose names
+/// differ only in case.
 pub fn package(components: &[String]) -> String {
     let Some((file, directories)) = components.split_last() else {
-        return ".".to_owned();
+        return IRREGULAR.to_owned();
     };
-    if directories.is_empty() {
-        return shown(file).to_owned();
-    }
-    let depth = if directories[0].eq_ignore_ascii_case(ADDONS) {
+    let depth = if directories
+        .first()
+        .is_some_and(|first| first.eq_ignore_ascii_case(ADDONS))
+    {
         ADDONS_DEPTH
     } else {
         PACKAGE_DEPTH
     };
     let mut name: Vec<&str> = Vec::new();
+    let mut cut = false;
     for directory in directories.iter().take(depth) {
-        name.push(shown(directory));
+        if !is_plain(directory) {
+            cut = true;
+            break;
+        }
+        name.push(directory);
         if has_extension(directory, &["llb", "lvlibp", "lvlib", "lvclass"]) {
             return name.join("/");
         }
     }
-    if name.len() < depth && is_file_container(file) {
-        name.push(shown(file));
+    let file_ends_it = directories.is_empty() || is_file_container(file);
+    if !cut && name.len() < depth && file_ends_it && is_plain(file) {
+        name.push(file);
     }
-    name.join("/")
+    if name.is_empty() {
+        IRREGULAR.to_owned()
+    } else {
+        name.join("/")
+    }
 }
 
-/// An empty component is a step to the parent directory.
-fn shown(component: &str) -> &str {
-    if component.is_empty() {
-        ".."
-    } else {
-        component
-    }
+/// True for a component that is the name of one file or directory: not
+/// empty, not a step (`.`, `..`) and without a path separator.
+fn is_plain(component: &str) -> bool {
+    !matches!(component, "" | "." | "..") && !component.contains(['/', '\\', '\0'])
 }
 
 fn has_extension(name: &str, extensions: &[&str]) -> bool {
@@ -346,25 +385,60 @@ fn on_disk(path: &Path) -> bool {
     path.exists() || path.ancestors().skip(1).any(Path::is_file)
 }
 
+/// Whether `components` name something below `directory`. A name that
+/// is not there as written is looked for without regard to letter case:
+/// links are saved on file systems that ignore case, and are stored in
+/// more than one spelling. As in [`on_disk`], a path that leads into a
+/// file counts when that file exists.
+fn below(directory: &Path, components: &[String]) -> bool {
+    let Some((first, rest)) = components.split_first() else {
+        return true;
+    };
+    let reaches = |path: &Path| path.is_file() || (path.is_dir() && below(path, rest));
+    if reaches(&directory.join(first)) {
+        return true;
+    }
+    let wanted = fold(first);
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return false;
+    };
+    entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name())
+        .filter(|name| {
+            let name = name.to_string_lossy();
+            name != first.as_str() && fold(&name) == wanted
+        })
+        .any(|name| reaches(&directory.join(name)))
+}
+
 /// Look for a stored path below the directory given for its root.
-fn status_under(directory: Option<&Path>, components: &[String]) -> Status {
+/// `components` is the path without its root.
+///
+/// The path is looked for as stored and then, like a relative link, under
+/// each legacy code page its text may be the bytes of.
+fn status_under(directory: Option<&Path>, kind: PathKind, components: &[String]) -> Status {
     let Some(directory) = directory else {
         return Status::Unchecked;
     };
     // Only plain names are joined to the directory: a parent step, a
-    // separator or a drive in a stored component would leave it.
+    // separator or a drive in a stored component would leave it. A path
+    // that is not stored as absolute is not one of the installation.
     let plain = |component: &String| {
         let mut parts = Path::new(component).components();
-        matches!(parts.next(), Some(Component::Normal(_)))
+        is_plain(component)
+            && matches!(parts.next(), Some(Component::Normal(_)))
             && parts.next().is_none()
-            && !component.contains(['/', '\0'])
     };
-    if components.is_empty() || !components.iter().all(plain) {
+    let checkable = |components: &[String]| !components.is_empty() && components.iter().all(plain);
+    if kind != PathKind::Absolute || !checkable(components) {
         return Status::Unchecked;
     }
-    let mut path = directory.to_path_buf();
-    path.extend(components);
-    if on_disk(&path) {
+    let found = below(directory, components)
+        || code_page_readings(components)
+            .iter()
+            .any(|reading| checkable(reading) && below(directory, reading));
+    if found {
         Status::Found
     } else {
         Status::Missing
@@ -388,15 +462,35 @@ fn stored(root: &str, components: &[String]) -> String {
     .to_string()
 }
 
+/// Whether two existing directories are one, however they are spelled.
+fn same_directory(a: &Path, b: &Path) -> bool {
+    a == b
+        || match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+}
+
 fn text_of(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// A target under a symbolic root, as it is collected.
+#[derive(Default)]
+struct Stored {
+    /// Every spelling the target is stored in: the components below the
+    /// root and the kind of the path.
+    spellings: BTreeSet<(Vec<String>, PathKind)>,
+    referrers: BTreeSet<String>,
 }
 
 /// Referrers by target, as they are collected.
 #[derive(Default)]
 struct Collected {
-    /// Root name and the components below it.
-    symbolic: BTreeMap<(String, Vec<String>), BTreeSet<String>>,
+    /// By root name and the stored path without its letter case, so that
+    /// spellings of one file, and paths that print the same, are one
+    /// target.
+    symbolic: BTreeMap<(String, String), Stored>,
     absolute: BTreeMap<String, BTreeSet<String>>,
     missing: BTreeMap<String, BTreeSet<String>>,
 }
@@ -407,10 +501,11 @@ impl Collected {
     /// either.
     fn stored_link(&mut self, referrer: &str, link: &LvPath) -> bool {
         if let Some(root) = link.symbolic_root().and_then(root_name) {
-            self.symbolic
-                .entry((root, link.components[1..].to_vec()))
-                .or_default()
-                .insert(referrer.to_owned());
+            let components = &link.components[1..];
+            let key = fold(&stored(&root, components));
+            let target = self.symbolic.entry((root, key)).or_default();
+            target.spellings.insert((components.to_vec(), link.kind));
+            target.referrers.insert(referrer.to_owned());
             true
         } else if link.is_machine_absolute() {
             self.absolute
@@ -452,29 +547,36 @@ impl Collected {
             .insert(text_of(referrer));
     }
 
-    /// File a member URL that starts with `/`: an installation path such
-    /// as `/<vilib>/...` or a path of one machine.
-    fn rooted_url(&mut self, referrer: &str, url: &str) {
-        let components: Vec<String> = url
-            .split('/')
+    /// File a member URL that the project parser does not resolve to a
+    /// path beside the project file, when it has one of the shapes of a
+    /// stored path: `/<vilib>/...` or `/C/Users/...` as LabVIEW writes
+    /// them, or `<vilib>/...`, `C:/...`, `C:\...` and `\\server\...` as a
+    /// hand-edited file may hold them. It is filed like the same path
+    /// stored in a binary file, so that both give one target.
+    fn unresolved_url(&mut self, referrer: &str, url: &str) {
+        let mut components: Vec<String> = url
+            .split(['/', '\\'])
             .filter(|segment| !segment.is_empty())
             .map(str::to_owned)
             .collect();
-        match components.first().and_then(|first| root_name(first)) {
-            Some(root) => {
-                self.symbolic
-                    .entry((root, components[1..].to_vec()))
-                    .or_default()
-                    .insert(referrer.to_owned());
-            }
-            None if !components.is_empty() => {
-                self.absolute
-                    .entry(url.to_owned())
-                    .or_default()
-                    .insert(referrer.to_owned());
-            }
-            None => {}
+        let Some(first) = components.first_mut() else {
+            return;
+        };
+        let rooted = url.starts_with('/');
+        let unc = url.starts_with("\\\\");
+        let drive = !rooted && first.len() == 2 && first.ends_with(':');
+        if drive {
+            first.pop();
         }
+        if !(rooted || unc || drive || root_name(first).is_some()) {
+            return;
+        }
+        let kind = if unc {
+            PathKind::Unc
+        } else {
+            PathKind::Absolute
+        };
+        self.stored_link(referrer, &LvPath { kind, components });
     }
 }
 
@@ -486,6 +588,70 @@ fn links(collected: BTreeMap<String, BTreeSet<String>>) -> Vec<Link> {
             referrers: referrers.into_iter().collect(),
         })
         .collect()
+}
+
+/// The packages of one root by name without its letter case: the
+/// spellings of the name and the targets.
+type Packages = BTreeMap<String, (BTreeSet<String>, Vec<Target>)>;
+
+/// Group the collected targets by root and package, with their statuses.
+/// Also returns the roots that were given a directory and have no target.
+fn grouped(
+    symbolic: BTreeMap<(String, String), Stored>,
+    roots: &Roots,
+) -> (Vec<Root>, Vec<String>) {
+    let mut by_root: BTreeMap<String, Packages> = BTreeMap::new();
+    for ((root, _), target) in symbolic {
+        let directory = roots.get(&root);
+        let status = target
+            .spellings
+            .iter()
+            .map(|(components, kind)| status_under(directory, *kind, components))
+            .min()
+            .unwrap_or(Status::Unchecked);
+        let Some((components, _)) = target.spellings.first() else {
+            continue;
+        };
+        let name = package(components);
+        let (names, targets) = by_root
+            .entry(root.clone())
+            .or_default()
+            .entry(fold(&name))
+            .or_default();
+        names.insert(name);
+        targets.push(Target {
+            path: stored(&root, components),
+            status,
+            referrers: target.referrers.into_iter().collect(),
+        });
+    }
+    let unused_roots = roots
+        .names()
+        .filter(|name| !by_root.contains_key(*name))
+        .map(str::to_owned)
+        .collect();
+    let listed = by_root
+        .into_iter()
+        .map(|(root, packages)| {
+            let mut packages: Vec<Package> = packages
+                .into_values()
+                .map(|(names, mut targets)| {
+                    targets.sort_by(|a, b| a.path.cmp(&b.path));
+                    Package {
+                        name: names.into_iter().next().unwrap_or_default(),
+                        targets,
+                    }
+                })
+                .collect();
+            packages.sort_by(|a, b| a.name.cmp(&b.name));
+            Root {
+                directory: roots.get(&root).map(text_of),
+                root,
+                packages,
+            }
+        })
+        .collect();
+    (listed, unused_roots)
 }
 
 /// Collect the external dependencies of every file of `workspace`.
@@ -511,8 +677,8 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
             }
             FileState::Project(project) => {
                 for member in &project.members {
-                    if member.url.starts_with('/') {
-                        collected.rooted_url(&referrer, &member.url);
+                    if member.path.is_none() {
+                        collected.unresolved_url(&referrer, &member.url);
                     } else if !member.dependency && member_is_missing(workspace, member) {
                         // The members rule `BZ006` reports, by its test.
                         let target = member.path.as_deref().map_or_else(String::new, text_of);
@@ -534,40 +700,14 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
         }
     }
 
-    let mut by_root: BTreeMap<String, BTreeMap<String, Vec<Target>>> = BTreeMap::new();
-    for ((root, components), referrers) in collected.symbolic {
-        let target = Target {
-            path: stored(&root, &components),
-            status: status_under(roots.get(&root), &components),
-            referrers: referrers.into_iter().collect(),
-        };
-        by_root
-            .entry(root)
-            .or_default()
-            .entry(package(&components))
-            .or_default()
-            .push(target);
-    }
-    let roots = by_root
-        .into_iter()
-        .map(|(root, packages)| Root {
-            directory: roots.get(&root).map(text_of),
-            root,
-            packages: packages
-                .into_iter()
-                .map(|(name, mut targets)| {
-                    targets.sort_by(|a, b| a.path.cmp(&b.path));
-                    Package { name, targets }
-                })
-                .collect(),
-        })
-        .collect();
+    let (roots, unused_roots) = grouped(collected.symbolic, roots);
     DepsReport {
         files: workspace.files().len(),
         roots,
         absolute: links(collected.absolute),
         missing: links(collected.missing),
         unparsed,
+        unused_roots,
     }
 }
 
@@ -685,20 +825,46 @@ pub fn to_text(report: &DepsReport) -> String {
     };
     section("Machine-absolute links", &report.absolute);
     section("Missing relative links", &report.missing);
-    if !report.unparsed.is_empty() {
-        let _ = writeln!(out, "Unparsed files ({})", report.unparsed.len());
-        for file in &report.unparsed {
-            let _ = writeln!(
-                out,
-                "  {}: cannot analyze file: {}",
-                clean(&file.path),
-                clean(&file.message)
-            );
+    text_unparsed(&mut out, report);
+    text_tail(&mut out, report);
+    out
+}
+
+fn text_unparsed(out: &mut String, report: &DepsReport) {
+    if report.unparsed.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "Unparsed files ({})", report.unparsed.len());
+    for file in &report.unparsed {
+        let _ = writeln!(
+            out,
+            "  {}: cannot analyze file: {}",
+            clean(&file.path),
+            clean(&file.message)
+        );
+    }
+    out.push('\n');
+}
+
+/// What no link is under, in words.
+fn unused(root: &str) -> String {
+    format!(
+        "{}: no link is under <{}>, so its directory was not used",
+        clean(root),
+        clean(root)
+    )
+}
+
+/// The end of both text reports: unparsed files, unused roots, summary.
+fn text_tail(out: &mut String, report: &DepsReport) {
+    if !report.unused_roots.is_empty() {
+        let _ = writeln!(out, "Unused roots ({})", report.unused_roots.len());
+        for root in &report.unused_roots {
+            let _ = writeln!(out, "  {}", unused(root));
         }
         out.push('\n');
     }
     let _ = writeln!(out, "{}", summary_line(report));
-    out
 }
 
 /// The report as Markdown.
@@ -714,16 +880,7 @@ pub fn to_markdown(report: &DepsReport) -> String {
     let _ = writeln!(out, "{}", summary_line(report));
     for root in &report.roots {
         let _ = writeln!(out, "\n## {}\n", code(&format!("<{}>", root.root)));
-        let checked = checked(root);
-        let mut sentence = checked.chars();
-        let first = sentence.next().map(|c| c.to_ascii_uppercase());
-        let rest: String = sentence.collect();
-        let _ = writeln!(
-            out,
-            "{}{}.",
-            first.map(String::from).unwrap_or_default(),
-            rest.replace(['|', '`'], " ")
-        );
+        let _ = writeln!(out, "{}", checked_sentence(root));
         let _ = writeln!(
             out,
             "\n| Package | File | Status | Used by |\n| --- | --- | --- | --- |"
@@ -757,20 +914,257 @@ pub fn to_markdown(report: &DepsReport) -> String {
     };
     section("Machine-absolute links", "Stored path", &report.absolute);
     section("Missing relative links", "Location", &report.missing);
-    if !report.unparsed.is_empty() {
+    markdown_unparsed(&mut out, report);
+    markdown_unused(&mut out, report);
+    out
+}
+
+fn markdown_unparsed(out: &mut String, report: &DepsReport) {
+    if report.unparsed.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "\n## Unparsed files\n\n| File | Reason |\n| --- | --- |"
+    );
+    for file in &report.unparsed {
         let _ = writeln!(
             out,
-            "\n## Unparsed files\n\n| File | Reason |\n| --- | --- |"
+            "| {} | {} |",
+            code(&file.path),
+            clean(&file.message).replace(['|', '`'], " ")
         );
-        for file in &report.unparsed {
+    }
+}
+
+/// [`checked`] as a sentence of a Markdown paragraph.
+fn checked_sentence(root: &Root) -> String {
+    let checked = checked(root);
+    let mut sentence = checked.chars();
+    let first = sentence.next().map(|c| c.to_ascii_uppercase());
+    let rest: String = sentence.collect();
+    format!(
+        "{}{}.",
+        first.map(String::from).unwrap_or_default(),
+        rest.replace(['|', '`'], " ")
+    )
+}
+
+fn markdown_unused(out: &mut String, report: &DepsReport) {
+    if report.unused_roots.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "\n## Unused roots\n");
+    for root in &report.unused_roots {
+        let _ = writeln!(out, "- {}", unused(root).replace(['|', '`'], " "));
+    }
+}
+
+/// A report without its files: each package with counts, each link with
+/// the number of files that use it. Its size follows the number of
+/// packages, not the number of links, so it suits a reader with little
+/// room. See [`DepsReport::overview`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Overview {
+    /// Number of files that were scanned, parsed or not.
+    pub files: usize,
+    /// The symbolic roots that links start with, sorted by name.
+    pub roots: Vec<RootOverview>,
+    /// Machine-absolute links, sorted by target.
+    pub absolute: Vec<LinkOverview>,
+    /// Relative links without a file at their location, sorted by target.
+    pub missing: Vec<LinkOverview>,
+    /// Files that could not be read or parsed.
+    pub unparsed: Vec<Unparsed>,
+    /// As [`DepsReport::unused_roots`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unused_roots: Vec<String>,
+}
+
+/// The packages under one symbolic root, with counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RootOverview {
+    /// As [`Root::root`].
+    pub root: String,
+    /// As [`Root::directory`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    /// The packages under the root, sorted by name.
+    pub packages: Vec<PackageOverview>,
+}
+
+/// One package, with counts in place of its files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PackageOverview {
+    /// As [`Package::name`].
+    pub name: String,
+    /// Number of files linked in the package.
+    pub files: usize,
+    /// How many of them are [`Status::Found`].
+    pub found: usize,
+    /// How many of them are [`Status::Missing`].
+    pub missing: usize,
+    /// How many of them are [`Status::Unchecked`].
+    pub unchecked: usize,
+    /// Number of workspace files that link into the package.
+    pub referrers: usize,
+}
+
+/// One link target, with the number of files that use it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LinkOverview {
+    /// As [`Link::target`].
+    pub target: String,
+    /// Number of workspace files that hold the link.
+    pub referrers: usize,
+}
+
+impl DepsReport {
+    /// The report with counts in place of files and referrers.
+    pub fn overview(&self) -> Overview {
+        let links = |links: &[Link]| {
+            links
+                .iter()
+                .map(|link| LinkOverview {
+                    target: link.target.clone(),
+                    referrers: link.referrers.len(),
+                })
+                .collect()
+        };
+        let package = |package: &Package| {
+            let count = |status: Status| {
+                package
+                    .targets
+                    .iter()
+                    .filter(|t| t.status == status)
+                    .count()
+            };
+            let referrers: BTreeSet<&String> =
+                package.targets.iter().flat_map(|t| &t.referrers).collect();
+            PackageOverview {
+                name: package.name.clone(),
+                files: package.targets.len(),
+                found: count(Status::Found),
+                missing: count(Status::Missing),
+                unchecked: count(Status::Unchecked),
+                referrers: referrers.len(),
+            }
+        };
+        Overview {
+            files: self.files,
+            roots: self
+                .roots
+                .iter()
+                .map(|root| RootOverview {
+                    root: root.root.clone(),
+                    directory: root.directory.clone(),
+                    packages: root.packages.iter().map(package).collect(),
+                })
+                .collect(),
+            absolute: links(&self.absolute),
+            missing: links(&self.missing),
+            unparsed: self.unparsed.clone(),
+            unused_roots: self.unused_roots.clone(),
+        }
+    }
+}
+
+/// The statuses of a package's files, in words: `2 found, 1 missing`.
+fn statuses(package: &PackageOverview) -> String {
+    [
+        (package.found, Status::Found),
+        (package.missing, Status::Missing),
+        (package.unchecked, Status::Unchecked),
+    ]
+    .iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, status)| format!("{count} {}", status.as_str()))
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
+/// The overview of a report as plain text: one line per package and per
+/// link, and the summary line of [`to_text`].
+pub fn overview_to_text(report: &DepsReport) -> String {
+    let overview = report.overview();
+    let mut out = String::new();
+    for (root, counted) in report.roots.iter().zip(&overview.roots) {
+        let _ = writeln!(out, "<{}> ({})", clean(&root.root), checked(root));
+        for package in &counted.packages {
             let _ = writeln!(
                 out,
-                "| {} | {} |",
-                code(&file.path),
-                clean(&file.message).replace(['|', '`'], " ")
+                "  {}: {} ({}), used by {}",
+                clean(&package.name),
+                plural(package.files, "file", "files"),
+                statuses(package),
+                plural(package.referrers, "file", "files")
+            );
+        }
+        out.push('\n');
+    }
+    let mut section = |title: &str, links: &[LinkOverview]| {
+        if links.is_empty() {
+            return;
+        }
+        let _ = writeln!(out, "{title} ({})", links.len());
+        for link in links {
+            let _ = writeln!(
+                out,
+                "  {} (used by {})",
+                clean(&link.target),
+                plural(link.referrers, "file", "files")
+            );
+        }
+        out.push('\n');
+    };
+    section("Machine-absolute links", &overview.absolute);
+    section("Missing relative links", &overview.missing);
+    text_unparsed(&mut out, report);
+    text_tail(&mut out, report);
+    out
+}
+
+/// The overview of a report as Markdown.
+pub fn overview_to_markdown(report: &DepsReport) -> String {
+    let overview = report.overview();
+    let mut out = String::from("# External dependencies\n\n");
+    let _ = writeln!(out, "{}", summary_line(report));
+    for (root, counted) in report.roots.iter().zip(&overview.roots) {
+        let _ = writeln!(out, "\n## {}\n", code(&format!("<{}>", root.root)));
+        let _ = writeln!(out, "{}", checked_sentence(root));
+        let _ = writeln!(
+            out,
+            "\n| Package | Files | Status | Used by |\n| --- | --- | --- | --- |"
+        );
+        for package in &counted.packages {
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} |",
+                code(&package.name),
+                package.files,
+                statuses(package),
+                plural(package.referrers, "file", "files")
             );
         }
     }
+    let mut section = |title: &str, column: &str, links: &[LinkOverview]| {
+        if links.is_empty() {
+            return;
+        }
+        let _ = writeln!(out, "\n## {title}\n\n| {column} | Used by |\n| --- | --- |");
+        for link in links {
+            let _ = writeln!(
+                out,
+                "| {} | {} |",
+                code(&link.target),
+                plural(link.referrers, "file", "files")
+            );
+        }
+    };
+    section("Machine-absolute links", "Stored path", &overview.absolute);
+    section("Missing relative links", "Location", &overview.missing);
+    markdown_unparsed(&mut out, report);
+    markdown_unused(&mut out, report);
     out
 }
 

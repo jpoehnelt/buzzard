@@ -1344,7 +1344,10 @@ fn linked_workspace(name: &str) -> TempDir {
 fn deps_lists_external_dependencies_like_the_command_line() {
     let dir = linked_workspace("deps");
     let mut session = Session::new(dir.0.clone());
-    let (text, structured) = session.ok("buzzard_deps", json!({ "paths": ["ws"] }));
+    let (text, structured) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "detail": "files" }),
+    );
     assert_eq!(
         text,
         "<userlib> (not checked: no directory was given for root userlib)
@@ -1398,7 +1401,7 @@ Scanned 3 files: 3 external files in 3 packages under 2 symbolic roots (0 found,
     };
     let (json_text, by_object) = session.ok(
         "buzzard_deps",
-        json!({ "paths": ["ws"], "format": "json", "roots": { "VILIB": "install/vi.lib" } }),
+        json!({ "paths": ["ws"], "detail": "files", "format": "json", "roots": { "VILIB": "install/vi.lib" } }),
     );
     assert_eq!(statuses(&by_object), ["unchecked", "missing", "found"]);
     assert_eq!(by_object["roots"][1]["directory"], "install/vi.lib");
@@ -1408,7 +1411,7 @@ Scanned 3 files: 3 external files in 3 packages under 2 symbolic roots (0 found,
     );
     let (markdown, by_list) = session.ok(
         "buzzard_deps",
-        json!({ "paths": ["ws"], "format": "markdown", "roots": ["vilib=install/vi.lib"] }),
+        json!({ "paths": ["ws"], "detail": "files", "format": "markdown", "roots": ["vilib=install/vi.lib"] }),
     );
     assert_eq!(by_list, by_object);
     assert!(markdown.starts_with("# External dependencies\n"));
@@ -1417,15 +1420,110 @@ Scanned 3 files: 3 external files in 3 packages under 2 symbolic roots (0 found,
         .contains("| `Utility/error.llb` | `<vilib>/Utility/error.llb/Clear Errors.vi` | found | `ws/main.vi` |"));
 
     // The answer is the same every time, and follows the disk.
-    let again = session.ok("buzzard_deps", json!({ "paths": ["ws"] }));
+    let again = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "detail": "files" }),
+    );
     assert_eq!(again, (text, structured));
     fs::write(
         dir.0.join("ws/removed.vi"),
         fs::read(dir.0.join("ws/helper.vi")).unwrap(),
     )
     .unwrap();
-    let (_, after) = session.ok("buzzard_deps", json!({ "paths": ["ws"] }));
+    let (_, after) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "detail": "files" }),
+    );
     assert_eq!(after["missing"], json!([]));
+}
+
+#[test]
+fn deps_answers_with_counts_unless_asked_for_files() {
+    let dir = linked_workspace("deps-overview");
+    // Many files with the same links: the full report grows with every
+    // one of them, the default answer does not.
+    let main = fs::read(dir.0.join("ws/main.vi")).unwrap();
+    for i in 0..40 {
+        fs::write(dir.0.join(format!("ws/copy-{i:02}.vi")), &main).unwrap();
+    }
+    let mut session = Session::new(dir.0.clone());
+    let (text, structured) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "roots": { "vilib": "install/vi.lib", "instrlib": "install" } }),
+    );
+    assert_eq!(
+        text,
+        "<userlib> (not checked: no directory was given for root userlib)
+  _OpenG.lib/error: 1 file (1 unchecked), used by 41 files
+
+<vilib> (checked in install/vi.lib: 1 found, 1 missing)
+  Utility: 1 file (1 missing), used by 41 files
+  Utility/error.llb: 1 file (1 found), used by 41 files
+
+Machine-absolute links (1)
+  C:/Users/me/Scratch.vi (used by 41 files)
+
+Missing relative links (1)
+  ws/removed.vi (used by 41 files)
+
+Unparsed files (1)
+  ws/broken.vi: cannot analyze file: file is too small to be an RSRC container (4 bytes)
+
+Unused roots (1)
+  instrlib: no link is under <instrlib>, so its directory was not used
+
+Scanned 43 files: 3 external files in 3 packages under 2 symbolic roots (1 found, 1 missing, 1 \
+         unchecked), 1 machine-absolute link, 1 missing relative link, 1 unparsed file.
+Counts only. Call again with `detail: \"files\"`, and narrower `paths` in a large workspace, \
+         for each file and the files that use it.
+"
+    );
+    assert_eq!(
+        structured["roots"][1],
+        json!({
+            "root": "vilib",
+            "directory": "install/vi.lib",
+            "packages": [
+                { "name": "Utility", "files": 1, "found": 0, "missing": 1, "unchecked": 0, "referrers": 41 },
+                { "name": "Utility/error.llb", "files": 1, "found": 1, "missing": 0, "unchecked": 0, "referrers": 41 },
+            ],
+        })
+    );
+    assert_eq!(
+        structured["missing"],
+        json!([{ "target": "ws/removed.vi", "referrers": 41 }])
+    );
+    assert_eq!(structured["unused_roots"], json!(["instrlib"]));
+    // `packages` is the default, and the other formats count too.
+    let explicit = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "detail": "packages", "roots": ["vilib=install/vi.lib", "instrlib=install"] }),
+    );
+    assert_eq!(explicit, (text.clone(), structured.clone()));
+    let (json_text, counted) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "format": "json", "roots": { "vilib": "install/vi.lib", "instrlib": "install" } }),
+    );
+    assert_eq!(counted, structured);
+    assert_eq!(serde_json::from_str::<Value>(&json_text).unwrap(), counted);
+    let (markdown, _) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "format": "markdown" }),
+    );
+    assert!(markdown.contains("| `Utility/error.llb` | 1 | 1 unchecked | 41 files |"));
+    assert!(markdown.ends_with("for each file and the files that use it.\n"));
+    // The full report names every referrer and is several times as long.
+    let (full, files) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "detail": "files" }),
+    );
+    assert!(full.contains("      used by ws/copy-39.vi\n"));
+    assert_eq!(
+        files["missing"][0]["referrers"].as_array().unwrap().len(),
+        41
+    );
+    assert!(full.len() > 4 * text.len(), "{} {}", full.len(), text.len());
+    assert!(!text.contains("copy-"));
 }
 
 #[test]
@@ -1446,6 +1544,11 @@ fn deps_checks_its_arguments() {
             json!({ "paths": ["ws"], "limit": 3 }),
             "unknown argument `limit`",
         ),
+        (
+            json!({ "paths": ["ws"], "detail": "all" }),
+            "argument `detail` must be one of: packages, files",
+        ),
+        (json!({ "paths": ["ws"], "detail": 1 }), "argument `detail`"),
         (
             json!({ "paths": ["ws"], "roots": "vilib=install" }),
             "argument `roots` must be an object",

@@ -322,7 +322,7 @@ fn errors_exit_with_status_two() {
     fails(&["deps", "--root", "vilib=nowhere"], "does not exist");
     fails(
         &["deps", "--root", "vilib=App.lvproj"],
-        "does not exist: App.lvproj",
+        "is not a directory: App.lvproj",
     );
     fs::create_dir(dir.0.join("other")).unwrap();
     fails(
@@ -330,6 +330,102 @@ fn errors_exit_with_status_two() {
         "two directories",
     );
     fails(&["deps", "--format", "sarif"], "invalid value");
+}
+
+#[test]
+fn a_root_may_be_repeated_in_another_spelling_of_its_directory() {
+    let dir = project("deps-root-twice");
+    let once = deps(&[".", "--root", "vilib=src"], &dir.0);
+    let twice = deps(
+        &[".", "--root", "vilib=src", "--root", "<VILIB>=./src"],
+        &dir.0,
+    );
+    assert_eq!(once, twice);
+    assert!(once.contains("<vilib> (checked in src: 0 found, 4 missing)"));
+}
+
+#[test]
+fn a_root_that_no_link_uses_is_reported_and_the_status_stays_zero() {
+    let dir = project("deps-root-unused");
+    for format in ["text", "json", "markdown"] {
+        let args = [
+            "deps",
+            ".",
+            "--format",
+            format,
+            "--root",
+            "vi.lib=src",
+            "--root",
+            "vilb=src",
+        ];
+        let (code, stdout, stderr) = run(&args, &dir.0);
+        assert_eq!(code, 0, "{format}");
+        assert_eq!(
+            stderr,
+            "warning: --root vi.lib: no link is under <vi.lib>, so its directory was not used \
+             (roots with links: resource, userlib, vilib)\n\
+             warning: --root vilb: no link is under <vilb>, so its directory was not used \
+             (roots with links: resource, userlib, vilib)\n",
+            "{format}"
+        );
+        match format {
+            "json" => {
+                let value: Value = serde_json::from_str(&stdout).unwrap();
+                assert_eq!(value["unused_roots"], serde_json::json!(["vi.lib", "vilb"]));
+            }
+            "text" => {
+                assert!(stdout.contains("\nUnused roots (2)\n  vi.lib: no link is under <vi.lib>"));
+                assert!(stdout.contains("0 found, 0 missing, 6 unchecked"));
+            }
+            _ => assert!(stdout.contains("\n## Unused roots\n\n- vi.lib: no link is under")),
+        }
+    }
+}
+
+#[test]
+fn letter_case_and_the_source_of_a_link_do_not_split_a_target() {
+    let dir = TempDir::new("deps-one-target");
+    linked(
+        &dir,
+        "ws/a.vi",
+        &[
+            LvPath::absolute(&["C", "Users", "me", "x.vi"]),
+            symbolic("<vilib>/Utility/Real.vi"),
+            symbolic("<vilib>/utility/real.vi"),
+            symbolic("<vilib>/Utility/Other.vi"),
+        ],
+    );
+    write(
+        &dir,
+        "ws/L.lvlib",
+        br#"<?xml version='1.0' encoding='UTF-8'?>
+<Library LVVersion="23008000">
+    <Item Name="x.vi" Type="VI" URL="/C/Users/me/x.vi"/>
+    <Item Name="real.vi" Type="VI" URL="/&lt;vilib&gt;/UTILITY/REAL.vi"/>
+</Library>
+"#,
+    );
+    write(&dir, "install/vi.lib/utility/REAL.VI", b"x");
+    let text = deps(&["ws", "--root", "vilib=install/vi.lib"], &dir.0);
+    assert_eq!(
+        text,
+        "<vilib> (checked in install/vi.lib: 1 found, 1 missing)
+  UTILITY (2 files)
+    found     <vilib>/UTILITY/REAL.vi
+      used by ws/L.lvlib
+      used by ws/a.vi
+    missing   <vilib>/Utility/Other.vi
+      used by ws/a.vi
+
+Machine-absolute links (1)
+  C:/Users/me/x.vi
+    used by ws/L.lvlib
+    used by ws/a.vi
+
+Scanned 2 files: 2 external files in 1 package under 1 symbolic root (1 found, 1 missing, 0 \
+         unchecked), 1 machine-absolute link, 0 missing relative links, 0 unparsed files.
+"
+    );
 }
 
 #[test]
