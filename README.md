@@ -105,18 +105,21 @@ cargo test --workspace
 
 ### Lints and checks
 
-CI runs these, and fails on any warning:
+CI runs these, and fails on any warning. Clippy and rustdoc run on a pinned
+toolchain, Rust 1.100.0 (see the `lint` job in `.github/workflows/ci.yml`), so
+that a new release cannot fail CI with lints that are new in it. Use the same
+version locally to see what CI sees:
 
 ```bash
 cargo fmt --all --check
 ```
 
 ```bash
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo +1.100.0 clippy --workspace --all-targets --locked -- -D warnings
 ```
 
 ```bash
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+RUSTDOCFLAGS="-D warnings" cargo +1.100.0 doc --workspace --no-deps --locked
 ```
 
 ```bash
