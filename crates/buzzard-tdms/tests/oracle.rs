@@ -97,7 +97,83 @@ const KNOWN_DIFFERENCES: &[Known] = &[
               precision. This reader folds a chain of linear scales into one slope and \
               one intercept and applies them in double precision.",
     },
+    Known {
+        file: "feature_",
+        at: "group order",
+        why: GROUP_ORDER,
+    },
+    Known {
+        file: "stale_index_",
+        at: "group order",
+        why: GROUP_ORDER,
+    },
+    Known {
+        file: "daqmx_cut_",
+        at: "outcome",
+        why: "A file cut inside a chunk of two raw buffers, with a channel that has a scaler \
+              in each: npTDMS raises ValueError (could not broadcast) for most places of \
+              the cut. The format description says only that the buffers \
+              follow one another, so this reader takes them to be complete in order until \
+              the bytes run out, gives each channel the whole rows of its shortest buffer, \
+              and reports a PartialChunk anomaly. Where npTDMS returns values, the two \
+              agree.",
+    },
+    Known {
+        file: "ragged_middle_driver_",
+        at: "outcome",
+        why: "A finished segment of driver buffers whose raw data is not a whole number of \
+              chunks, with another segment after it: npTDMS raises ValueError (could not \
+              broadcast). This reader keeps the whole rows of the incomplete chunk, as it \
+              does at the end of a file where npTDMS agrees, reports a PartialChunk \
+              anomaly and reads on.",
+    },
+    Known {
+        file: "odd_driver_channel_without_values",
+        at: "outcome",
+        why: "A driver channel whose raw data index declares no values, beside one with \
+              values: npTDMS raises ValueError (could not broadcast). An index of no \
+              values takes no part in the rows, so this reader reads the other channel \
+              and gives this one a length of zero.",
+    },
+    Known {
+        file: "odd_new_list_",
+        at: "outcome",
+        why: "A new object list that leaves no object with data, in a segment that has raw \
+              bytes all the same: npTDMS refuses the file (ValueError: zero channel data \
+              size). No channel describes those bytes, so this reader gives them to none, \
+              reports an UnindexedData anomaly and keeps what the other segments hold.",
+    },
+    Known {
+        file: "odd_object_twice_two_indexes",
+        at: "channel g/a",
+        why: "One object listed twice in the metadata of a segment, with a raw data index \
+              of four values and then one of two, and eight bytes of raw data: npTDMS \
+              gives the channel no values. The format description neither allows nor \
+              forbids the repeat; this reader lets the later entry replace the earlier \
+              one, as it does for a property written twice, and the two values account \
+              for the eight bytes.",
+    },
+    Known {
+        file: "odd_void_channel_without_values",
+        at: "outcome",
+        why: "A channel whose raw data index has the type code 0 (void) and no values: \
+              npTDMS refuses to read it (NotImplementedError). The code is in the format's \
+              list of types and the channel holds nothing to read, so this reader reports \
+              a channel of type void and length zero. Void with values is an error.",
+    },
+    Known {
+        file: "stale_index_one_segment_short",
+        at: "channel Group one/",
+        why: "An index file that lacks the last segment of its data file: npTDMS believes \
+              it and returns the channels without that segment's values. This reader \
+              rejects an index file that does not account for every byte of the data file \
+              and reads the data file.",
+    },
 ];
+
+const GROUP_ORDER: &str = "The same difference in the order of groups as in the cross product: \
+                           npTDMS lists the groups that have an object of their own first, \
+                           this reader lists groups in the order the file first mentions them.";
 
 fn bits(value: f64) -> String {
     format!("{:016x}", value.to_bits())
@@ -614,6 +690,135 @@ fn special_cases(dir: &Path) {
             "δ".into(),
         ])));
     save(dir, "mixed_lengths", &builder.build(), true);
+    more_special_cases(dir);
+}
+
+/// Driver buffers that are cut short or ragged, object lists that leave no
+/// data, metadata that contradicts the table of contents, and index files
+/// that do not belong to their data file.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one list of cases, read top to bottom"
+)]
+fn more_special_cases(dir: &Path) {
+    let cut_at = |built: &Built, cut: usize| {
+        let mut cut_file = built.clone();
+        cut_file.bytes.truncate(cut);
+        cut_file
+    };
+    // Driver buffers, cut short in the last segment: two buffers of several
+    // channels, then two channels in two buffers and in one buffer, with
+    // the length field never written.
+    let built = common::daqmx_scenario(false, 2);
+    let last = usize::try_from(built.segment_offsets[1]).expect("small");
+    for cut in (last..built.bytes.len()).step_by(5) {
+        let name = format!("daqmx_cut_{cut:04}");
+        save(dir, &name, &cut_at(&built, cut), false);
+    }
+    for (buffers, widths) in [("one_buffer", &[6u32][..]), ("two_buffers", &[4, 6])] {
+        let built = common::two_driver_channels(widths, &|b| {
+            b.segment()
+                .daqmx_widths(widths)
+                .no_metadata()
+                .chunks(2)
+                .unfinished();
+        });
+        let last = usize::try_from(built.data_offsets[1]).expect("small");
+        for cut in (last..=built.bytes.len()).step_by(5) {
+            let name = format!("unfinished_driver_{buffers}_{cut:04}");
+            save(dir, &name, &cut_at(&built, cut), false);
+        }
+        // A finished segment whose raw data is not a whole number of
+        // chunks, at the end of the file and in its middle.
+        for extra in [3usize, 8, 13, 30] {
+            for (place, more) in [("end", false), ("middle", true)] {
+                let built = common::two_driver_channels(widths, &|b| {
+                    b.segment()
+                        .daqmx_widths(widths)
+                        .no_metadata()
+                        .extra_raw(&vec![0x5A; extra]);
+                    if more {
+                        b.segment().daqmx_widths(widths).no_metadata();
+                    }
+                });
+                let name = format!("ragged_{place}_driver_{buffers}_{extra:02}");
+                save(dir, &name, &built, false);
+            }
+        }
+    }
+    // A driver channel declared with no values beside one with four.
+    let mut built = common::two_driver_channels(&[6], &|b| {
+        b.segment().daqmx_widths(&[6]).no_metadata();
+    });
+    let count = common::after_nth(&built.bytes, b"/'g'/'b'", 0) + 12;
+    built.bytes[count..count + 8].copy_from_slice(&0u64.to_le_bytes());
+    save(dir, "odd_driver_channel_without_values", &built, false);
+    // A driver channel whose scalers change from one segment to the next.
+    for how in ["more", "type", "id"] {
+        let name = format!("odd_scalers_change_{how}");
+        save(dir, &name, &common::scalers_change(how), false);
+    }
+
+    let a = || Object::channel("g", "a");
+    // Metadata in a segment whose table of contents says it has none.
+    let mut builder = FileBuilder::new();
+    builder.segment().object(a().generated(DataType::I32, 4));
+    builder
+        .segment()
+        .toc_xor(1 << 1)
+        .object(a().same().prop("ignored", PropertyValue::I32(1)));
+    save(
+        dir,
+        "odd_metadata_without_its_flag",
+        &builder.build(),
+        false,
+    );
+    // A new object list that leaves no object with data, with raw bytes
+    // all the same, followed by a segment without metadata.
+    for (name, objects) in [
+        ("odd_new_list_without_data_objects", true),
+        ("odd_new_list_of_no_objects", false),
+    ] {
+        let mut builder = FileBuilder::new();
+        builder
+            .segment()
+            .object(a().generated(DataType::I32, 2))
+            .object(Object::channel("g", "b").generated(DataType::F64, 1));
+        let segment = builder.segment();
+        segment.new_object_list(true).extra_raw(&[7; 16]);
+        if objects {
+            segment.object(Object::group("g"));
+        }
+        builder.segment().no_metadata().extra_raw(&[9; 16]);
+        save(dir, name, &builder.build(), false);
+    }
+    // One object listed twice in a segment, with two different indexes.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(a().generated(DataType::I32, 4))
+        .object(a().generated(DataType::I32, 2));
+    save(dir, "odd_object_twice_two_indexes", &builder.build(), false);
+    // A channel of no type and no values, beside one with values.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(a().generated(DataType::I32, 0))
+        .object(Object::channel("g", "b").generated(DataType::I16, 3));
+    let mut built = builder.build();
+    let code = common::after_nth(&built.bytes, b"/'g'/'a'", 0) + 4;
+    built.bytes[code..code + 4].copy_from_slice(&0u32.to_le_bytes());
+    save(dir, "odd_void_channel_without_values", &built, false);
+    // An index file that is one segment short of its data file, and one
+    // that has a segment too many.
+    let built = common::scenario(common::shapes()[0]);
+    let mut short = built.clone();
+    short.index_bytes.truncate(built.index_bytes.len() - 28);
+    save(dir, "stale_index_one_segment_short", &short, true);
+    let mut long = built.clone();
+    let tail = built.index_bytes[built.index_bytes.len() - 28..].to_vec();
+    long.index_bytes.extend(tail);
+    save(dir, "stale_index_one_segment_long", &long, true);
 }
 
 struct TempDir(PathBuf);
@@ -696,6 +901,22 @@ fn the_reader_agrees_with_nptdms() {
         &common::digital_scenario(),
         false,
     );
+    for big_endian in [false, true] {
+        let name = format!(
+            "driver_every_scaler_type_{}",
+            if big_endian { "be" } else { "le" }
+        );
+        let built = common::every_scaler_scenario(big_endian, true);
+        save(&generated.0, &name, &built, false);
+    }
+    for (number, (name, built)) in common::feature_cases().into_iter().enumerate() {
+        save(
+            &generated.0,
+            &format!("feature_{name}"),
+            &built,
+            number % 2 == 0,
+        );
+    }
     special_cases(&generated.0);
 
     // Files written by npTDMS's own writer.

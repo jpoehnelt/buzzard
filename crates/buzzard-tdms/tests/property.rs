@@ -1,6 +1,10 @@
 //! Property-based tests: random sequences of segments from the generator,
 //! whose model says what each channel holds, must read back exactly, and
 //! any prefix of such a file must give a prefix of every channel.
+//!
+//! Every run draws new cases. Each test prints the seed it used, which
+//! `cargo test` shows when the test fails; set `PROPTEST_RNG_SEED` to that
+//! number to run the same cases again.
 
 mod common;
 
@@ -8,6 +12,7 @@ use buzzard_tdms::build::{prefix, Built, FileBuilder, Object, Values};
 use buzzard_tdms::{DataType, PropertyValue};
 use common::{assert_matches, open, FIXED};
 use proptest::prelude::*;
+use proptest::test_runner::RngSeed;
 
 /// What a segment does to one channel.
 #[derive(Clone, Debug)]
@@ -177,12 +182,33 @@ fn build(plans: &[Plan], salt: usize) -> Built {
     builder.build()
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig {
+/// 300 cases from a seed that is printed: the one in `PROPTEST_RNG_SEED`,
+/// or else a new one for every run.
+#[expect(
+    clippy::print_stderr,
+    reason = "cargo shows the seed when a test fails"
+)]
+fn config() -> ProptestConfig {
+    use std::hash::{BuildHasher, Hasher};
+    let mut config = ProptestConfig {
         cases: 300,
         failure_persistence: None,
         ..ProptestConfig::default()
-    })]
+    };
+    let seed = match config.rng_seed {
+        RngSeed::Fixed(seed) => seed,
+        // The standard library seeds its hash maps from the system.
+        RngSeed::Random => std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish(),
+    };
+    eprintln!("the cases of this run come from PROPTEST_RNG_SEED={seed}");
+    config.rng_seed = RngSeed::Fixed(seed);
+    config
+}
+
+proptest! {
+    #![proptest_config(config())]
 
     #[test]
     fn random_segment_sequences_read_back(

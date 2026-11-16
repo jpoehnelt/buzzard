@@ -331,27 +331,358 @@ pub(crate) fn daqmx_scenario(big_endian: bool, chunks: u64) -> Built {
     builder.build()
 }
 
-/// A file with digital lines: four lines of one two-byte port, typed as
-/// acquisition drivers write them.
+/// A repeatable sequence of bits that is different for every `salt`.
+pub(crate) fn bit_pattern(salt: u64, n: usize) -> Vec<u8> {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64 ^ (salt + 1).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    std::iter::repeat_with(|| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        u8::from((state >> 40) & 1 == 1)
+    })
+    .take(n)
+    .collect()
+}
+
+/// A file with digital lines: all sixteen lines of one two-byte port, typed
+/// as acquisition drivers write them. Every line has a pattern of its own,
+/// so a reader that lets a neighbouring bit through reads a wrong value.
 pub(crate) fn digital_scenario() -> Built {
-    let line = |bit: u32, pattern: [u8; 6]| ScalerSpec {
-        values: Values::U8(pattern.to_vec()),
-        buffer: 0,
-        offset: bit,
+    let mut builder = FileBuilder::new();
+    let segment = builder.segment().daqmx_widths(&[2]);
+    for bit in 0..16u32 {
+        segment.object(Object::channel("port", &format!("line{bit}")).daqmx(
+            false,
+            true,
+            vec![ScalerSpec {
+                values: Values::U8(bit_pattern(u64::from(bit), 24)),
+                buffer: 0,
+                offset: bit,
+                scale_id: 0,
+            }],
+        ));
+    }
+    builder.build()
+}
+
+/// The types a scaler can have that other readers know too.
+pub(crate) const SCALER_TYPES: [DataType; 10] = [
+    DataType::U8,
+    DataType::I8,
+    DataType::U16,
+    DataType::I16,
+    DataType::U32,
+    DataType::I32,
+    DataType::U64,
+    DataType::I64,
+    DataType::F32,
+    DataType::F64,
+];
+
+/// A file with one driver channel for each of [`SCALER_TYPES`], side by
+/// side in one raw buffer of 42 bytes a row, in two chunks and then a
+/// segment without metadata. The channels have the raw-data type code or,
+/// when `typed`, the type of their scaler.
+pub(crate) fn every_scaler_scenario(big_endian: bool, typed: bool) -> Built {
+    use buzzard_tdms::build::generate;
+    let mut builder = FileBuilder::new();
+    let segment = builder.segment();
+    segment.big_endian(big_endian).chunks(2).daqmx_widths(&[42]);
+    let mut offset = 0u32;
+    for (number, dtype) in (0u64..).zip(SCALER_TYPES) {
+        segment.object(Object::channel("types", dtype.name()).daqmx(
+            !typed,
+            false,
+            vec![ScalerSpec {
+                values: generate(dtype, number + 40, 0, 14),
+                buffer: 0,
+                offset,
+                scale_id: 0,
+            }],
+        ));
+        offset += u32::try_from(dtype.size().expect("a fixed size")).expect("small");
+    }
+    builder
+        .segment()
+        .big_endian(big_endian)
+        .daqmx_widths(&[42])
+        .no_metadata();
+    builder.build()
+}
+
+/// Small files that each use one feature of the format that the cross
+/// product does not reach. The generator's model describes every one of
+/// them completely.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one list of cases, read top to bottom"
+)]
+pub(crate) fn feature_cases() -> Vec<(&'static str, Built)> {
+    let channel = |name: &str| Object::channel("g", name);
+    let text = |values: &[&str]| Values::String(values.iter().map(|s| (*s).to_owned()).collect());
+    let mut cases = Vec::new();
+    let mut case = |name: &'static str, fill: &dyn Fn(&mut FileBuilder)| {
+        let mut builder = FileBuilder::new();
+        fill(&mut builder);
+        cases.push((name, builder.build()));
+    };
+
+    // The interleaved flag on a segment of a single string channel means
+    // nothing; in a big-endian segment the offsets are big-endian.
+    case("be_interleaved_single_string", &|b| {
+        b.segment()
+            .big_endian(true)
+            .interleaved(true)
+            .object(channel("s").data(text(&["ab", "", "cde"])));
+        b.segment().big_endian(true).interleaved(true).no_metadata();
+    });
+    case("byte_order_changes_without_metadata", &|b| {
+        b.segment()
+            .object(channel("a").generated(DataType::I32, 3))
+            .object(channel("b").generated(DataType::F64, 2))
+            .object(channel("t").generated(DataType::Timestamp, 2));
+        b.segment().big_endian(true).no_metadata();
+        b.segment().no_metadata();
+        b.segment().big_endian(true).no_metadata().chunks(2);
+    });
+    case("float_with_unit_in_every_layout", &|b| {
+        b.segment()
+            .big_endian(true)
+            .object(channel("single").generated(DataType::F32, 3).with_unit())
+            .object(channel("double").generated(DataType::F64, 3).with_unit());
+        b.segment().interleaved(true).chunks(2).no_metadata();
+        b.segment().big_endian(true).interleaved(true).no_metadata();
+        b.segment().no_metadata();
+    });
+    case("new_object_list_flag_without_metadata", &|b| {
+        b.segment()
+            .object(channel("a").generated(DataType::I32, 3))
+            .object(channel("b").generated(DataType::F64, 2));
+        b.segment().no_metadata().toc_xor(1 << 2);
+        b.segment().object(channel("c").generated(DataType::I8, 5));
+    });
+    case("raw_data_flag_without_raw_data", &|b| {
+        b.segment().object(channel("a").generated(DataType::I32, 4));
+        b.segment()
+            .no_raw()
+            .toc_xor(1 << 3)
+            .object(channel("a").same().prop("note", PropertyValue::I32(1)));
+        b.segment().no_metadata().chunks(2);
+    });
+    case("no_data_then_an_index_keeps_the_position", &|b| {
+        b.segment()
+            .object(channel("a"))
+            .object(channel("b").generated(DataType::I32, 3));
+        b.segment().object(channel("a").generated(DataType::F64, 2));
+        b.segment().no_metadata();
+    });
+    case("zero_length_index_then_same", &|b| {
+        b.segment()
+            .object(channel("a").generated(DataType::I32, 0))
+            .object(channel("b").generated(DataType::I16, 2));
+        b.segment().object(channel("a").same());
+        b.segment().object(channel("a").generated(DataType::I32, 3));
+        b.segment().object(channel("a").same());
+    });
+    case("metadata_only_new_list_then_data", &|b| {
+        b.segment()
+            .object(channel("a").generated(DataType::I32, 3))
+            .object(channel("b").generated(DataType::F64, 2))
+            .object(channel("c").generated(DataType::U8, 1));
+        b.segment()
+            .new_object_list(true)
+            .no_raw()
+            .object(channel("b").same())
+            .object(channel("a").same());
+        b.segment().no_metadata();
+        b.segment().no_metadata().chunks(3);
+    });
+    case("interleaved_with_a_no_data_object_between", &|b| {
+        b.segment()
+            .interleaved(true)
+            .chunks(2)
+            .object(channel("a").generated(DataType::I32, 3))
+            .object(Object::group("other"))
+            .object(channel("quiet"))
+            .object(channel("b").generated(DataType::F64, 3));
+        b.segment().interleaved(true).no_metadata();
+    });
+    case("odd_names", &|b| {
+        b.segment()
+            .object(Object::channel("", "x").generated(DataType::I8, 2))
+            .object(Object::channel("a/b", "c'd").generated(DataType::I16, 2))
+            .object(Object::channel("a'", "'").generated(DataType::I32, 2))
+            .object(Object::channel("g", "").generated(DataType::I64, 2))
+            .object(Object::group("").prop("p", PropertyValue::I32(1)))
+            .object(Object::group("a'").prop("p", PropertyValue::I32(2)));
+        b.segment().no_metadata();
+    });
+    case("booleans_that_are_not_0_or_1", &|b| {
+        b.segment()
+            .object(channel("flags").data(Values::Bool(vec![0, 1, 2, 255, 128, 0])));
+    });
+    for big_endian in [false, true] {
+        let name = if big_endian {
+            "mixed_width_interleaved_be"
+        } else {
+            "mixed_width_interleaved_le"
+        };
+        case(name, &|b| {
+            let segment = b.segment();
+            segment.big_endian(big_endian).interleaved(true).chunks(4);
+            for dtype in [
+                DataType::I8,
+                DataType::U16,
+                DataType::F32,
+                DataType::I64,
+                DataType::Timestamp,
+                DataType::Bool,
+            ] {
+                segment.object(channel(dtype.name()).generated(dtype, 3));
+            }
+            b.segment()
+                .big_endian(!big_endian)
+                .interleaved(true)
+                .no_metadata();
+        });
+    }
+    // In version 2.0 of the format a `name` property renames the object;
+    // this reader keeps the path and the property (see the README).
+    case("name_property", &|b| {
+        b.segment().object(channel("a").generated(DataType::I32, 2));
+        b.segment().object(
+            channel("a")
+                .same()
+                .prop("name", PropertyValue::String("renamed".into())),
+        );
+    });
+    // A data object joins the list after the layout of the list was used.
+    case("data_object_appended_to_a_used_list", &|b| {
+        b.segment().object(channel("a").generated(DataType::I32, 4));
+        b.segment().no_metadata();
+        b.segment()
+            .new_object_list(false)
+            .object(channel("b").generated(DataType::F64, 2));
+        b.segment().no_metadata();
+    });
+    // An object that a new object list dropped joins the list again with
+    // the "same as before" marker, and another with an index equal to its
+    // last one: neither is news about the object, both change the list.
+    case("dropped_objects_return_to_a_used_list", &|b| {
+        b.segment()
+            .object(channel("a").generated(DataType::I32, 4))
+            .object(channel("b").generated(DataType::F64, 2))
+            .object(channel("c").generated(DataType::I16, 1));
+        b.segment()
+            .new_object_list(true)
+            .object(channel("a").same());
+        b.segment().no_metadata();
+        b.segment().object(channel("b").same());
+        b.segment().no_metadata();
+        b.segment().object(channel("c").generated(DataType::I16, 1));
+        b.segment().no_metadata();
+    });
+    case("property_changes_its_type", &|b| {
+        b.segment()
+            .object(Object::root().prop("p", PropertyValue::F64(1.5)))
+            .object(
+                channel("a")
+                    .generated(DataType::I32, 2)
+                    .prop("p", PropertyValue::I32(5))
+                    .prop("q", PropertyValue::U8(9)),
+            );
+        b.segment()
+            .object(Object::root().prop("p", PropertyValue::U8(2)))
+            .object(
+                channel("a")
+                    .same()
+                    .prop("p", PropertyValue::String("five".into())),
+            );
+        b.segment()
+            .object(channel("a").same().prop("p", PropertyValue::F32(5.5)));
+    });
+    cases
+}
+
+/// A file with two driver channels: `a` (16-bit) and `b` (32-bit). With
+/// one width they share a raw buffer; with two, `a` is in the first and
+/// `b` in the second. Four values of each, and then `tail` to add
+/// segments.
+pub(crate) fn two_driver_channels(widths: &[u32], tail: &dyn Fn(&mut FileBuilder)) -> Built {
+    use buzzard_tdms::build::generate;
+    let scaler = |dtype, seed, buffer, offset| ScalerSpec {
+        values: generate(dtype, seed, 0, 4),
+        buffer,
+        offset,
         scale_id: 0,
     };
-    let channel = |name: &str, bit: u32, pattern: [u8; 6]| {
-        Object::channel("port", name).daqmx(false, true, vec![line(bit, pattern)])
-    };
+    let second = u32::from(widths.len() > 1);
     let mut builder = FileBuilder::new();
     builder
         .segment()
-        .daqmx_widths(&[2])
-        .object(channel("line0", 0, [1, 0, 1, 1, 0, 0]))
-        .object(channel("line3", 3, [0, 0, 1, 0, 1, 1]))
-        .object(channel("line9", 9, [1, 1, 1, 0, 0, 1]))
-        .object(channel("line15", 15, [0, 1, 0, 1, 0, 1]));
+        .daqmx_widths(widths)
+        .object(Object::channel("g", "a").daqmx(
+            false,
+            false,
+            vec![scaler(DataType::I16, 11, 0, 0)],
+        ))
+        .object(Object::channel("g", "b").daqmx(
+            false,
+            false,
+            vec![scaler(DataType::I32, 12, second, 2)],
+        ));
+    tail(&mut builder);
     builder.build()
+}
+
+/// The offset just after occurrence number `nth` (from zero) of `needle`.
+pub(crate) fn after_nth(bytes: &[u8], needle: &[u8], nth: usize) -> usize {
+    bytes
+        .windows(needle.len())
+        .enumerate()
+        .filter(|(_, window)| *window == needle)
+        .nth(nth)
+        .expect("the bytes are in the file")
+        .0
+        + needle.len()
+}
+
+/// A file whose driver channel `a` declares other scalers in its second
+/// segment than in its first: `more` adds a scaler, `type` changes the
+/// scaler's type, `id` changes its number.
+pub(crate) fn scalers_change(how: &str) -> Built {
+    let scaler = |values, offset, scale_id| ScalerSpec {
+        values,
+        buffer: 0,
+        offset,
+        scale_id,
+    };
+    let i16s = || Values::I16(vec![1, -2, 3, -4]);
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .daqmx_widths(&[8])
+        .object(Object::channel("g", "a").daqmx(true, false, vec![scaler(i16s(), 0, 0)]));
+    let second = match how {
+        "more" => vec![scaler(i16s(), 0, 0), scaler(i16s(), 2, 1)],
+        "id" => vec![scaler(i16s(), 0, 5)],
+        "type" => vec![scaler(i16s(), 0, 0)],
+        other => panic!("unknown case {other}"),
+    };
+    builder
+        .segment()
+        .daqmx_widths(&[8])
+        .object(Object::channel("g", "a").daqmx(true, false, second));
+    let mut built = builder.build();
+    if how == "type" {
+        // After the path: the marker, the channel's type, the dimension,
+        // the count (8 bytes), the number of scalers, the scaler's type.
+        for bytes in [&mut built.bytes, &mut built.index_bytes] {
+            let at = after_nth(bytes, b"/'g'/'a'", 1) + 24;
+            bytes[at..at + 4].copy_from_slice(&5u32.to_le_bytes());
+        }
+    }
+    built
 }
 
 /// Checks everything the model says against the reader: groups, channels,

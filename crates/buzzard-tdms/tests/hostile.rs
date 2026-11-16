@@ -701,3 +701,468 @@ fn a_file_cannot_make_the_index_grow_without_paying_for_it() {
     assert!(matches!(outcome, Err(Error::IndexTooLarge { .. })));
     assert_eq!(TdmsFile::from_bytes(bytes).unwrap().index_shape().1, 2);
 }
+
+#[test]
+fn a_typed_driver_channel_needs_one_scaler_of_its_type() {
+    let scaler = |offset, scale_id| ScalerSpec {
+        values: Values::I16(vec![1, 2, 3]),
+        buffer: 0,
+        offset,
+        scale_id,
+    };
+    let typed = |scalers| {
+        let mut builder = FileBuilder::new();
+        builder
+            .segment()
+            .daqmx_widths(&[4])
+            .object(Object::channel("g", "ai").daqmx(false, false, scalers));
+        builder.build().bytes
+    };
+    let good = typed(vec![scaler(0, 0)]);
+    assert!(exercise(&good, None).is_none());
+    // Two scalers, and one scaler of another type than the channel's.
+    corrupt(
+        &typed(vec![scaler(0, 0), scaler(2, 1)]),
+        "exactly one scaler of its type",
+    );
+    let index = after(&good, b"/'g'/'ai'");
+    assert_eq!(
+        good[index + 4..index + 8],
+        DataType::I16.code().to_le_bytes()
+    );
+    for other in [DataType::I32, DataType::U16, DataType::F64] {
+        corrupt(
+            &with(&good, index + 4, &other.code().to_le_bytes()),
+            "exactly one scaler of its type",
+        );
+    }
+    // The scaler's own type code: 3 is a 16-bit integer, 2 is unsigned.
+    assert_eq!(good[index + 24..index + 28], 3u32.to_le_bytes());
+    corrupt(
+        &with(&good, index + 24, &2u32.to_le_bytes()),
+        "exactly one scaler of its type",
+    );
+}
+
+#[test]
+fn a_segment_of_driver_buffers_and_plain_data_is_an_error() {
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .daqmx_widths(&[4])
+        .no_raw()
+        .extra_raw(&[0; 12])
+        .object(Object::channel("g", "ai").daqmx(
+            true,
+            false,
+            vec![ScalerSpec {
+                values: Values::I16(vec![1, 2, 3]),
+                buffer: 0,
+                offset: 0,
+                scale_id: 0,
+            }],
+        ))
+        .object(Object::channel("g", "plain").generated(DataType::I32, 1));
+    corrupt(&builder.build().bytes, "mixes DAQmx and other raw data");
+}
+
+#[test]
+fn a_driver_channel_that_changes_its_scalers_is_an_error() {
+    // One scaler more, a scaler of another type, a scaler with another
+    // number: no single read could cover such a channel.
+    for how in ["more", "type", "id"] {
+        let built = common::scalers_change(how);
+        corrupt(&built.bytes, "changes its scalers");
+        // The index file says the same, so it is not believed either, and
+        // the data file is refused.
+        assert!(matches!(
+            exercise(&built.bytes, Some(&built.index_bytes)),
+            Some(Error::Corrupt { .. })
+        ));
+    }
+    // Where the scalers sit may change, and the order they are listed in.
+    let scaler = |seed: i16, offset, scale_id| ScalerSpec {
+        values: Values::I16((0..4).map(|i| seed * 10 + i).collect()),
+        buffer: 0,
+        offset,
+        scale_id,
+    };
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .daqmx_widths(&[8])
+        .object(Object::channel("g", "a").daqmx(
+            true,
+            false,
+            vec![scaler(1, 0, 0), scaler(2, 2, 1)],
+        ));
+    builder
+        .segment()
+        .daqmx_widths(&[11])
+        .object(Object::channel("g", "a").daqmx(
+            true,
+            false,
+            vec![scaler(3, 5, 1), scaler(4, 9, 0)],
+        ));
+    builder.segment().daqmx_widths(&[11]).no_metadata();
+    let built = builder.build();
+    let file = open(&built.bytes, None).unwrap();
+    assert_eq!(file.anomalies(), []);
+    let a = file.channel("g", "a").unwrap();
+    assert_eq!(a.len(), 12);
+    assert_eq!(a.scalers().len(), 2);
+    assert_eq!(
+        a.read_scaler::<i16>(0, 0..8).unwrap(),
+        [10, 11, 12, 13, 40, 41, 42, 43]
+    );
+    assert_eq!(
+        a.read_scaler::<i16>(1, 0..8).unwrap(),
+        [20, 21, 22, 23, 30, 31, 32, 33]
+    );
+    assert_matches(&built, &file, "scalers that move");
+}
+
+#[test]
+fn a_cut_chunk_of_several_driver_buffers_gives_the_whole_rows_of_each() {
+    // Two buffers, of 4 and of 6 bytes a row; a chunk is four rows of the
+    // first and then four rows of the second: 40 bytes.
+    let built = common::two_driver_channels(&[4, 6], &|b| {
+        b.segment()
+            .daqmx_widths(&[4, 6])
+            .no_metadata()
+            .chunks(2)
+            .unfinished();
+    });
+    let data = usize::try_from(built.data_offsets[1]).unwrap();
+    assert_eq!(built.bytes.len() - data, 80);
+    for cut in data..=built.bytes.len() {
+        let present = (cut - data) as u64;
+        let (chunks, rest) = (present / 40, present % 40);
+        let file = open(&built.bytes[..cut], None).unwrap();
+        let a = file.channel("g", "a").unwrap();
+        let b = file.channel("g", "b").unwrap();
+        let rows_a = (rest / 4).min(4);
+        let rows_b = rest.saturating_sub(16) / 6;
+        assert_eq!(a.len(), 4 + chunks * 4 + rows_a, "cut at {cut}");
+        assert_eq!(b.len(), 4 + chunks * 4 + rows_b, "cut at {cut}");
+        for (channel, expected) in [(a, &built.channels[0]), (b, &built.channels[1])] {
+            let found = channel.read_column(0..channel.len()).unwrap();
+            let all = expected.values.as_ref().unwrap();
+            assert_eq!(found, prefix(all, found.len()), "cut at {cut}");
+        }
+        let unfinished = Anomaly::UnfinishedSegment {
+            segment: 1,
+            offset: built.segment_offsets[1],
+        };
+        if rest == 0 {
+            assert_eq!(file.anomalies(), [unfinished], "cut at {cut}");
+        } else {
+            let partial = Anomaly::PartialChunk {
+                segment: 1,
+                offset: built.data_offsets[1] + chunks * 40,
+                bytes: rest,
+                recovered: rows_a > 0,
+            };
+            assert_eq!(file.anomalies(), [unfinished, partial], "cut at {cut}");
+        }
+    }
+    // A channel with a scaler in each buffer has the rows that both hold.
+    let built = daqmx_scenario(false, 2);
+    let last = usize::try_from(built.data_offsets[1]).unwrap();
+    let mut lengths = std::collections::BTreeSet::new();
+    for cut in last..=built.bytes.len() {
+        let file = open(&built.bytes[..cut], None).unwrap();
+        let ai1 = file.channel("Measured", "ai1").unwrap();
+        let wide = file.channel("Measured", "wide").unwrap();
+        let ai0 = file.channel("Measured", "ai0").unwrap();
+        // `wide` is in the second buffer alone, `ai0` in the first.
+        assert_eq!(ai1.len(), wide.len(), "cut at {cut}");
+        assert!(ai0.len() >= ai1.len(), "cut at {cut}");
+        lengths.insert((ai0.len(), ai1.len()));
+        let expected = built.channels.iter().find(|c| c.name == "ai1").unwrap();
+        for (id, all) in &expected.scalers {
+            let found = ai1.read_scaler_column(*id, 0..ai1.len()).unwrap();
+            assert_eq!(found, prefix(all, found.len()), "cut at {cut}");
+        }
+    }
+    // Every count of rows occurred, in the first buffer and in both.
+    assert!(lengths.contains(&(13, 10)));
+    assert!(lengths.contains(&(15, 13)));
+    assert!(lengths.contains(&(20, 20)));
+}
+
+#[test]
+fn odd_driver_and_object_lists_have_a_decided_reading() {
+    // A driver channel declared without values beside one with values.
+    let mut built = common::two_driver_channels(&[6], &|b| {
+        b.segment().daqmx_widths(&[6]).no_metadata();
+    });
+    let count = common::after_nth(&built.bytes, b"/'g'/'b'", 0) + 12;
+    built.bytes[count..count + 8].copy_from_slice(&0u64.to_le_bytes());
+    assert!(exercise(&built.bytes, None).is_none());
+    let file = open(&built.bytes, None).unwrap();
+    assert_eq!(file.anomalies(), []);
+    let a = file.channel("g", "a").unwrap();
+    assert_eq!(
+        a.read_column(0..a.len()).unwrap(),
+        *built.channels[0].values.as_ref().unwrap()
+    );
+    assert_eq!(file.channel("g", "b").unwrap().len(), 0);
+
+    // One object listed twice with two different indexes: the later one
+    // replaces the earlier, and accounts for the segment's eight bytes.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::channel("g", "a").generated(DataType::I32, 4))
+        .object(Object::channel("g", "a").generated(DataType::I32, 2));
+    let built = builder.build();
+    assert_eq!(built.bytes.len() as u64 - built.data_offsets[0], 8);
+    let file = open(&built.bytes, None).unwrap();
+    assert_eq!(file.anomalies(), []);
+    assert_eq!(file.channel("g", "a").unwrap().len(), 2);
+    assert_matches(&built, &file, "an object listed twice with two indexes");
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one list of cases, read top to bottom"
+)]
+fn anomalies_say_exactly_what_is_wrong() {
+    // A file cut five bytes short, in a chunk that holds strings: nothing
+    // of the chunk can be kept.
+    let built = plain();
+    let cut = &built.bytes[..built.bytes.len() - 5];
+    let file = open(cut, None).unwrap();
+    assert_eq!(
+        file.anomalies(),
+        [
+            Anomaly::TruncatedSegment {
+                segment: 1,
+                offset: built.segment_offsets[1],
+                missing: 5,
+            },
+            Anomaly::PartialChunk {
+                segment: 1,
+                offset: built.data_offsets[1],
+                bytes: 25,
+                recovered: false,
+            },
+        ]
+    );
+    assert_eq!(file.segment_count(), 2);
+    assert_eq!(file.channel("g", "a").unwrap().len(), 4);
+
+    // The same cut in a chunk of fixed-size values: what is there is kept.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::channel("g", "a").generated(DataType::I32, 4))
+        .object(Object::channel("g", "b").generated(DataType::F64, 3));
+    builder.segment().no_metadata().chunks(2);
+    let fixed = builder.build();
+    let file = open(&fixed.bytes[..fixed.bytes.len() - 10], None).unwrap();
+    assert_eq!(
+        file.anomalies(),
+        [
+            Anomaly::TruncatedSegment {
+                segment: 1,
+                offset: fixed.segment_offsets[1],
+                missing: 10,
+            },
+            Anomaly::PartialChunk {
+                segment: 1,
+                offset: fixed.data_offsets[1] + 40,
+                bytes: 30,
+                recovered: true,
+            },
+        ]
+    );
+    assert_eq!(file.channel("g", "a").unwrap().len(), 12);
+    assert_eq!(file.channel("g", "b").unwrap().len(), 7);
+
+    // A finished segment with a tail that is no chunk: no truncation, and
+    // the same report of the incomplete chunk.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::channel("g", "s").data(Values::String(vec!["one".into(), "two".into()])))
+        .extra_raw(&[1, 2, 3]);
+    let ragged = builder.build();
+    assert_eq!(
+        open(&ragged.bytes, None).unwrap().anomalies(),
+        [Anomaly::PartialChunk {
+            segment: 0,
+            offset: ragged.data_offsets[0] + 14,
+            bytes: 3,
+            recovered: false,
+        }]
+    );
+
+    // Text that is not UTF-8, in the second object of the second segment:
+    // the offset is where that object starts.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::root().prop("title", PropertyValue::String("fine".into())));
+    builder
+        .segment()
+        .object(Object::group("g").prop("title", PropertyValue::String("fine".into())))
+        .object(
+            Object::channel("g", "t\u{7f}")
+                .generated(DataType::U8, 1)
+                .prop("after", PropertyValue::I32(1)),
+        );
+    let mut text = builder.build();
+    let path = after(&text.bytes, b"/'g'/'t");
+    text.bytes[path] = 0xFF;
+    let object = (path - "/'g'/'t".len() - 4) as u64;
+    assert_eq!(
+        text.bytes[path - 11..path - 7],
+        9u32.to_le_bytes(),
+        "the length of the path is where the object starts"
+    );
+    assert_eq!(
+        open(&text.bytes, None).unwrap().anomalies(),
+        [Anomaly::InvalidUtf8 {
+            segment: 1,
+            offset: object,
+        }]
+    );
+
+    // Raw bytes in a segment whose only channel is declared without
+    // values.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::channel("g", "a").generated(DataType::F64, 0))
+        .extra_raw(&[1, 2, 3, 4, 5]);
+    let empty = builder.build();
+    let file = open(&empty.bytes, None).unwrap();
+    assert_eq!(
+        file.anomalies(),
+        [Anomaly::UnindexedData {
+            segment: 0,
+            offset: empty.data_offsets[0],
+            bytes: 5,
+        }]
+    );
+    assert_eq!(file.channel("g", "a").unwrap().len(), 0);
+
+    // A file cut inside the metadata of its last segment: the segment is
+    // counted and ignored.
+    let mut builder = FileBuilder::new();
+    for _ in 0..2 {
+        builder
+            .segment()
+            .object(Object::channel("g", "a").generated(DataType::I32, 4));
+    }
+    let two = builder.build();
+    let start = two.segment_offsets[1];
+    let cut = usize::try_from(start).unwrap() + 28 + 3;
+    let whole = two.bytes.len() as u64 - start - 28;
+    let file = open(&two.bytes[..cut], None).unwrap();
+    assert_eq!(
+        file.anomalies(),
+        [
+            Anomaly::TruncatedSegment {
+                segment: 1,
+                offset: start,
+                missing: whole - 3,
+            },
+            Anomaly::TruncatedMetadata {
+                segment: 1,
+                offset: start,
+            },
+        ]
+    );
+    assert_eq!(file.segment_count(), 2);
+    assert_eq!(file.channel("g", "a").unwrap().len(), 4);
+    // A lead-in that is not all there.
+    let file = open(&two.bytes[..cut - 10], None).unwrap();
+    assert_eq!(
+        file.anomalies(),
+        [Anomaly::TruncatedLeadIn {
+            offset: start,
+            bytes: 21,
+        }]
+    );
+    assert_eq!(file.segment_count(), 1);
+}
+
+#[test]
+fn only_the_first_anomalies_of_a_file_are_kept() {
+    // 5,000 segments that each have a version number no segment before
+    // them had.
+    let mut bytes = Vec::new();
+    for number in 0..5_000u32 {
+        bytes.extend(b"TDSm");
+        bytes.extend(0u32.to_le_bytes());
+        bytes.extend((10_000 + number).to_le_bytes());
+        bytes.extend([0u8; 16]);
+    }
+    let file = TdmsFile::from_bytes(bytes).unwrap();
+    assert_eq!(file.segment_count(), 5_000);
+    assert_eq!(file.anomalies().len(), 1024);
+    assert_eq!(
+        file.anomalies()[1023],
+        Anomaly::UnknownVersion {
+            segment: 1023,
+            version: 11_023,
+        }
+    );
+    assert_eq!(file.versions().len(), 8);
+    assert_eq!(file.versions()[7], 10_007);
+}
+
+#[test]
+fn walking_a_long_object_list_again_and_again_is_refused() {
+    // 2,000 channels, then 600 segments of some forty bytes that switch
+    // one channel off and on. Only two layouts result, which the limit
+    // below allows; what it does not allow is 600 walks of a list of 2,000
+    // objects that the segments' few bytes do not pay for.
+    let mut builder = FileBuilder::new();
+    let segment = builder.segment();
+    for i in 0..2_000 {
+        segment.object(Object::channel("g", &format!("c{i}")).generated(DataType::U8, 1));
+    }
+    for i in 0..600 {
+        let object = Object::channel("g", "c7");
+        builder.segment().object(if i % 2 == 0 {
+            object.no_data()
+        } else {
+            object.same()
+        });
+    }
+    let bytes = builder.build().bytes;
+    let started = Instant::now();
+    let outcome = OpenOptions::new()
+        .max_layout_entries(5_000)
+        .open_source(Arc::new(bytes.clone()), None);
+    assert!(started.elapsed() < TIME_LIMIT);
+    assert!(matches!(
+        outcome,
+        Err(Error::IndexTooLarge { limit: 5_000 })
+    ));
+    // A third of the segments stay within what the file's bytes pay for.
+    let mut few = FileBuilder::new();
+    let segment = few.segment();
+    for i in 0..2_000 {
+        segment.object(Object::channel("g", &format!("c{i}")).generated(DataType::U8, 1));
+    }
+    for i in 0..60 {
+        let object = Object::channel("g", "c7");
+        few.segment().object(if i % 2 == 0 {
+            object.no_data()
+        } else {
+            object.same()
+        });
+    }
+    let file = OpenOptions::new()
+        .max_layout_entries(5_000)
+        .open_source(Arc::new(few.build().bytes), None)
+        .unwrap();
+    assert_eq!(file.index_shape().1, 2);
+    assert_eq!(file.channel("g", "c7").unwrap().len(), 31);
+}
