@@ -48,6 +48,9 @@ thiserror = "2"
 # Project-level XML files
 roxmltree = "0.21"
 
+# Recovering link names stored in legacy code pages
+encoding_rs = "0.8"
+
 # The conformance suite corrupts real files tens of thousands of times;
 # optimizing the parser and its dependencies keeps `cargo test` quick.
 [profile.dev.package.buzzard-rsrc]

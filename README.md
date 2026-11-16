@@ -58,6 +58,17 @@ buzzard lsp
 | `BZ005` | error | Part of a circular dependency (VI calls and class inheritance) |
 | `BZ006` | warning | A project, library or class lists a member whose file does not exist on disk |
 
+`BZ002` needs one version that more files use than any other. When two
+versions are tied for the lead, nothing is reported.
+
+`BZ003` measures a file's own path from the scan root, so the result is the
+same wherever the workspace is checked out. To leave room for the directory
+it will be checked out into, lower `--max-path-length`.
+
+In SARIF output, a file given by a relative path is a relative URI reference
+and a file given by an absolute path is a `file:///` URI. Both are
+percent-encoded.
+
 `BZ006` skips what it cannot check: installation paths such as
 `/<vilib>/...`, items stored inside the XML file itself, and the
 `Dependencies` list of a project, which the IDE computes on its own.
@@ -128,7 +139,32 @@ is a class naming its parent. Callers, callees and references follow `Uses`
 only. Cycle detection follows `Uses` and `Inherits`; `Contains` is left out
 because a member normally refers back to its owner.
 
+A link is matched to a workspace file by its path first. A file has one
+identity however its path is spelled, so `buzzard check .` and
+`buzzard check "$PWD"` see the same graph, and a file reached through two
+roots is analyzed once, under the spelling of the first root. When the path
+does not lead to a workspace file:
+
+- A relative path, or an absolute path from another machine, falls back to
+  the file name if exactly one workspace file has that name. A symbolic path
+  such as `<vilib>/...` or `<userlib>/...` never does: it names an installed
+  file, not a workspace file that shares its name. The parent of a class is
+  the exception and is still looked up by name.
+- On Windows and macOS a match that differs only in letter case is accepted
+  when it is the only one. On other systems case always matters.
+- Paths older than the `PTH2` form hold the bytes of the saving machine's
+  code page. A name with bytes outside ASCII is read as Windows-1252,
+  Shift-JIS, GBK, Big5, EUC-KR, Windows-1251, Windows-1250 and Mac Roman in
+  turn, and the link is followed when all readings that match a workspace
+  file agree on which one.
+
 ## Current limitations
+
+- Symbolic links in the file system are not followed when comparing paths:
+  a file reached through a symbolic link and through its real location
+  counts as two files.
+- Hover text and `BZ003` messages show a name from a non-UTF-8 code page as
+  stored, one character per byte, even when its link was followed.
 
 - Dependencies are read from the link-info blocks by locating each stored
   path and the name in front of it, rather than by decoding every link
