@@ -176,42 +176,43 @@ impl Machine {
             .collect()
     }
 
-    /// Check the machine. The result is deterministic, and the time and
-    /// space taken are linear in the number of states plus the number of
-    /// known successors.
-    pub fn check(&self) -> Report {
-        let index = self.index();
-        let edges = self.edges(&index);
+    /// Forward reachability from the initial states: whether each state
+    /// can be reached, or `None` when the initial state is unknown.
+    fn reachable(
+        &self,
+        index: &BTreeMap<&str, usize>,
+        edges: &[Option<BTreeSet<usize>>],
+    ) -> Option<Vec<bool>> {
         let count = self.states.len();
-
-        // Forward reachability from the initial states.
-        let reachable: Option<Vec<bool>> = self.initial.as_ref().map(|initial| {
-            let mut seen = vec![false; count];
-            let mut queue: VecDeque<usize> = initial
-                .iter()
-                .filter_map(|name| self.resolve(&index, name))
-                .collect();
-            let mut anywhere = false;
-            while let Some(at) = queue.pop_front() {
-                if std::mem::replace(&mut seen[at], true) {
-                    continue;
-                }
-                match &edges[at] {
-                    Some(next) => queue.extend(next.iter().copied().filter(|&next| !seen[next])),
-                    // The first state that may go anywhere reaches every
-                    // state; a second one adds nothing.
-                    None if !anywhere => {
-                        anywhere = true;
-                        queue.extend((0..count).filter(|&next| !seen[next]));
-                    }
-                    None => {}
-                }
+        let initial = self.initial.as_ref()?;
+        let mut seen = vec![false; count];
+        let mut queue: VecDeque<usize> = initial
+            .iter()
+            .filter_map(|name| self.resolve(index, name))
+            .collect();
+        let mut anywhere = false;
+        while let Some(at) = queue.pop_front() {
+            if std::mem::replace(&mut seen[at], true) {
+                continue;
             }
-            seen
-        });
+            match &edges[at] {
+                Some(next) => queue.extend(next.iter().copied().filter(|&next| !seen[next])),
+                // The first state that may go anywhere reaches every
+                // state; a second one adds nothing.
+                None if !anywhere => {
+                    anywhere = true;
+                    queue.extend((0..count).filter(|&next| !seen[next]));
+                }
+                None => {}
+            }
+        }
+        Some(seen)
+    }
 
-        // Backward reachability from every state that may stop: the states
-        // left over can never reach a stop.
+    /// Backward reachability from every state that may stop: whether each
+    /// state can reach one. The states left over can never reach a stop.
+    fn can_stop(&self, edges: &[Option<BTreeSet<usize>>]) -> Vec<bool> {
+        let count = self.states.len();
         let mut can_stop = vec![false; count];
         let mut queue: VecDeque<usize> = (0..count)
             .filter(|&i| self.states[i].stop != Stop::Never)
@@ -233,6 +234,18 @@ impl Machine {
             }
             queue.extend(reverse[at].iter().copied().filter(|&prev| !can_stop[prev]));
         }
+        can_stop
+    }
+
+    /// Check the machine. The result is deterministic, and the time and
+    /// space taken are linear in the number of states plus the number of
+    /// known successors.
+    pub fn check(&self) -> Report {
+        let index = self.index();
+        let edges = self.edges(&index);
+        let count = self.states.len();
+        let reachable = self.reachable(&index, &edges);
+        let can_stop = self.can_stop(&edges);
 
         let mut findings = Vec::new();
         let live = |i: usize| reachable.as_ref().is_none_or(|seen| seen[i]);
@@ -616,11 +629,11 @@ mod tests {
         let stoppable = machine(states(Stop::Maybe), Some(&["s0"]), None).check();
         assert_eq!(stoppable.findings, []);
         assert_eq!(stoppable.reachable.as_ref().map(Vec::len), Some(STATES));
-        assert!(stoppable.transitions.is_empty());
+        assert_eq!(stoppable.transitions, []);
         // No state may stop: reported once, not once per state.
         let endless = machine(states(Stop::Never), Some(&["s0"]), None).check();
         assert_eq!(endless.findings, [Finding::NeverTerminates]);
-        assert!(endless.transitions.is_empty());
+        assert_eq!(endless.transitions, []);
         // Generous: both checks take well under a second in a debug
         // build; the quadratic version would not end.
         assert!(started.elapsed() < std::time::Duration::from_secs(60));

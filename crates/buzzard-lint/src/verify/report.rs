@@ -20,11 +20,16 @@ use crate::workspace::discover;
 /// claims and why it holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ShownIssue {
+    /// The lint rule that reports the issue, e.g. `BZ201`.
     pub code: &'static str,
+    /// How much the finding claims.
     pub confidence: Confidence,
+    /// The finding itself.
     #[serde(flatten)]
     pub issue: Issue,
+    /// The finding in one sentence.
     pub message: String,
+    /// Why the finding holds and what it does not say.
     pub justification: &'static str,
 }
 
@@ -43,41 +48,54 @@ impl From<Issue> for ShownIssue {
 /// The machines of one file. Only files that have any are listed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FileMachines {
+    /// Path of the file.
     pub path: PathBuf,
     /// Classic state machines: the model, what was derived from it, and
     /// whether the model is exact.
     pub machines: Vec<Report>,
     /// String/queue machines, which are recognised but not modelled.
     pub queue_machines: Vec<QueueMachine>,
+    /// Every finding about the machines of the file, sorted.
     pub findings: Vec<ShownIssue>,
 }
 
+/// Counts over every file of a [`Verified`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct Summary {
     /// Files with a block diagram that were analysed.
     pub files: usize,
+    /// Files with at least one state machine of either kind.
     pub files_with_machines: usize,
+    /// Analysed files in which no state machine was found.
     pub files_without_machines: usize,
+    /// Classic state machines found.
     pub machines: usize,
+    /// String/queue machines found.
     pub queue_machines: usize,
     /// Files whose block diagram did not decode completely and was
     /// therefore not searched for classic state machines.
     pub incomplete: usize,
+    /// Findings of every confidence.
     pub findings: usize,
+    /// Findings labelled [`Confidence::Proven`].
     pub proven: usize,
+    /// Findings labelled [`Confidence::Structural`].
     pub structural: usize,
+    /// Findings labelled [`Confidence::Heuristic`].
     pub heuristic: usize,
 }
 
 /// The result of verifying a set of files.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Verified {
+    /// The files that have a state machine, sorted by path.
     pub files: Vec<FileMachines>,
     /// Files that could not be read or parsed, with the reason.
     pub unreadable: Vec<(PathBuf, String)>,
     /// Files whose block diagram did not decode completely. Nothing is
     /// claimed about classic state machines on them.
     pub incomplete: Vec<PathBuf>,
+    /// Counts over all files.
     pub summary: Summary,
 }
 
@@ -152,12 +170,17 @@ impl Verified {
         )
     }
 
+    /// Whether any file has a finding of any confidence.
     pub fn has_findings(&self) -> bool {
         self.summary.findings > 0
     }
 }
 
 /// Verify one file. `Ok(None)` when it has no block diagram.
+///
+/// # Errors
+///
+/// Returns the reason as text when the file cannot be read or parsed.
 pub fn verify_file(path: &Path) -> Result<Option<Verification>, String> {
     let inspection = Inspection::from_path(path)?;
     Ok(inspection.diagram.as_ref().map(verify))
@@ -176,9 +199,12 @@ fn list(names: &[&str]) -> String {
     } else {
         names
             .iter()
-            .map(|name| match name.contains(',') {
-                true => format!("`{}`", clean(name)),
-                false => clean(name),
+            .map(|name| {
+                if name.contains(',') {
+                    format!("`{}`", clean(name))
+                } else {
+                    clean(name)
+                }
             })
             .collect::<Vec<_>>()
             .join(", ")

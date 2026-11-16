@@ -234,9 +234,10 @@ pub struct Heap<'a> {
     /// keeps: an entry that closes a node has the tag of the entry that
     /// opened it and carries no attributes and no content, a node has
     /// each of its attributes once and only of the four kinds seen
-    /// (ids -2, -3, -5 and -6), and no node is left open at the end. The parser reads on regardless, so that a
-    /// damaged file stays usable, but nodes may then be missing: a
-    /// damaged attribute count swallows the entries after it.
+    /// (ids -2, -3, -5 and -6), and no node is left open at the end. The
+    /// parser reads on regardless, so that a damaged file stays usable,
+    /// but nodes may then be missing: a damaged attribute count swallows
+    /// the entries after it.
     pub irregular: bool,
 }
 
@@ -517,6 +518,8 @@ mod tests {
     #[test]
     fn an_irregular_stream_is_read_and_flagged() {
         // <object class=47 uid=5> <leaf 100/> <leaf 101/> </object>
+        // An attribute id is one signed byte: 0xFE is -2, the class, and
+        // 0xFD is -3, the unique id.
         let object = |attrs: &[u8], close: Vec<u8>| {
             let mut body = entry(tag::OBJECT, SCOPE_OPEN, 0, true).to_vec();
             body.extend_from_slice(attrs);
@@ -525,7 +528,7 @@ mod tests {
             body.extend(close);
             heap(&body)
         };
-        let class_and_uid = [2, (-2i8) as u8, 0, 47, (-3i8) as u8, 0, 5];
+        let class_and_uid = [2, 0xFE, 0, 47, 0xFD, 0, 5];
         let close = || entry(tag::OBJECT, SCOPE_CLOSE, 0, false).to_vec();
         let bytes = object(&class_and_uid, close());
         let regular = Heap::parse(&bytes).unwrap();
@@ -540,8 +543,8 @@ mod tests {
         let with_content = object(&class_and_uid, with_content);
         let left_open = object(&class_and_uid, Vec::new());
         // An attribute of a kind no node has, and the same one twice.
-        let unknown = object(&[2, (-2i8) as u8, 0, 47, 7, 0, 5], close());
-        let twice = object(&[2, (-3i8) as u8, 0, 47, (-3i8) as u8, 0, 5], close());
+        let unknown = object(&[2, 0xFE, 0, 47, 7, 0, 5], close());
+        let twice = object(&[2, 0xFD, 0, 47, 0xFD, 0, 5], close());
         for bytes in [other_tag, with_content, left_open, unknown, twice] {
             let parsed = Heap::parse(&bytes).unwrap();
             assert!(parsed.irregular);
@@ -551,7 +554,7 @@ mod tests {
         // What one changed byte does: the attribute count 2 becomes 4,
         // and the two leaves that follow are read as attributes. The
         // tree is whole but two nodes short.
-        let swallowed = [4, (-2i8) as u8, 0, 47, (-3i8) as u8, 0, 5];
+        let swallowed = [4, 0xFE, 0, 47, 0xFD, 0, 5];
         let bytes = object(&swallowed, close());
         let parsed = Heap::parse(&bytes).unwrap();
         assert!(parsed.irregular);

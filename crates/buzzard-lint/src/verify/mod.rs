@@ -85,6 +85,8 @@ pub enum Confidence {
 }
 
 impl Confidence {
+    /// The label a report prints before a finding: `PROVEN`, `STRUCTURAL`
+    /// or `HEURISTIC`.
     pub fn as_str(self) -> &'static str {
         match self {
             Confidence::Proven => "PROVEN",
@@ -108,21 +110,34 @@ impl Confidence {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Problem {
     /// No execution reaches this state.
-    UnreachableState { state: String },
+    UnreachableState {
+        /// Name of the state.
+        state: String,
+    },
     /// Once in this state the loop's condition terminal can never stop
     /// the loop.
-    TrapState { state: String },
+    TrapState {
+        /// Name of the state.
+        state: String,
+    },
     /// The loop's condition terminal can never stop the loop, whatever
     /// state it is in.
     NeverStops,
     /// A constant that no case handles can reach the state register; the
     /// default case would run for it.
     UndefinedState {
+        /// The value without a case.
         target: String,
+        /// The default state, or `None` when there is none.
         handled_by: Option<String>,
     },
     /// A string/queue machine enqueues a name no case handles.
-    UnhandledQueueState { name: String, handled_by: String },
+    UnhandledQueueState {
+        /// The enqueued name without a case.
+        name: String,
+        /// The case that runs for it.
+        handled_by: String,
+    },
 }
 
 /// One finding about one machine, ready to show.
@@ -131,6 +146,7 @@ pub struct Issue {
     /// Where the machine is on the diagram, e.g.
     /// `while loop #38, case structure #49`.
     pub location: String,
+    /// What is wrong.
     #[serde(flatten)]
     pub problem: Problem,
     /// For a finding that the loop cannot stop: the nodes on the block
@@ -156,6 +172,9 @@ impl Issue {
         }
     }
 
+    /// How much the finding claims. A finding that the loop cannot stop
+    /// is proven only while no node on the diagram could end the program
+    /// some other way.
     pub fn confidence(&self) -> Confidence {
         match self.problem {
             Problem::UnreachableState { .. } => Confidence::Proven,
@@ -271,6 +290,7 @@ pub struct Verification {
 }
 
 impl Verification {
+    /// Whether no state machine of either kind was found.
     pub fn is_empty(&self) -> bool {
         self.machines.is_empty() && self.queue_machines.is_empty()
     }
@@ -294,9 +314,10 @@ impl Verification {
                 Issue {
                     location: machine.location.clone(),
                     problem,
-                    other_exits: match stops {
-                        true => machine.other_exits.clone(),
-                        false => Vec::new(),
+                    other_exits: if stops {
+                        machine.other_exits.clone()
+                    } else {
+                        Vec::new()
                     },
                     type_definition: machine.type_definition.clone().filter(|_| proof),
                 }

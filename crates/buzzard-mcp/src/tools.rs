@@ -697,7 +697,7 @@ fn rules(arguments: &Map<String, Value>) -> Result<Output, String> {
 /// The `tools/list` payload, in the order of [`NAMES`].
 #[expect(
     clippy::too_many_lines,
-    reason = "the schemas of all seven tools, kept together as one table"
+    reason = "the schemas of all eight tools, kept together as one table"
 )]
 pub(crate) fn definitions() -> Value {
     let path = |what: &str| {

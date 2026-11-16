@@ -31,7 +31,10 @@ fn fixture(name: &str) -> BlockDiagram {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/verify")
         .join(name);
-    Inspection::from_path(&path).unwrap().diagram.unwrap()
+    Inspection::from_path(&path)
+        .expect("parse the fixture")
+        .diagram
+        .expect("the fixture has a block diagram")
 }
 
 fn names(names: &[&str]) -> BTreeSet<String> {
@@ -69,7 +72,7 @@ fn machine(states: Vec<State>, initial: Option<&[&str]>, default: Option<&str>) 
 /// `other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven` covers.
 fn only(diagram: &BlockDiagram) -> Machine {
     let found = extract(diagram);
-    assert!(found.queue_machines.is_empty());
+    assert_eq!(found.queue_machines, []);
     let [machine] = &found.machines[..] else {
         panic!("expected one machine, found {}", found.machines.len());
     };
@@ -361,10 +364,10 @@ fn candle() -> (Spec, Machine) {
         frame.matches = vec![one(value)];
         frame.stop = Expr::Unwired;
         frame.next = Expr::Const(Value::Enum {
-            value: ["Cooling", "Heating", "Start", "Stop", "Idle", "Init"]
-                .iter()
-                .position(|item| *item == next)
-                .unwrap() as u32,
+            value: (0..)
+                .zip(["Cooling", "Heating", "Start", "Stop", "Idle", "Init"])
+                .find_map(|(value, item)| (item == next).then_some(value))
+                .expect("the next state is one of the items"),
             name: Some(next.to_owned()),
         });
     }
@@ -571,8 +574,8 @@ fn damage_to_the_real_machines_proves_nothing_new() {
     let mut total = Damage::default();
     for (path, ..) in REAL {
         let found = damage(&std::fs::read(root.join(path)).unwrap(), step);
-        assert_eq!(found.added, [] as [&str; 0], "{path}");
-        assert_eq!(found.vanished, [] as [&str; 0], "{path}");
+        assert_eq!(found.added, [""; 0], "{path}");
+        assert_eq!(found.vanished, [""; 0], "{path}");
         total.trials += found.trials;
         total.decoded += found.decoded;
         total.incomplete += found.incomplete;
@@ -604,7 +607,7 @@ fn damage_to_the_real_machines_proves_nothing_new() {
 fn real_string_machine_extracts_exactly() {
     let diagram = fixture("jki-smo/process.vi");
     let found = extract(&diagram);
-    assert!(found.queue_machines.is_empty());
+    assert_eq!(found.queue_machines, []);
     let expected = Machine {
         location: "while loop #3379, case structure #3023".to_owned(),
         // The diagram calls 17 different subVIs, any of which could end
@@ -650,7 +653,7 @@ fn queue_machines_are_recognised_and_checked_heuristically() {
     let template = verify(&fixture(
         "jki-state-machine/queued-state-machine-template.vi",
     ));
-    assert!(template.machines.is_empty());
+    assert_eq!(template.machines, []);
     let [queue] = &template.queue_machines[..] else {
         panic!("expected one queue machine");
     };
@@ -671,14 +674,14 @@ fn queue_machines_are_recognised_and_checked_heuristically() {
             "UI: Uninitialize",
         ]
     );
-    assert_eq!(queue.unhandled, [] as [&str; 0]);
+    assert_eq!(queue.unhandled, [""; 0]);
     assert_eq!(template.issues(), []);
 
     // A documentation example enqueues three names that have no case. The
     // case structures on the state's arguments, nested in the one on the
     // state, are not machines of their own.
     let example = verify(&fixture("jki-state-machine/new-support-vis-examples.vi"));
-    assert!(example.machines.is_empty());
+    assert_eq!(example.machines, []);
     assert_eq!(example.queue_machines.len(), 1);
     let issues = example.issues();
     let unhandled: Vec<&str> = issues
@@ -723,15 +726,15 @@ fn queue_strings_are_split_as_the_real_files_use_them() {
         queued_names("Action: Step 1\r\nEvent Structure // check the Abort button\n\n  Exit  "),
         ["Action: Step 1", "Event Structure", "Exit"]
     );
-    assert_eq!(queued_names("//Macro: Exit"), [] as [&str; 0]);
+    assert_eq!(queued_names("//Macro: Exit"), [""; 0]);
     assert_eq!(
         queued_names("//Test: Start //Only for development."),
-        [] as [&str; 0]
+        [""; 0]
     );
-    assert_eq!(queued_names("/* Post Error States"), [] as [&str; 0]);
+    assert_eq!(queued_names("/* Post Error States"), [""; 0]);
     assert_eq!(queued_names("A /* x\ny */ B\nC"), ["A  B", "C"]);
     assert_eq!(queued_names("Open >> http://example.test/a"), ["Open"]);
-    assert_eq!(queued_names(""), [] as [&str; 0]);
+    assert_eq!(queued_names(""), [""; 0]);
 }
 
 // ------------------------------------------------------ not state machines
@@ -800,7 +803,7 @@ fn other_selectors_and_loops_are_not_machines() {
     for class in ["forLoop", "timedLoop"] {
         let mut diagram = base().build();
         with_node(&mut diagram, LOOP, |looping| {
-            looping.class = class.to_owned()
+            looping.class = class.to_owned();
         });
         none(&diagram);
     }
@@ -988,21 +991,21 @@ fn an_unknowable_next_state_is_unknown_and_claims_nothing() {
 
 #[test]
 fn a_wire_that_cannot_be_trusted_is_unknown() {
-    let run_is_unknown = |diagram: &BlockDiagram, what: &str| {
-        let found = only(diagram);
-        assert_eq!(found.states[1].successors, Successors::Unknown, "{what}");
-        assert!(!claims_impossibility(&found.check().findings), "{what}");
-    };
     fn frame(diagram: &mut BlockDiagram) -> &mut buzzard_rsrc::Diagram {
         let case = &mut diagram.root.nodes[1].diagrams[0].nodes[1];
         assert_eq!(case.uid, CASE);
         &mut case.diagrams[1]
     }
-    let spec = doomed().goes(1, "Run");
     // The next-state constant of the frame.
     fn is_item(terminal: &buzzard_rsrc::Terminal) -> bool {
         matches!(terminal.constant, Some(Value::Enum { .. }))
     }
+    let run_is_unknown = |diagram: &BlockDiagram, what: &str| {
+        let found = only(diagram);
+        assert_eq!(found.states[1].successors, Successors::Unknown, "{what}");
+        assert!(!claims_impossibility(&found.check().findings), "{what}");
+    };
+    let spec = doomed().goes(1, "Run");
 
     // Listed backwards: the constant appears as the sink.
     let mut diagram = spec.build();
@@ -1039,13 +1042,13 @@ fn a_wire_that_cannot_be_trusted_is_unknown() {
 
     // The tunnel out of the case structure is of a kind that changes
     // values, or its two sides disagree.
-    for change in [
-        (|t: &mut buzzard_rsrc::Terminal| t.tunnel.as_mut().unwrap().mode = TunnelMode::Other)
-            as fn(&mut buzzard_rsrc::Terminal),
+    let changes: [fn(&mut buzzard_rsrc::Terminal); 4] = [
+        |t| t.tunnel.as_mut().unwrap().mode = TunnelMode::Other,
         |t| t.tunnel.as_mut().unwrap().conditional = true,
         |t| t.tunnel.as_mut().unwrap().output = false,
         |t| t.tunnel = None,
-    ] {
+    ];
+    for change in changes {
         let mut diagram = spec.build();
         with_node(&mut diagram, CASE, |case| change(&mut case.terminals[2]));
         let found = only(&diagram);
@@ -1493,7 +1496,7 @@ fn two_case_structures_on_one_register_are_two_machines() {
         sinks: vec![selected_by],
     });
     inside.nodes.push(second);
-    build::mark_wired(&mut diagram);
+    mark_wired(&mut diagram);
 
     let found = extract(&diagram);
     assert_eq!(found.machines.len(), 2);
@@ -1731,8 +1734,8 @@ fn a_walk_that_branches_without_end_gives_up() {
             uid,
             class: "prim".to_owned(),
             primitive: Some(build::SELECT),
-            terminals: (0..4)
-                .map(|p| terminal(uid + 10 + 2 * p, p as u32))
+            terminals: (0u8..4)
+                .map(|p| terminal(uid + 10 + 2 * i32::from(p), u32::from(p)))
                 .collect(),
             ..buzzard_rsrc::Node::default()
         };
@@ -1767,7 +1770,8 @@ fn lint_diagram(diagram: BlockDiagram) -> Vec<(String, &'static str, String)> {
     use buzzard_lint::{lint, DependencyGraph, FileState, LintConfig, Workspace};
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify/jki-smo");
-    let mut inspection = Inspection::from_path(&path.join("process.vi")).unwrap();
+    let mut inspection =
+        Inspection::from_path(&path.join("process.vi")).expect("parse the fixture");
     inspection.diagram = Some(diagram);
     let mut workspace = Workspace::default();
     workspace.insert(
@@ -1861,7 +1865,10 @@ fn issues_say_how_much_they_claim() {
         assert!(issue.justification().ends_with(char::is_alphabetic));
         assert!(!issue.justification().contains('\n'));
     }
-    let codes: Vec<&str> = issues.iter().map(|issue| issue.code()).collect();
+    let codes: Vec<&str> = issues
+        .iter()
+        .map(buzzard_lint::verify::Issue::code)
+        .collect();
     assert_eq!(codes, ["BZ201", "BZ201", "BZ202"]);
     assert_eq!(Confidence::Proven.as_str(), "PROVEN");
     assert_eq!(Confidence::Structural.as_str(), "STRUCTURAL");
@@ -1907,7 +1914,7 @@ fn claims(diagram: &BlockDiagram) -> Vec<(Confidence, &'static str, String)> {
 /// Add a node of the given class next to the loop.
 fn with_extra_node(mut diagram: BlockDiagram, class: &str, name: Option<&str>) -> BlockDiagram {
     diagram.root.nodes.push(buzzard_rsrc::Node {
-        uid: 70_000 + diagram.root.nodes.len() as i32,
+        uid: 70_000 + i32::try_from(diagram.root.nodes.len()).expect("few nodes"),
         class: class.to_owned(),
         name: name.map(str::to_owned),
         ..buzzard_rsrc::Node::default()
@@ -2106,7 +2113,7 @@ fn other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven() {
     let never = "the loop's condition terminal can never stop the loop";
     // Nothing but the loop on the diagram: proven.
     let alone = doomed().build();
-    assert_eq!(extract(&alone).machines[0].other_exits, [] as [&str; 0]);
+    assert_eq!(extract(&alone).machines[0].other_exits, [""; 0]);
     let found = claims(&alone);
     assert_eq!(found[2], (Confidence::Proven, "BZ202", never.to_owned()));
     // A built-in function that only computes changes nothing.
@@ -2609,11 +2616,15 @@ fn damage(bytes: &[u8], step: usize) -> Damage {
     use buzzard_rsrc::blocks::zlib;
     use buzzard_rsrc::RsrcFile;
 
-    let file = RsrcFile::parse(bytes).unwrap();
-    let heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+    let file = RsrcFile::parse(bytes).expect("parse the container");
+    let heap = zlib::decompress(
+        file.first(b"BDHb")
+            .expect("the file has a block diagram heap"),
+    )
+    .expect("inflate the block diagram heap");
     let pristine = BlockDiagram::from_inflated_heap(&file, &heap)
-        .unwrap()
-        .unwrap();
+        .expect("decode the block diagram")
+        .expect("the heap holds a diagram");
     assert!(pristine.is_complete());
     let allowed = proven(&pristine);
     let whole = amount(&pristine);
@@ -2642,9 +2653,10 @@ fn damage(bytes: &[u8], step: usize) -> Damage {
             if found.is_subset(&allowed) {
                 continue;
             }
-            let list = match skeleton(&diagram) == structure {
-                true => &mut out.revalued,
-                false => &mut out.added,
+            let list = if skeleton(&diagram) == structure {
+                &mut out.revalued
+            } else {
+                &mut out.added
             };
             for finding in found.difference(&allowed) {
                 list.push(format!(
@@ -2751,8 +2763,8 @@ fn a_damaged_heap_never_adds_a_proven_finding() {
             .join("tests/fixtures/verify")
             .join(name);
         let found = damage(&std::fs::read(path).unwrap(), step);
-        assert_eq!(found.added, [] as [&str; 0], "{name}");
-        assert_eq!(found.vanished, [] as [&str; 0], "{name}");
+        assert_eq!(found.added, [""; 0], "{name}");
+        assert_eq!(found.vanished, [""; 0], "{name}");
         total.trials += found.trials;
         total.decoded += found.decoded;
         total.incomplete += found.incomplete;

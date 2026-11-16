@@ -24,11 +24,11 @@ fn run(args: &[&str], dir: &Path) -> (i32, String, String) {
         .args(args)
         .current_dir(dir)
         .output()
-        .unwrap();
+        .expect("run the buzzard binary");
     (
-        status.code().unwrap(),
-        String::from_utf8(stdout).unwrap(),
-        String::from_utf8(stderr).unwrap(),
+        status.code().expect("buzzard exits with a status"),
+        String::from_utf8(stdout).expect("stdout is UTF-8"),
+        String::from_utf8(stderr).expect("stderr is UTF-8"),
     )
 }
 

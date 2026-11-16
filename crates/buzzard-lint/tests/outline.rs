@@ -10,7 +10,10 @@ use buzzard_lint::{render, summary, Inspection};
 fn diagram() -> buzzard_rsrc::BlockDiagram {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify/jki-smo/process.vi");
-    Inspection::from_path(&path).unwrap().diagram.unwrap()
+    Inspection::from_path(&path)
+        .expect("parse the fixture")
+        .diagram
+        .expect("the fixture has a block diagram")
 }
 
 #[test]

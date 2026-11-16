@@ -904,8 +904,9 @@ fn changed_constants_and_case_labels_are_reported() {
         ..structure(
             20,
             "select",
-            (0..labels.len() as i32)
-                .map(|i| frame(30 + i, Vec::new(), &[]))
+            (30..)
+                .take(labels.len())
+                .map(|uid| frame(uid, Vec::new(), &[]))
                 .collect(),
         )
     };

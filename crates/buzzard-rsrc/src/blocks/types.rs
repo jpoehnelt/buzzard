@@ -7,6 +7,7 @@
 //! clusters refer to their elements by flat index. A heap object's
 //! `typeDesc` value is 1-based within the `DTHP` slice of the top-level list.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use serde::{Serialize, Serializer};
@@ -333,28 +334,30 @@ impl TypeTable {
         if !exact && !zero_padded {
             return None;
         }
-        let unsigned = bytes[..size]
-            .iter()
-            .fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
+        let raw = &bytes[..size];
+        let unsigned = || raw.iter().fold(0u64, |acc, &b| (acc << 8) | u64::from(b));
         Some(match code {
-            CODE_BOOLEAN => Value::Boolean(unsigned != 0),
-            0x09 => Value::Float(f32::from_bits(unsigned as u32).to_string()),
-            0x0A => Value::Float(f64::from_bits(unsigned).to_string()),
+            CODE_BOOLEAN => Value::Boolean(unsigned() != 0),
+            0x09 => Value::Float(f32::from_be_bytes(raw.try_into().ok()?).to_string()),
+            0x0A => Value::Float(f64::from_be_bytes(raw.try_into().ok()?).to_string()),
             _ => match NumericType::from_code(code)? {
                 NumericType::Enum8 | NumericType::Enum16 | NumericType::Enum32 => {
-                    let value = u32::try_from(unsigned).ok()?;
+                    let value = u32::try_from(unsigned()).ok()?;
                     let name = match &base.body {
-                        Body::Enum(items) => items.get(value as usize).cloned(),
+                        Body::Enum(items) => usize::try_from(value)
+                            .ok()
+                            .and_then(|index| items.get(index))
+                            .cloned(),
                         _ => None,
                     };
                     Value::Enum { value, name }
                 }
-                NumericType::I8 => Value::Integer(i64::from(unsigned as u8 as i8)),
-                NumericType::I16 => Value::Integer(i64::from(unsigned as u16 as i16)),
-                NumericType::I32 => Value::Integer(i64::from(unsigned as u32 as i32)),
-                NumericType::I64 => Value::Integer(unsigned as i64),
+                NumericType::I8 => Value::Integer(i8::from_be_bytes(raw.try_into().ok()?).into()),
+                NumericType::I16 => Value::Integer(i16::from_be_bytes(raw.try_into().ok()?).into()),
+                NumericType::I32 => Value::Integer(i32::from_be_bytes(raw.try_into().ok()?).into()),
+                NumericType::I64 => Value::Integer(i64::from_be_bytes(raw.try_into().ok()?)),
                 NumericType::U8 | NumericType::U16 | NumericType::U32 | NumericType::U64 => {
-                    Value::Integer(i64::try_from(unsigned).ok()?)
+                    Value::Integer(i64::try_from(unsigned()).ok()?)
                 }
                 NumericType::Float | NumericType::Other => return None,
             },
@@ -388,13 +391,21 @@ fn string_constant(bytes: &[u8]) -> Option<Value> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NumericType {
+    /// A signed 8-bit integer.
     I8,
+    /// A signed 16-bit integer.
     I16,
+    /// A signed 32-bit integer.
     I32,
+    /// A signed 64-bit integer.
     I64,
+    /// An unsigned 8-bit integer.
     U8,
+    /// An unsigned 16-bit integer.
     U16,
+    /// An unsigned 32-bit integer.
     U32,
+    /// An unsigned 64-bit integer.
     U64,
     /// An enumeration stored in an unsigned 8-bit integer.
     Enum8,
@@ -460,6 +471,7 @@ impl NumericType {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Value {
+    /// A Boolean.
     Boolean(bool),
     /// A signed or unsigned integer of any width.
     Integer(i64),
@@ -470,7 +482,9 @@ pub enum Value {
     /// type definition changed afterwards and the file was not saved
     /// again, the name is the old one.
     Enum {
+        /// The 0-based index into the item list.
         value: u32,
+        /// The item's name, or `None` for a value outside the list.
         name: Option<String>,
     },
     /// A single or double precision number, printed in the shortest form
@@ -509,7 +523,9 @@ pub(crate) fn printable(text: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push_str(&format!("\\x{:02X}", c as u32)),
+            c if c.is_control() => {
+                let _ = write!(out, "\\x{:02X}", u32::from(c));
+            }
             c => out.push(c),
         }
     }
@@ -519,6 +535,7 @@ pub(crate) fn printable(text: &str) -> String {
 /// What the type table says about one type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TypeInfo {
+    /// The class of the type, after looking through type definitions.
     pub data_type: DataType,
     /// Storage of a numeric type; `None` for anything else.
     pub numeric: Option<NumericType>,
@@ -539,6 +556,10 @@ pub(crate) fn serialize_items<S: Serializer>(
     serializer.collect_seq(items.iter())
 }
 
+#[expect(
+    clippy::ref_option,
+    reason = "serde passes a reference to the field to `serialize_with`"
+)]
 fn serialize_optional_items<S: Serializer>(
     items: &Option<Arc<[String]>>,
     serializer: S,
@@ -559,8 +580,8 @@ fn parse_enum(body: &mut Reader<'_>) -> Result<Body> {
         return Err(malformed("VCTP", "implausible enumeration size"));
     }
     Ok(Body::Enum(
-        (0..count)
-            .map(|_| body.pstr().map(decode_text))
+        std::iter::repeat_with(|| body.pstr().map(decode_text))
+            .take(count)
             .collect::<Result<Vec<String>>>()?
             .into(),
     ))
@@ -649,8 +670,8 @@ fn parse_typedef(body: &mut Reader<'_>, depth: usize) -> Result<Body> {
     if names > body.remaining() {
         return Err(malformed("VCTP", "implausible type definition name"));
     }
-    let names = (0..names)
-        .map(|_| body.pstr().map(decode_text))
+    let names = std::iter::repeat_with(|| body.pstr().map(decode_text))
+        .take(names)
         .collect::<Result<Vec<String>>>()?;
     Ok(Body::TypeDef(
         names,
@@ -733,9 +754,10 @@ mod tests {
 
     /// A table of raw descriptors, each used once by the heap, in order.
     fn raw_table(descs: &[Vec<u8>]) -> TypeTable {
-        let top: Vec<u16> = (0..descs.len() as u16).collect();
+        let count = u16::try_from(descs.len()).expect("test type count fits in a u16");
+        let top: Vec<u16> = (0..count).collect();
         let vctp = table(descs, &top);
-        let dthp = [(descs.len() as u16).to_be_bytes(), 1u16.to_be_bytes()].concat();
+        let dthp = [count.to_be_bytes(), 1u16.to_be_bytes()].concat();
         TypeTable::parse(&vctp, Some(&dthp)).unwrap()
     }
 
@@ -850,11 +872,12 @@ mod tests {
         let mut body = 0xFFFFu16.to_be_bytes().to_vec();
         for item in 0..0xFFFFu32 {
             let name = format!("Item {item}");
-            body.push(name.len() as u8);
+            body.push(u8::try_from(name.len()).expect("test item name fits in a u8"));
             body.extend_from_slice(name.as_bytes());
         }
         // The descriptor is longer than a 16-bit length can say.
-        let len = (body.len() + 6) as u32 | 0x8000_0000;
+        let len = u32::try_from(body.len() + 6).expect("test descriptor length fits in a u32")
+            | 0x8000_0000;
         let mut descriptor = len.to_be_bytes().to_vec();
         descriptor.extend([0, 0x16]);
         descriptor.extend_from_slice(&body);

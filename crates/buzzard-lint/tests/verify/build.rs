@@ -10,14 +10,14 @@ use buzzard_rsrc::{
 };
 
 /// Resource ids of the built-in functions the tests place.
-pub const SELECT: u32 = 1516;
-pub const ADD: u32 = 1050;
-pub const EQUAL: u32 = 1102;
-pub const STOP: u32 = 1350;
+pub(crate) const SELECT: u32 = 1516;
+pub(crate) const ADD: u32 = 1050;
+pub(crate) const EQUAL: u32 = 1102;
+pub(crate) const STOP: u32 = 1350;
 
 /// What is wired to a sink.
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub(crate) enum Expr {
     /// Nothing.
     Unwired,
     /// A constant of the type the sink expects.
@@ -57,108 +57,109 @@ pub enum Expr {
     AutoIndexed(Box<Expr>),
 }
 
-pub fn select(when_true: Expr, when_false: Expr) -> Expr {
+pub(crate) fn select(when_true: Expr, when_false: Expr) -> Expr {
     Expr::Select(Box::new(when_true), Box::new(when_false))
 }
 
-pub fn text(value: &str) -> Expr {
+pub(crate) fn text(value: &str) -> Expr {
     Expr::Const(Value::String(value.to_owned()))
 }
 
-pub fn boolean(value: bool) -> Expr {
+pub(crate) fn boolean(value: bool) -> Expr {
     Expr::Const(Value::Boolean(value))
 }
 
-pub fn integer(value: i64) -> Expr {
+pub(crate) fn integer(value: i64) -> Expr {
     Expr::Const(Value::Integer(value))
 }
 
 /// The type of a wire.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Ty {
-    pub data: DataType,
-    pub numeric: Option<NumericType>,
+pub(crate) struct Ty {
+    pub(crate) data: DataType,
+    pub(crate) numeric: Option<NumericType>,
 }
 
-pub const BOOLEAN: Ty = Ty {
+pub(crate) const BOOLEAN: Ty = Ty {
     data: DataType::Boolean,
     numeric: None,
 };
-pub const STRING: Ty = Ty {
+pub(crate) const STRING: Ty = Ty {
     data: DataType::String,
     numeric: None,
 };
-pub const ENUM16: Ty = Ty {
+pub(crate) const ENUM16: Ty = Ty {
     data: DataType::Numeric,
     numeric: Some(NumericType::Enum16),
 };
-pub const INT32: Ty = Ty {
+pub(crate) const INT32: Ty = Ty {
     data: DataType::Numeric,
     numeric: Some(NumericType::I32),
 };
 
 /// One frame of the machine's case structure.
 #[derive(Debug, Clone)]
-pub struct Frame {
-    pub matches: Vec<SelectorMatch>,
-    pub next: Expr,
-    pub stop: Expr,
+pub(crate) struct Frame {
+    pub(crate) matches: Vec<SelectorMatch>,
+    pub(crate) next: Expr,
+    pub(crate) stop: Expr,
 }
 
 /// An event structure around the machine's case structure, which sits in
 /// its first frame. The other frames write the next state themselves.
 #[derive(Debug, Clone)]
-pub struct Wrap {
+pub(crate) struct Wrap {
     /// Next state and stop value of each further event frame.
-    pub others: Vec<(Expr, Expr)>,
-    pub timeout_wired: bool,
+    pub(crate) others: Vec<(Expr, Expr)>,
+    pub(crate) timeout_wired: bool,
 }
 
 #[derive(Debug, Clone)]
-pub struct Spec {
-    pub kind: SelectorKind,
-    pub items: Vec<&'static str>,
-    pub state: Ty,
-    pub frames: Vec<Frame>,
-    pub default: Option<u32>,
-    pub initial: Expr,
-    pub stop_if_true: bool,
+pub(crate) struct Spec {
+    pub(crate) kind: SelectorKind,
+    pub(crate) items: Vec<&'static str>,
+    pub(crate) state: Ty,
+    pub(crate) frames: Vec<Frame>,
+    pub(crate) default: Option<u32>,
+    pub(crate) initial: Expr,
+    pub(crate) stop_if_true: bool,
     /// Feed the condition terminal with this instead of the case
     /// structure's stop tunnel.
-    pub loop_stop: Option<Expr>,
+    pub(crate) loop_stop: Option<Expr>,
     /// Feed the register with this instead of the case structure's
     /// next-state tunnel.
-    pub loop_next: Option<Expr>,
-    pub wrap: Option<Wrap>,
+    pub(crate) loop_next: Option<Expr>,
+    pub(crate) wrap: Option<Wrap>,
     /// The type definition file the selector's type is an instance of.
-    pub type_definition: Option<&'static str>,
+    pub(crate) type_definition: Option<&'static str>,
 }
 
 /// A value of the frame: `one(3)` is the label `3`.
-pub fn one(value: i32) -> SelectorMatch {
+pub(crate) fn one(value: i32) -> SelectorMatch {
     SelectorMatch::Range {
         start: Some(value),
         end: Some(value),
     }
 }
 
-pub fn range(start: Option<i32>, end: Option<i32>) -> SelectorMatch {
+pub(crate) fn range(start: Option<i32>, end: Option<i32>) -> SelectorMatch {
     SelectorMatch::Range { start, end }
 }
 
-pub fn label(value: &str) -> SelectorMatch {
+pub(crate) fn label(value: &str) -> SelectorMatch {
     SelectorMatch::Text(value.to_owned())
 }
 
 impl Spec {
     /// An enumeration machine with one frame per item, in item order.
     /// Every frame holds its state and never stops until told otherwise.
-    pub fn enumeration(items: &[&'static str]) -> Self {
+    pub(crate) fn enumeration(items: &[&'static str]) -> Self {
         Self {
             kind: SelectorKind::Enum,
             items: items.to_vec(),
             state: ENUM16,
-            frames: (0..items.len() as i32)
+            frames: (0..)
+                .take(items.len())
                 .map(|value| Frame {
                     matches: vec![one(value)],
                     next: Expr::Current,
@@ -176,7 +177,7 @@ impl Spec {
     }
 
     /// A string machine with one frame per label.
-    pub fn strings(labels: &[&'static str]) -> Self {
+    pub(crate) fn strings(labels: &[&'static str]) -> Self {
         Self {
             kind: SelectorKind::String,
             state: STRING,
@@ -194,7 +195,7 @@ impl Spec {
     }
 
     /// An integer machine with the given frames.
-    pub fn integers(frames: Vec<Vec<SelectorMatch>>) -> Self {
+    pub(crate) fn integers(frames: Vec<Vec<SelectorMatch>>) -> Self {
         Self {
             kind: SelectorKind::Integer,
             state: INT32,
@@ -211,51 +212,51 @@ impl Spec {
     }
 
     /// The enumeration constant of an item.
-    pub fn item(&self, name: &str) -> Expr {
+    pub(crate) fn item(&self, name: &str) -> Expr {
         let value = self
             .items
             .iter()
             .position(|item| *item == name)
             .unwrap_or_else(|| panic!("no item {name}"));
         Expr::Const(Value::Enum {
-            value: value as u32,
+            value: u32::try_from(value).expect("the item index fits in a u32"),
             name: Some(name.to_owned()),
         })
     }
 
     /// Set what the frame at `index` wires to the next-state tunnel.
-    pub fn next(mut self, index: usize, next: Expr) -> Self {
+    pub(crate) fn next(mut self, index: usize, next: Expr) -> Self {
         self.frames[index].next = next;
         self
     }
 
     /// Set the next state of the frame at `index` to an item constant.
-    pub fn goes(self, index: usize, name: &str) -> Self {
+    pub(crate) fn goes(self, index: usize, name: &str) -> Self {
         let next = self.item(name);
         self.next(index, next)
     }
 
-    pub fn stop(mut self, index: usize, stop: Expr) -> Self {
+    pub(crate) fn stop(mut self, index: usize, stop: Expr) -> Self {
         self.frames[index].stop = stop;
         self
     }
 
-    pub fn starts(mut self, initial: Expr) -> Self {
+    pub(crate) fn starts(mut self, initial: Expr) -> Self {
         self.initial = initial;
         self
     }
 
-    pub fn starts_in(self, name: &str) -> Self {
+    pub(crate) fn starts_in(self, name: &str) -> Self {
         let initial = self.item(name);
         self.starts(initial)
     }
 
-    pub fn default(mut self, frame: u32) -> Self {
+    pub(crate) fn default(mut self, frame: u32) -> Self {
         self.default = Some(frame);
         self
     }
 
-    pub fn build(&self) -> BlockDiagram {
+    pub(crate) fn build(&self) -> BlockDiagram {
         Build { uid: 0 }.machine(self)
     }
 }
@@ -265,11 +266,11 @@ struct Build {
 }
 
 /// Ids fixed by the builder so that tests can find the parts.
-pub const LOOP: i32 = 9_000;
-pub const CASE: i32 = 9_001;
-pub const LEFT: i32 = 9_002;
-pub const RIGHT: i32 = 9_003;
-pub const CONDITION: i32 = 9_004;
+pub(crate) const LOOP: i32 = 9_000;
+pub(crate) const CASE: i32 = 9_001;
+pub(crate) const LEFT: i32 = 9_002;
+pub(crate) const RIGHT: i32 = 9_003;
+pub(crate) const CONDITION: i32 = 9_004;
 
 fn plain(output: bool, default_if_unwired: bool) -> Tunnel {
     Tunnel {
@@ -335,9 +336,9 @@ impl Build {
             direction: Direction::Output,
             ..self.terminal("parm", ty, None)
         }];
-        for index in 1..=inputs {
+        for index in (1..).take(inputs) {
             terminals.push(Terminal {
-                param: Some(index as u32),
+                param: Some(index),
                 ..self.terminal("parm", ty, None)
             });
         }
@@ -352,6 +353,10 @@ impl Build {
 
     /// Place whatever produces `expr` in `diagram` and wire it to `sink`.
     /// `current` is the terminal in this diagram that carries the state.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of expression, kept together so the kinds can be compared"
+    )]
     fn feed(
         &mut self,
         diagram: &mut Diagram,
@@ -417,7 +422,7 @@ impl Build {
                 node.terminals.swap(1, 3);
                 let by = |param: u32| {
                     let found = node.terminals.iter().find(|t| t.param == Some(param));
-                    found.unwrap().uid
+                    found.expect("Select has parameters 0 to 3").uid
                 };
                 let (output, on, off) = (by(0), by(3), by(1));
                 diagram.nodes.push(node);
@@ -505,7 +510,10 @@ impl Build {
     /// A structure whose output tunnel feeds `sink`, with one frame per
     /// expression. The state is passed in through an input tunnel.
     /// Returns the position of the structure in `diagram.nodes`.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one part of the structure to build; a struct would only be filled in at the two call sites"
+    )]
     fn structure(
         &mut self,
         diagram: &mut Diagram,
@@ -536,7 +544,7 @@ impl Build {
                 },
                 enum_items: [].into(),
                 type_definition: None,
-                frames: (0..frames.len() as i32).map(|v| vec![one(v)]).collect(),
+                frames: (0..).take(frames.len()).map(|v| vec![one(v)]).collect(),
                 default_frame: (frames.len() != 2).then_some(0),
             }),
             ..Node::default()
@@ -571,6 +579,10 @@ impl Build {
         diagram.nodes.len() - 1
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the loop is built from the outside in, and each part is wired to the terminals of the parts before it"
+    )]
     fn machine(&mut self, spec: &Spec) -> BlockDiagram {
         let state = spec.state;
         let mut root = self.diagram();
@@ -752,7 +764,7 @@ impl Build {
 
 /// Set `wired` on every terminal that is an end of a wire, as the decoder
 /// does.
-pub fn mark_wired(diagram: &mut BlockDiagram) {
+pub(crate) fn mark_wired(diagram: &mut BlockDiagram) {
     let ends: std::collections::HashSet<i32> = diagram
         .wires()
         .flat_map(|wire| std::iter::once(wire.source).chain(wire.sinks.iter().copied()))
@@ -765,7 +777,7 @@ pub fn mark_wired(diagram: &mut BlockDiagram) {
 }
 
 /// Call `change` on every node of the diagram, outermost first.
-pub fn visit(diagram: &mut Diagram, change: &mut dyn FnMut(&mut Node)) {
+pub(crate) fn visit(diagram: &mut Diagram, change: &mut dyn FnMut(&mut Node)) {
     for node in &mut diagram.nodes {
         change(node);
         for frame in &mut node.diagrams {
@@ -775,7 +787,7 @@ pub fn visit(diagram: &mut Diagram, change: &mut dyn FnMut(&mut Node)) {
 }
 
 /// Change the node with the given id.
-pub fn with_node(diagram: &mut BlockDiagram, uid: i32, change: impl FnOnce(&mut Node)) {
+pub(crate) fn with_node(diagram: &mut BlockDiagram, uid: i32, change: impl FnOnce(&mut Node)) {
     let mut change = Some(change);
     visit(&mut diagram.root, &mut |node| {
         if node.uid == uid {
@@ -788,7 +800,7 @@ pub fn with_node(diagram: &mut BlockDiagram, uid: i32, change: impl FnOnce(&mut 
 }
 
 /// Change every terminal that satisfies a condition; returns how many.
-pub fn with_terminals(
+pub(crate) fn with_terminals(
     diagram: &mut BlockDiagram,
     wanted: impl Fn(&Terminal) -> bool,
     change: impl Fn(&mut Terminal),

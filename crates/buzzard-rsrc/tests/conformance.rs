@@ -479,14 +479,20 @@ fn machine_fixture(name: &str) -> Vec<u8> {
 
 fn machine_diagram(name: &str) -> BlockDiagram {
     let bytes = machine_fixture(name);
-    let file = RsrcFile::parse(&bytes).unwrap();
-    BlockDiagram::from_rsrc(&file).unwrap().unwrap()
+    let file = RsrcFile::parse(&bytes).expect("parse fixture container");
+    BlockDiagram::from_rsrc(&file)
+        .expect("decode fixture block diagram")
+        .expect("fixture has a block diagram")
 }
 
 /// `process.vi` (saved by version 13): a while loop with four shift
 /// registers around a string case structure with the cases `"Init"` and
 /// `"Idle", Default`. The expected ids were read off the raw heap.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one real diagram read from the loop inwards; each step uses the nodes found by the previous ones"
+)]
 fn diagram_of_a_state_machine() {
     use buzzard_rsrc::{SelectorKind, SelectorMatch, ShiftRegister, TunnelMode, Value};
 
@@ -549,9 +555,9 @@ fn diagram_of_a_state_machine() {
     let tunnel = next.tunnel.unwrap();
     assert!(tunnel.output && tunnel.default_if_unwired && !tunnel.conditional);
     assert_eq!(tunnel.mode, TunnelMode::Plain);
-    let into = case.terminals.iter().find(|t| t.uid == 3052).unwrap();
-    assert_eq!(into.dco_class.as_deref(), Some("caseSel"));
-    assert_eq!(into.tunnel, None);
+    let selected = case.terminals.iter().find(|t| t.uid == 3052).unwrap();
+    assert_eq!(selected.dco_class.as_deref(), Some("caseSel"));
+    assert_eq!(selected.tunnel, None);
 
     // An enumeration case structure with a default frame without values.
     let nested = node(3934).selector.as_ref().unwrap();
@@ -637,7 +643,7 @@ fn terminals_carry_their_parameter_index() {
         .unwrap();
     assert!(call.terminals.iter().all(|t| t.param.is_some()));
     let mut slots: Vec<_> = call.terminals.iter().filter_map(|t| t.param).collect();
-    slots.sort();
+    slots.sort_unstable();
     slots.dedup();
     assert_eq!(slots.len(), call.terminals.len());
 }
@@ -647,6 +653,10 @@ fn terminals_carry_their_parameter_index() {
 /// flags and parameter indices. Each is overwritten in the decoded heap,
 /// where a byte-level corruption of the file cannot aim.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table of the fields to corrupt and the values to write, tried on every fixture"
+)]
 fn hostile_state_machine_fields_never_panic() {
     use buzzard_rsrc::blocks::heap::{tag_id, Content, Heap, HeapNode};
     use buzzard_rsrc::blocks::types::TypeTable;
@@ -787,7 +797,8 @@ fn hostile_state_machine_fields_never_panic() {
                 let Ok(table) = TypeTable::parse(&copy, dthp) else {
                     continue;
                 };
-                for id in 0..table.len() as u32 + 2 {
+                let ids = u32::try_from(table.len()).expect("the type count fits in a u32") + 2;
+                for id in 0..ids {
                     let _ = table.heap_type_info(id);
                     for bytes in CONTENTS {
                         let _ = table.constant(id, bytes);
@@ -818,13 +829,14 @@ fn first_mut<'t, 'a>(
 
 /// The first list field with the given tag that has two elements or more.
 fn list_mut<'t, 'a>(root: &'t mut HeapNode<'a>, tag: i32) -> &'t mut HeapNode<'a> {
-    first_mut(root, &|n| n.tag == tag && n.children.len() >= 2).unwrap()
+    first_mut(root, &|n| n.tag == tag && n.children.len() >= 2)
+        .expect("the fixture has a list with this tag")
 }
 
 /// The elements of an object's own list field with the given tag.
 fn own_list<'t, 'a>(object: &'t mut HeapNode<'a>, tag: i32) -> &'t mut Vec<HeapNode<'a>> {
     let list = object.children.iter_mut().find(|c| c.tag == tag);
-    &mut list.unwrap().children
+    &mut list.expect("the object has a list with this tag").children
 }
 
 /// The fields of the first object that has a field with the given tag.
@@ -832,7 +844,9 @@ fn fields_of_owner<'t, 'a>(root: &'t mut HeapNode<'a>, tag: i32) -> &'t mut Vec<
     let owner = first_mut(root, &|n| {
         n.class().is_some() && n.children.iter().any(|c| c.tag == tag)
     });
-    &mut owner.unwrap().children
+    &mut owner
+        .expect("an object of the fixture has a field with this tag")
+        .children
 }
 
 /// Attribute ids of a heap object: its class and its unique id.
@@ -860,6 +874,10 @@ fn dangle(element: &mut HeapNode<'_>) {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one kind of damage after another to the same decoded heap, each with the loss it must leave"
+)]
 fn every_loss_of_the_decoder_is_recorded() {
     use buzzard_rsrc::blocks::heap::tag_id;
     use buzzard_rsrc::blocks::types::TypeTable;
@@ -1125,7 +1143,7 @@ fn a_selector_table_that_is_not_whole_is_absent() {
     let intact = selector(&|_| {}).unwrap();
     assert_eq!(intact.frames.len(), 3);
     assert_eq!(intact.default_frame, Some(0));
-    assert!(intact.frames[0].is_empty());
+    assert_eq!(intact.frames[0], []);
     assert!(intact.frames[1..].iter().all(|frame| frame.len() == 1));
     // The type is an instance of a type definition, which is named.
     assert_eq!(
@@ -1165,7 +1183,7 @@ fn a_selector_table_that_is_not_whole_is_absent() {
     // A frame that is not the default and that no entry selects, with
     // the list's stated length kept right.
     let resize = |entries: &mut HeapNode<'_>| {
-        let length = entries.children.len() as i32;
+        let length = i32::try_from(entries.children.len()).unwrap();
         set_attr(entries, ELEMENTS, length);
     };
     assert_eq!(

@@ -143,7 +143,7 @@
 //!   When the diagram calls the built-in Stop or Quit function anywhere,
 //!   every state is `Maybe`. Any other node that could end the program
 //!   or abort the VI (a subVI call, a call by reference, an invoke or
-//!   property node, a call into a library, an XNode, a node of a class
+//!   property node, a call into a library, an `XNode`, a node of a class
 //!   that is not known to be harmless) is listed in
 //!   [`Machine::other_exits`], wherever it sits on the block diagram,
 //!   and keeps a "cannot stop" finding from being labelled as proven. An
@@ -282,7 +282,10 @@ pub struct QueueMachine {
 /// The machines found on one block diagram.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Extraction {
+    /// Classic state machines: a while loop whose shift register selects
+    /// the case that runs.
     pub machines: Vec<Machine>,
+    /// String/queue machines, which are recognised but not modelled.
     pub queue_machines: Vec<QueueMachine>,
     /// The diagram did not decode completely
     /// ([`BlockDiagram::is_complete`]), so it was not searched for
@@ -315,9 +318,10 @@ pub fn extract(diagram: &BlockDiagram) -> Extraction {
         // On a diagram with a loss the absence of a wire or of a node is
         // not evidence, and every claim about a classic machine rests on
         // such absences.
-        let classic = match out.incomplete {
-            true => None,
-            false => index.machine(case, selector, selected_by, origin, terminal),
+        let classic = if out.incomplete {
+            None
+        } else {
+            index.machine(case, selector, selected_by, origin, terminal)
         };
         if let Some(machine) = classic {
             out.machines.push(machine);
@@ -367,14 +371,42 @@ enum Atom {
 /// Every value a wire can carry, or `None` when that is unknown.
 type Values = Option<BTreeSet<Atom>>;
 
-fn one(atom: Atom) -> Values {
-    Some(BTreeSet::from([atom]))
+fn one(atom: Atom) -> BTreeSet<Atom> {
+    BTreeSet::from([atom])
 }
 
 fn union(a: Values, b: Values) -> Values {
     let (mut a, b) = (a?, b?);
     a.extend(b);
     Some(a)
+}
+
+/// The shift register of a loop whose left side is `left`, if the loop's
+/// registers can be trusted.
+///
+/// Registers must pair one to one. A stacked register has several left
+/// sides; how the file stores one was never seen, so any left or right
+/// register terminal beyond one per register refuses the loop, whichever
+/// list it is or is not named in.
+fn state_register<'a>(
+    info: &'a buzzard_rsrc::LoopInfo,
+    looping: &Node,
+    boundary: &Node,
+    left: i32,
+) -> Option<&'a buzzard_rsrc::ShiftRegister> {
+    let terminals = |node: &Node, class: &str| {
+        let of_class = |t: &&Terminal| t.dco_class.as_deref() == Some(class);
+        node.terminals.iter().filter(of_class).count()
+    };
+    let registers = info.shift_registers.len();
+    let paired = info.shift_registers.iter().all(|r| r.left.len() == 1)
+        && [looping, boundary]
+            .iter()
+            .all(|node| terminals(node, "lSR") == registers && terminals(node, "rSR") == registers);
+    if !paired {
+        return None;
+    }
+    info.shift_registers.iter().find(|r| r.left == [left])
 }
 
 /// The diagram flattened for lookups by id.
@@ -590,23 +622,7 @@ impl<'a> Index<'a> {
         let info = looping.loop_info.as_ref()?;
         let left = left_inner.dco?;
         let boundary = self.nodes[origin];
-        // Registers must pair one to one. A stacked register has several
-        // left sides; how the file stores one was never seen, so any
-        // left or right register terminal beyond one per register refuses
-        // the loop, whichever list it is or is not named in.
-        let terminals = |node: &Node, class: &str| {
-            let of_class = |t: &&Terminal| t.dco_class.as_deref() == Some(class);
-            node.terminals.iter().filter(of_class).count()
-        };
-        let registers = info.shift_registers.len();
-        let paired = info.shift_registers.iter().all(|r| r.left.len() == 1)
-            && [looping, boundary].iter().all(|node| {
-                terminals(node, "lSR") == registers && terminals(node, "rSR") == registers
-            });
-        if !paired {
-            return None;
-        }
-        let register = info.shift_registers.iter().find(|r| r.left == [left])?;
+        let register = state_register(info, looping, boundary, left)?;
         with_dco(boundary, left)?;
         let right_inner = with_dco(boundary, register.right)?;
         let left_outer = with_dco(looping, left)?;
@@ -912,7 +928,11 @@ fn state_names(selector: &CaseSelector) -> Option<Vec<String>> {
                 .collect();
             if !parts.is_empty() {
                 Some(parts.join(", "))
-            } else if selector.default_frame == Some(frame as u32) {
+            } else if selector
+                .default_frame
+                .and_then(|index| usize::try_from(index).ok())
+                == Some(frame)
+            {
                 Some("Default".to_owned())
             } else {
                 None
@@ -1150,8 +1170,11 @@ impl<'a> Tracer<'_, 'a> {
         let node = index.nodes[at];
         if index.is_boundary(at) {
             return match source.dco_class.as_deref()? {
-                "bDConstDCO" => one(Atom::Constant(source.constant.clone()?, source.numeric)),
-                "lSR" if self.state == Some((at, source.dco?)) => one(Atom::Current),
+                "bDConstDCO" => Some(one(Atom::Constant(
+                    source.constant.clone()?,
+                    source.numeric,
+                ))),
+                "lSR" if self.state == Some((at, source.dco?)) => Some(one(Atom::Current)),
                 "lSR" => None,
                 _ => self.sink(index.outside(at, source)?, None, depth),
             };
@@ -1191,10 +1214,7 @@ impl<'a> Tracer<'_, 'a> {
                     Some((case, frame)) if case == at => frame..frame + 1,
                     _ => 0..inner.len(),
                 };
-                let unwired = match tunnel.default_if_unwired {
-                    true => one(Atom::TypeDefault),
-                    false => None,
-                };
+                let unwired = tunnel.default_if_unwired.then(|| one(Atom::TypeDefault));
                 let mut all = Some(BTreeSet::new());
                 for terminal in inner.get(frames)? {
                     let unwired = unwired.clone();
@@ -1206,7 +1226,7 @@ impl<'a> Tracer<'_, 'a> {
                 // timeout; its tunnels then carry the type's default.
                 // Which frame handles which event is not decoded.
                 if node.class == "eventStruct" && !index.waits_forever(node) {
-                    all = union(all, one(Atom::TypeDefault));
+                    all = union(all, Some(one(Atom::TypeDefault)));
                 }
                 all.filter(|values| !values.is_empty())
             }

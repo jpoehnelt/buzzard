@@ -54,9 +54,10 @@ const RELIABLE_DIRECTION: [&str; 16] = [
 /// True" and clear for "Continue if True".
 ///
 /// Checked on 290 loops saved by versions 13 to 25: the flags are `0x10001`
-/// (274) or `0x1` (16); see [`LTST_ALWAYS_SET`]. All seven loops whose terminal is fed by a constant
-/// True have the bit set and the one fed by a constant False has it clear;
-/// the opposite reading would make all eight loops run forever.
+/// (274) or `0x1` (16); see [`LTST_ALWAYS_SET`]. All seven loops whose
+/// terminal is fed by a constant True have the bit set and the one fed by
+/// a constant False has it clear; the opposite reading would make all
+/// eight loops run forever.
 const STOP_IF_TRUE: u32 = 0x1_0000;
 
 /// Bit of a loop condition terminal's `objFlags` that is set on every one
@@ -141,6 +142,7 @@ pub enum TunnelMode {
 pub struct Tunnel {
     /// Whether the value leaves the structure.
     pub output: bool,
+    /// What a loop does with the value at its border.
     pub mode: TunnelMode,
     /// A loop output tunnel that only takes the iterations a condition
     /// selects.
@@ -155,10 +157,15 @@ pub struct Tunnel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectorKind {
+    /// A Boolean: the frames are False and True.
     Boolean,
+    /// A signed or unsigned integer.
     Integer,
+    /// An enumeration.
     Enum,
+    /// A string.
     String,
+    /// An error cluster: the frames are No Error and Error.
     ErrorCluster,
 }
 
@@ -170,7 +177,9 @@ pub enum SelectorMatch {
     /// 1 is True), integer, enumeration or error code selector. A missing
     /// end is open: `start: Some(2), end: None` is the label `2..`.
     Range {
+        /// First value of the range; `None` for a range open below.
         start: Option<i32>,
+        /// Last value of the range; `None` for a range open above.
         end: Option<i32>,
     },
     /// A string the selector is compared with.
@@ -180,6 +189,7 @@ pub enum SelectorMatch {
 /// Which values select which frame of a case structure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CaseSelector {
+    /// The type of the selector.
     pub kind: SelectorKind,
     /// Item names of an enumeration selector, in value order. The list
     /// is shared with the type table, not copied per case structure.
@@ -284,6 +294,8 @@ pub struct ShiftRegister {
     /// Left sides. More than one means a stacked register, which holds the
     /// values of several earlier iterations; their order is not verified.
     pub left: Vec<i32>,
+    /// Data object of the right side, which takes the value for the next
+    /// iteration.
     pub right: i32,
 }
 
@@ -530,6 +542,10 @@ impl BlockDiagram {
     /// Decode the block diagram from the already inflated `BDHb` heap,
     /// taking the types, the names of linked files and the front panel
     /// from the file. Returns `Ok(None)` when the heap holds no diagram.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the heap's byte stream cannot be read.
     pub fn from_inflated_heap(file: &RsrcFile<'_>, data: &[u8]) -> Result<Option<Self>> {
         let heap = Heap::parse(data)?;
 
@@ -1068,7 +1084,8 @@ impl<'h, 'a> Builder<'h, 'a> {
         // and are left as they are.
         let has_default = !matches!(kind, SelectorKind::Boolean | SelectorKind::ErrorCluster);
         let uncovered = |(frame, entries): (usize, &Vec<SelectorMatch>)| {
-            entries.is_empty() && default_frame != Some(frame as u32)
+            entries.is_empty()
+                && default_frame.and_then(|index| usize::try_from(index).ok()) != Some(frame)
         };
         if has_default && table.iter().enumerate().any(uncovered) {
             return None;
@@ -1134,7 +1151,7 @@ impl<'h, 'a> Builder<'h, 'a> {
         let uid = term.uid()?;
         let dco_element = term.child_named("dco");
         let dco = dco_element.and_then(|element| self.resolve(element));
-        let flags = dco.map(flags).unwrap_or(0);
+        let flags = dco.map_or(0, flags);
         let dco_class = dco.and_then(class_of);
         let class = dco_class.as_deref().unwrap_or_default();
         let type_id = dco
@@ -1166,7 +1183,7 @@ impl<'h, 'a> Builder<'h, 'a> {
             output: flags & DCO_IS_OUTPUT != 0,
             mode: match dco
                 .and_then(|d| d.child_named("TunnelType"))
-                .map(|mode| mode.uint())
+                .map(HeapNode::uint)
             {
                 None => TunnelMode::Plain,
                 Some(Some(1)) => TunnelMode::AutoIndex,
