@@ -17,6 +17,7 @@ use petgraph::visit::{EdgeFiltered, EdgeRef};
 use petgraph::Direction;
 use serde::Serialize;
 
+use crate::project::ParentClass;
 use crate::workspace::{identity_from, normalize, Workspace};
 
 /// What an edge from `a` to `b` means.
@@ -72,7 +73,9 @@ static CODE_PAGES: [&Encoding; 8] = [
     encoding_rs::MACINTOSH,
 ];
 
-fn fold(text: &str) -> String {
+/// Text without its letter case, for comparing names of file systems that
+/// ignore case.
+pub(crate) fn fold(text: &str) -> String {
     text.to_lowercase()
 }
 
@@ -177,6 +180,18 @@ impl Lookup {
         }
     }
 
+    /// The workspace file that is the parent of the class `from`.
+    ///
+    /// Unlike a call to an installed VI, a parent class stored by its
+    /// installed location is still looked up by name: class hierarchies
+    /// are developed in one workspace and used from another, and class
+    /// names are distinctive. No class is its own parent, whatever its
+    /// name suggests.
+    fn parent(&self, from: NodeIndex, from_path: &Path, parent: &ParentClass) -> Option<NodeIndex> {
+        self.link(from, from_path, &parent.link, Some(&parent.name))
+            .or_else(|| self.name(&parent.name).filter(|&to| to != from))
+    }
+
     fn link_as_stored(
         &self,
         from: NodeIndex,
@@ -262,6 +277,36 @@ fn recode(link: &LvPath, name: Option<&str>) -> Vec<(LvPath, Option<String>)> {
     out
 }
 
+/// Every place on disk a link stored in the file `from` may name: the
+/// location as stored, then its readings under the legacy code pages the
+/// graph tries. Empty for a link that does not resolve (see [`resolve`]).
+pub fn candidate_paths(from: &Path, link: &LvPath, name: Option<&str>) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = resolve(from, link).into_iter().collect();
+    for (reading, _) in recode(link, name) {
+        if let Some(path) = resolve(from, &reading) {
+            if !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// The readings of path components under the legacy code pages the graph
+/// tries, without the components as stored. Empty unless a component
+/// looks like undecoded code page bytes.
+pub(crate) fn code_page_readings(components: &[String]) -> Vec<Vec<String>> {
+    let link = LvPath {
+        kind: PathKind::Absolute,
+        components: components.to_vec(),
+    };
+    recode(&link, None)
+        .into_iter()
+        .map(|(reading, _)| reading.components)
+        .filter(|reading| reading != components)
+        .collect()
+}
+
 /// Every file of a workspace and the edges between them.
 #[derive(Debug, Default)]
 pub struct DependencyGraph {
@@ -295,14 +340,7 @@ impl DependencyGraph {
                     targets.extend(target.map(|to| (to, EdgeKind::Contains)));
                 }
                 if let Some(parent) = &project.parent_class {
-                    // Unlike a call to an installed VI, a parent class stored
-                    // by its installed location is still looked up by name:
-                    // class hierarchies are developed in one workspace and
-                    // used from another, and class names are distinctive.
-                    // No class is its own parent, whatever its name suggests.
-                    let target = lookup
-                        .link(from, path, &parent.link, Some(&parent.name))
-                        .or_else(|| lookup.name(&parent.name).filter(|&to| to != from));
+                    let target = lookup.parent(from, path, parent);
                     targets.extend(target.map(|to| (to, EdgeKind::Inherits)));
                 }
             }
@@ -316,6 +354,25 @@ impl DependencyGraph {
             }
         }
         Self { graph, lookup }
+    }
+
+    /// The workspace file that a link stored in the file `from` refers to,
+    /// decided the way the `Uses` edges are: by the stored location, or by
+    /// the file name when the location is stale and the name is unique.
+    /// `None` when `from` is not in the workspace or the link names no
+    /// workspace file.
+    pub fn link_target(&self, from: &Path, link: &LvPath, name: Option<&str>) -> Option<&Path> {
+        let node = self.lookup.path(from)?;
+        let to = self.lookup.link(node, &self.graph[node], link, name)?;
+        Some(self.graph[to].as_path())
+    }
+
+    /// The workspace file that is the parent of the class at `from`,
+    /// decided the way the `Inherits` edges are.
+    pub fn parent_target(&self, from: &Path, parent: &ParentClass) -> Option<&Path> {
+        let node = self.lookup.path(from)?;
+        let to = self.lookup.parent(node, &self.graph[node], parent)?;
+        Some(self.graph[to].as_path())
     }
 
     fn neighbors(&self, path: &Path, direction: Direction, kind: EdgeKind) -> Vec<&Path> {
