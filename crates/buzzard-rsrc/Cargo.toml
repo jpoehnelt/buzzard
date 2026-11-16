@@ -1,0 +1,17 @@
+[package]
+name = "buzzard-rsrc"
+description = "Parser for the binary RSRC resource container used by .vi/.ctl files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+binrw.workspace = true
+flate2.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

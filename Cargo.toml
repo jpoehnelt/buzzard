@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/buzzard-rsrc",
+    "crates/buzzard-lint",
+    "crates/buzzard-ls",
+    "crates/buzzard-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/jpoehnelt/buzzard"
+
+[workspace.dependencies]
+buzzard-rsrc = { path = "crates/buzzard-rsrc", version = "0.1.0" }
+buzzard-lint = { path = "crates/buzzard-lint", version = "0.1.0" }
+buzzard-ls = { path = "crates/buzzard-ls", version = "0.1.0" }
+
+# Binary parsing & decompression
+binrw = "0.15"
+flate2 = "1"
+memmap2 = "0.9"
+
+# LSP / async
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "time"] }
+async-trait = "0.1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Concurrency & file watching
+rayon = "1"
+notify = "8"
+notify-debouncer-mini = "0.7"
+walkdir = "2"
+
+# Graph & diagnostics
+petgraph = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

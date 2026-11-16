@@ -1,0 +1,14 @@
+[package]
+name = "buzzard-cli"
+description = "Command-line static analyzer and language server for graphical dataflow projects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "buzzard"
+path = "src/main.rs"
+
+[dependencies]
