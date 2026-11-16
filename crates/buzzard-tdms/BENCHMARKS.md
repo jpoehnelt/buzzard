@@ -27,6 +27,24 @@ to the source).
 - **Parquet export** costs two to three times the 4-thread read (1.6 s for 1.44 GB, 5.7 s for 3.84 GB on 4 threads), and
   the output is never smaller than the TDMS file on this data.
 
+## Addendum: result columns are now filled on every thread
+
+The verdict above says the reader zero-fills its result columns on one thread before the parallel part starts. That
+is fixed: a result of 2^20 values or more has its columns filled in parallel. Measured on the same machine with a
+1,466 MB file of 300 f64 channels in 611 segments, warm page cache, five alternating rounds.
+
+| Measurement | Before | After |
+|---|---|---|
+| One full read in a fresh process, 4 threads | 0.82-0.88 s | 0.34-0.40 s |
+| One full read in a fresh process, 1 thread | 1.09-1.17 s | 1.09-1.28 s |
+| Third full read in one process (`tdms_bench`, best of three), 4 threads | 0.31 s | 0.36-0.38 s |
+| Third full read in one process, 1 thread | 0.56-0.60 s | 0.57-0.59 s |
+
+The first read in a process is 2.4 times faster on four threads and is now close to the plain `pread` ceiling measured
+above (0.26-0.31 s). A repeated full read in the same process, where the allocator hands back memory that was
+already touched, is about 20% slower on four threads than before. The tables above were measured before this change
+and have not been re-run.
+
 ## Machine
 
 - Firecracker VM, 4 virtual cores of an Intel Xeon at 2.10 GHz (1 thread per core), 16 GB RAM, no swap, Linux 6.18.44.

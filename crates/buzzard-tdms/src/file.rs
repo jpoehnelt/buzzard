@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use bytemuck::Zeroable;
+use rayon::prelude::*;
 
 use crate::error::{Anomaly, Error, Result};
 use crate::index::{self, Index, IndexSource, ObjKind, Object};
@@ -303,11 +304,22 @@ impl TdmsFile {
             })?;
             if let Column::String(strings) = &mut column {
                 *strings = channel.read_strings(range.clone())?;
-            } else {
-                resize_column(&mut column, rows)?;
             }
             columns.push(column);
             plans.push((channel.id, want, scaler));
+        }
+        // Zero-filling a large column is mostly the cost of the operating
+        // system providing its memory, so large results are filled on every
+        // thread and small ones without the dispatch overhead.
+        let values = rows.saturating_mul(columns.len() as u64);
+        if values >= PARALLEL_FILL_VALUES {
+            columns
+                .par_iter_mut()
+                .try_for_each(|column| resize_column(column, rows))?;
+        } else {
+            for column in &mut columns {
+                resize_column(column, rows)?;
+            }
         }
         let mut requests = Vec::with_capacity(channels.len());
         for (column, &(id, want, scaler)) in columns.iter_mut().zip(&plans) {
@@ -325,6 +337,9 @@ impl TdmsFile {
         Ok(columns)
     }
 }
+
+/// From this many values in one result, columns are zero-filled in parallel.
+const PARALLEL_FILL_VALUES: u64 = 1 << 20;
 
 fn zeroed<T: Zeroable + Clone>(len: u64) -> Result<Vec<T>> {
     let bytes = len.saturating_mul(size_of::<T>() as u64);
