@@ -1277,7 +1277,11 @@ fn walk_data(data: &dyn ReadAt, options: &OpenOptions, source: IndexSource) -> R
 /// Walks the index file, and checks it against the data file. `None` when
 /// the index file cannot be trusted for any reason.
 fn walk_index(data: &dyn ReadAt, index: &dyn ReadAt, options: &OpenOptions) -> Option<Index> {
-    const MAX_CHECKS: usize = 4096;
+    // How many lead-ins of the data file are compared with the index
+    // file's. Each is a read at a far-apart offset, which is what an index
+    // file is there to avoid; a stale index file almost always differs in
+    // total length or in its first or last segment already.
+    const MAX_CHECKS: usize = 64;
     let size = data.size();
     let index_size = index.size();
     let mut window = Window::new(index, 1 << 20);
