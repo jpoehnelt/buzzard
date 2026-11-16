@@ -40,11 +40,17 @@ segments with the same layout and spacing). A log that appends the same
 channels once a second for an hour is one run and one layout, whatever its
 size, so opening takes milliseconds and the index a few kilobytes. When a
 `.tdms_index` file lies beside the data file, the metadata is read from it
-after it has been checked against the data file (the total length, and
-the lead-ins of the first and last segments and of up to 64 spread evenly
-between them); a
-stale, damaged or foreign index file is ignored without an error.
-`TdmsFile::index_source` says which was used.
+after it has been checked against the data file: the two must account for
+the same number of bytes, and the lead-in and the metadata of the
+segments that are compared must be the same byte for byte. A file of up
+to 64 segments is compared in full; of a longer one, the first and last
+segments and up to 64 spread evenly between them. A stale, damaged or
+foreign index file is ignored without an error, and
+`TdmsFile::index_source` says which file was used. The comparison is a
+spot check for a long file: an index file that differs from the data
+file only in a segment that is not compared is believed. Open with
+`OpenOptions::index_file(false)` to read the data file whatever lies
+beside it.
 
 Reading values is **pass two**, per channel and per range of samples.
 Contiguous values are read straight into the destination with one
@@ -87,10 +93,11 @@ Supported:
   replaces an earlier one. `Channel::waveform` gathers `wf_start_time`,
   `wf_start_offset`, `wf_increment` and `wf_samples`; `Channel::unit`
   reads `unit_string`.
-- Driver raw data ("DAQmx"): format changing scalers of the integer and
-  float types in any number of raw buffers, digital line scalers, several
-  scalers per channel (`Channel::read_scaler`), and linear scaling,
-  including chains of linear scales (`Channel::read_scaled`).
+- Driver raw data ("DAQmx"): format changing scalers of all ten integer
+  and float types in any number of raw buffers, digital line scalers,
+  several scalers per channel (`Channel::read_scaler`), scalers that sit
+  elsewhere in the buffers from one segment to the next, and linear
+  scaling, including chains of linear scales (`Channel::read_scaled`).
 - Truncated and unfinished files, as below.
 
 Partly supported:
@@ -99,9 +106,14 @@ Partly supported:
   thermistor, add, subtract): recognized and named by `Channel::scaling`,
   not applied. The raw values are readable.
 - Driver raw data: all driver channels of a segment must have the same
-  number of values; a timestamp scaler is read as a 16-byte timestamp,
-  which no available file confirms; an incomplete last chunk is recovered
-  only when there is a single raw buffer.
+  number of values, or none. A timestamp scaler is read as a 16-byte
+  timestamp, which no available file confirms. Of an incomplete chunk of
+  several raw buffers, the buffers are taken to be complete in order until
+  the bytes run out; npTDMS agrees where it reads such a file at all, and
+  no file from a real driver confirms it.
+- A channel whose raw data index has the type code 0 (void) is accepted
+  when it declares no values, and has type `void` and length 0. Void with
+  values is `Error::Unsupported`.
 - Text that is not UTF-8 (names, string properties, string channels) is
   read with the bad bytes replaced by U+FFFD and reported as an anomaly;
   `Channel::read_string_bytes` returns string values as stored.
@@ -114,7 +126,12 @@ Not supported:
   numbers (0x4F). Their layout is not published. A file with values of
   these types fails to open with `Error::Unsupported`.
 - Renaming an object by writing its `name` property (version 4713): the
-  property is stored like any other.
+  property is stored like any other and the object keeps its path.
+- A driver channel whose raw data index declares other scalers (another
+  number of them, another type, another scale id) than an earlier
+  segment did: an error, as in npTDMS, because no single read could
+  cover the channel. A segment that mixes driver buffers and plain raw
+  data is an error too.
 - Array dimensions other than 1, string channels in interleaved segments,
   interleaved channels of different lengths: errors, as the format has
   them.
@@ -135,7 +152,8 @@ any anomaly into an error.
 | The file ends inside a lead-in or inside a segment's metadata | that segment is ignored; the ones before it are intact |
 | Raw data that is not a whole number of chunks, in a segment that was cut short and is contiguous | channels are complete in order until the bytes run out |
 | The same, interleaved | the whole rows are kept |
-| The same, in a finished segment | every channel is shortened in proportion (what npTDMS does) |
+| The same, in driver buffers | each channel keeps the whole rows of the buffers its scalers are in, the buffers being complete in order |
+| The same, in a finished contiguous segment | every channel is shortened in proportion (what npTDMS does) |
 | The same, with a string channel | the incomplete chunk is skipped |
 | Bytes that no channel accounts for, or raw data in a segment whose table of contents says it has none | skipped and reported |
 
@@ -143,7 +161,7 @@ Everything else that contradicts the format is an error with the byte
 offset and the segment number: a missing segment tag, metadata longer than
 its segment, counts and lengths that do not fit, a raw data index whose
 length disagrees with its type, an unknown type code, a channel that
-changes type, a scaler outside its buffer.
+changes type or changes its scalers, a scaler outside its buffer.
 
 Sizes in a file are never trusted. No allocation is made from a declared
 count: a channel cannot be longer than the bytes the file has for it, and
@@ -241,15 +259,25 @@ storage.
   holds. `tests/generated.rs` reads back the cross product of byte order,
   layout, every type, chunking, format version and padding over a
   sequence of nine segments that exercises the metadata rules, with and
-  without an index file. `tests/property.rs` does the same for random
-  sequences of segments, and checks that any prefix of a file gives a
-  prefix of every channel.
+  without an index file. It also has a list of small files that each use
+  one feature the cross product does not reach (`feature_cases` in
+  `tests/common/mod.rs`), files large enough to cross every size at which
+  the reader changes how it reads (more than one task's worth of values,
+  more than a megabyte of rows, rows wider than 64 KiB, more than 65,536
+  strings), one driver channel for every scaler type, sixteen digital
+  lines with a pattern each, and index files that differ from their data
+  file in one lead-in or one segment's metadata.
+  `tests/property.rs` reads back random sequences of segments, and checks
+  that any prefix of a file gives a prefix of every channel. Its cases
+  are new on every run; a failing run prints its seed, and
+  `PROPTEST_RNG_SEED=<seed>` runs the same cases again.
 - **The oracle** (`tests/oracle.rs`), below.
 - **Hostile input** (`tests/hostile.rs`): every file cut at every byte,
   every single byte of data files and index files damaged five ways,
   seeded random damage, directed cases for each kind of absurd count,
   length and offset, a million empty segments, 100,000 one-byte segments,
-  50,000 objects, and files built to blow up the index.
+  50,000 objects, files built to blow up the index or the time to build
+  it, and the exact contents of every kind of anomaly.
 - **A real file** (`tests/real.rs`), from a public data set under
   CC BY 4.0; `tests/fixtures/README.md` has its source and checksums.
   `BUZZARD_TDMS_SAMPLES=<dir> cargo test -p buzzard-tdms --release --test real -- --ignored`
@@ -264,13 +292,14 @@ timestamps, and scaled values. It runs when `BUZZARD_TDMS_ORACLE` names a
 Python interpreter with npTDMS installed, and in CI on every change.
 `tests/oracle/README.md` has the details.
 
-639 files are compared: this crate's generated files, files written by
+760 files are compared: this crate's generated files, files written by
 npTDMS's own writer, the real file in `tests/fixtures`, and, because the
 npTDMS wheel ships its test package, the 31 scenario files and 4 data
 files that come with it, run as a black box where pip installed them.
 
-The two readers disagree in eight ways. Each is an entry in
-`KNOWN_DIFFERENCES` in `tests/oracle.rs`:
+The two readers disagree in fifteen ways. Each is an entry in
+`KNOWN_DIFFERENCES` in `tests/oracle.rs`, with the reason this reader's
+answer is kept:
 
 | Case | npTDMS | This reader |
 | --- | --- | --- |
@@ -282,10 +311,26 @@ The two readers disagree in eight ways. Each is an entry in
 | A raw data index whose length field is wrong | ignores the field | refuses the file |
 | Raw data in a segment whose table of contents says it has none | reads it as values | skips it, reports an anomaly |
 | Linear scaling of 32-bit float raw values | computes in single precision | computes in double precision |
+| A file cut inside a chunk of two driver buffers, with a channel that has a scaler in each | raises an error for most places of the cut | keeps the whole rows, the buffers being complete in order; agrees with npTDMS where that returns values |
+| A finished segment of driver buffers that ends in a partial chunk, with segments after it | raises an error | keeps the whole rows, reports an anomaly |
+| A driver channel declared with no values beside one with values | raises an error | reads the other channel; this one has length 0 |
+| A new object list that leaves no object with data, in a segment that has raw bytes | refuses the file | reports the bytes as an anomaly, keeps the other segments |
+| One object listed twice in a segment with two different raw data indexes | gives the channel no values | the later index replaces the earlier |
+| A channel of type void that declares no values | refuses to read it | type void, length 0 |
+| An index file one segment short of its data file | believes it and loses that segment's values | rejects it and reads the data file |
 
-One limit of the oracle: npTDMS returns every integer property as a
-Python integer, so the width of integer properties is checked by the
-generator's model only.
+Two more cases were tried and the readers agree, so they are not in the
+list: both refuse a driver channel whose scalers change between
+segments, and both ignore metadata in a segment whose table of contents
+has no metadata flag.
+
+Limits of the oracle. npTDMS returns every integer property as a Python
+integer, so the width of integer properties is checked by the
+generator's model only. npTDMS trusts an index file that has the right
+lead-ins, so what this reader does with an index file whose metadata was
+altered is checked by `tests/generated.rs` only. And the list above is
+complete for the files the test compares, not for every file there could
+be.
 
 ## Licence boundary
 
