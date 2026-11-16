@@ -1,9 +1,12 @@
 //! Human-readable Markdown summary of one file, shared by the `inspect`
 //! command and editor hovers.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
-use buzzard_rsrc::{FileKind, Reentrancy, ViMetadata};
+use buzzard_rsrc::{
+    BlockDiagram, DataType, Diagram, Direction, FileKind, Node, Reentrancy, ViMetadata,
+};
 
 use crate::project::{ProjectFile, ProjectKind};
 
@@ -158,4 +161,119 @@ fn cell(text: &str) -> String {
             other => other,
         })
         .collect()
+}
+
+fn type_name(data_type: Option<DataType>) -> String {
+    match data_type {
+        None => "unknown type".to_owned(),
+        Some(DataType::ErrorCluster) => "error cluster".to_owned(),
+        Some(DataType::Reference(kind)) => format!("{kind:?} reference").to_lowercase(),
+        Some(other) => format!("{other:?}").to_lowercase(),
+    }
+}
+
+/// Render a block diagram as a nested Markdown outline that reads top to
+/// bottom: each node with its inputs and outputs and what they connect to.
+///
+/// Terminals are identified by `#uid`, the same ids the JSON export uses.
+pub fn diagram_to_markdown(diagram: &BlockDiagram) -> String {
+    // Terminal uid -> description of the node that owns it.
+    let mut owner: HashMap<i32, String> = HashMap::new();
+    for node in diagram.nodes() {
+        for terminal in &node.terminals {
+            owner
+                .entry(terminal.uid)
+                .or_insert_with(|| format!("{} #{}", describe_node(node), node.uid));
+        }
+    }
+    let mut sinks: HashMap<i32, &[i32]> = HashMap::new();
+    let mut source: HashMap<i32, i32> = HashMap::new();
+    for wire in diagram.wires() {
+        sinks.entry(wire.source).or_insert(&wire.sinks);
+        for sink in &wire.sinks {
+            source.entry(*sink).or_insert(wire.source);
+        }
+    }
+    let end = |uid: &i32| -> String {
+        match owner.get(uid) {
+            Some(node) => format!("{node} (terminal #{uid})"),
+            None => format!("terminal #{uid}"),
+        }
+    };
+
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "## Block diagram\n\n{} nodes, {} wires, {} diagrams.\n",
+        diagram.nodes().count(),
+        diagram.wires().count(),
+        diagram.diagrams().len(),
+    );
+    // Explicit stack so that deeply nested structures cannot overflow.
+    let mut stack: Vec<(usize, Item<'_>)> = vec![(0, Item::Diagram(&diagram.root, None))];
+    while let Some((depth, item)) = stack.pop() {
+        let indent = "  ".repeat(depth);
+        match item {
+            Item::Diagram(inner, frame) => {
+                if let Some(frame) = frame {
+                    let _ = writeln!(out, "{indent}- frame {frame}");
+                }
+                let depth = depth + usize::from(frame.is_some());
+                for node in inner.nodes.iter().rev() {
+                    stack.push((depth, Item::Node(node)));
+                }
+            }
+            Item::Node(node) => {
+                let _ = writeln!(out, "{indent}- {} #{}", describe_node(node), node.uid);
+                for terminal in &node.terminals {
+                    // Unassigned connector-pane slots carry no information.
+                    if !terminal.wired && terminal.data_type == Some(DataType::Void) {
+                        continue;
+                    }
+                    let (word, link) = match terminal.direction {
+                        Direction::Input => (
+                            "in",
+                            source.get(&terminal.uid).map(|s| format!(" <- {}", end(s))),
+                        ),
+                        Direction::Output => (
+                            "out",
+                            sinks.get(&terminal.uid).map(|all| {
+                                let ends: Vec<String> = all.iter().map(&end).collect();
+                                format!(" -> {}", ends.join(", "))
+                            }),
+                        ),
+                    };
+                    let _ = writeln!(
+                        out,
+                        "{indent}  - {word} #{} {}{}",
+                        terminal.uid,
+                        type_name(terminal.data_type),
+                        link.unwrap_or_else(|| " (unwired)".to_owned()),
+                    );
+                }
+                for (index, inner) in node.diagrams.iter().enumerate().rev() {
+                    stack.push((depth + 1, Item::Diagram(inner, Some(index))));
+                }
+            }
+        }
+    }
+    out
+}
+
+enum Item<'a> {
+    Diagram(&'a Diagram, Option<usize>),
+    Node(&'a Node),
+}
+
+fn describe_node(node: &Node) -> String {
+    match node.class.as_str() {
+        "sRN" => "diagram boundary".to_owned(),
+        "whileLoop" => "while loop".to_owned(),
+        "forLoop" => "for loop".to_owned(),
+        "select" => "case structure".to_owned(),
+        "sequence" => "stacked sequence".to_owned(),
+        "flatSequence" => "flat sequence".to_owned(),
+        "eventStruct" => "event structure".to_owned(),
+        _ => crate::dataflow::describe(node),
+    }
 }

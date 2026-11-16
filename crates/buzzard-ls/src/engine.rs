@@ -144,7 +144,8 @@ impl Engine {
     pub fn hover(&self, path: &Path) -> Option<String> {
         let title = path.file_name()?.to_string_lossy();
         match self.workspace.get(path)? {
-            FileState::Parsed(meta) => {
+            FileState::Parsed(analysis) => {
+                let meta = &analysis.metadata;
                 let usage = (
                     self.graph.callers(path).len(),
                     self.graph.callees(path).len(),

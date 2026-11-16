@@ -3,13 +3,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use buzzard_rsrc::ViMetadata;
+use buzzard_rsrc::{RefKind, ViMetadata};
 use rayon::prelude::*;
 
+use crate::dataflow::Finding;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph::DependencyGraph;
 use crate::project::ProjectFile;
-use crate::workspace::{FileState, Workspace};
+use crate::workspace::{Analysis, FileState, Workspace};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rule {
@@ -66,6 +67,20 @@ pub const RULES: &[Rule] = &[
         summary: "A project, library or class lists a member whose file does not exist on disk.",
         severity: Severity::Warning,
     },
+    Rule {
+        code: "BZ101",
+        name: "unwired-error-output",
+        summary: "An error output on the block diagram is not wired to anything. With \
+                  automatic error handling off, the error is silently discarded.",
+        severity: Severity::Warning,
+    },
+    Rule {
+        code: "BZ102",
+        name: "reference-never-closed",
+        summary: "A reference (queue, file, network connection, ...) is created and never \
+                  reaches anything that could close it.",
+        severity: Severity::Warning,
+    },
 ];
 
 pub fn rule(code: &str) -> Option<&'static Rule> {
@@ -116,11 +131,13 @@ pub fn lint(
                 FileState::Failed(reason) => {
                     emit("BZ000", format!("cannot analyze file: {reason}"))
                 }
-                FileState::Parsed(meta) => {
+                FileState::Parsed(analysis) => {
+                    let meta = &analysis.metadata;
                     check_separate_code(meta, &mut emit);
                     check_version(meta, majority.as_ref(), &mut emit);
                     check_paths(path, meta, config, &mut emit);
                     check_debug_and_lock(meta, &mut emit);
+                    found.extend(check_dataflow(path, analysis));
                 }
                 FileState::Project(project) => check_members(workspace, project, &mut emit),
             }
@@ -277,6 +294,81 @@ fn check_members(
             "BZ006",
             format!("member `{name}` does not exist on disk (`{url}`)"),
         );
+    }
+}
+
+fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
+    // An unwired error output raises a dialog at run time when automatic
+    // error handling is on, so the error is at least seen. When it is off
+    // the error vanishes, which is the case worth a warning.
+    let auto_handled = analysis
+        .metadata
+        .flags
+        .as_ref()
+        .and_then(|f| f.auto_error_handling)
+        == Some(true);
+    analysis
+        .dataflow
+        .iter()
+        .map(|finding| {
+            let (code, severity, message) = match finding {
+                Finding::UnwiredError { node, places } => {
+                    let count = match places {
+                        1 => String::new(),
+                        n => format!(" in {n} places"),
+                    };
+                    let (severity, effect) = if auto_handled {
+                        (Severity::Info, "it relies on automatic error handling")
+                    } else {
+                        (
+                            Severity::Warning,
+                            "automatic error handling is off, so errors are silently discarded",
+                        )
+                    };
+                    (
+                        "BZ101",
+                        severity,
+                        format!("error output of {node} is not wired{count}; {effect}"),
+                    )
+                }
+                Finding::UnclosedReference { node, kind } => (
+                    "BZ102",
+                    Severity::Warning,
+                    format!(
+                        "{} reference created by {node} never reaches anything that could close it",
+                        reference_name(*kind)
+                    ),
+                ),
+            };
+            Diagnostic {
+                path: path.to_path_buf(),
+                code,
+                severity,
+                message,
+                related: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+fn reference_name(kind: RefKind) -> &'static str {
+    match kind {
+        RefKind::DataLog => "datalog file",
+        RefKind::File => "file",
+        RefKind::Tcp => "TCP connection",
+        RefKind::Udp => "UDP connection",
+        RefKind::Bluetooth => "Bluetooth connection",
+        RefKind::Irda => "IrDA connection",
+        RefKind::Notifier => "notifier",
+        RefKind::Queue => "queue",
+        RefKind::UserEvent => "user event",
+        RefKind::DataValue => "data value",
+        RefKind::Tdms => "TDMS file",
+        RefKind::DataSocket => "DataSocket",
+        RefKind::Fifo => "FIFO",
+        RefKind::Automation => "automation",
+        RefKind::DotNet => ".NET",
+        _ => "resource",
     }
 }
 
