@@ -1,0 +1,119 @@
+{
+  "root": {
+    "uid": 3,
+    "nodes": [
+      {
+        "uid": 7,
+        "class": "sRN",
+        "name": null,
+        "terminals": [],
+        "diagrams": []
+      },
+      {
+        "uid": 43,
+        "class": "iUse",
+        "name": "empty.vi",
+        "terminals": [
+          {
+            "uid": 54,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 52,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 57,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 55,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 60,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 58,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 63,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 61,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 66,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 64,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 69,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 67,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 72,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 70,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 75,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 73,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 78,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 76,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 81,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 79,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 84,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 82,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 87,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 85,
+            "dco_class": "iUseDCO"
+          }
+        ],
+        "diagrams": []
+      }
+    ],
+    "wires": []
+  }
+}

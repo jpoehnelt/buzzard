@@ -1,0 +1,178 @@
+{
+  "root": {
+    "uid": 3,
+    "nodes": [
+      {
+        "uid": 7,
+        "class": "sRN",
+        "name": null,
+        "terminals": [
+          {
+            "uid": 126,
+            "direction": "output",
+            "wired": true,
+            "data_type": "path",
+            "dco": 124,
+            "dco_class": "fPDCO"
+          }
+        ],
+        "diagrams": []
+      },
+      {
+        "uid": 43,
+        "class": "iUse",
+        "name": "PTH empty PTH.vi",
+        "terminals": [
+          {
+            "uid": 54,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 52,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 57,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 55,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 60,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 58,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 63,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 61,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 66,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 64,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 69,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 67,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 72,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 70,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 75,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 73,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 78,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 76,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 81,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 79,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 84,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 82,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 87,
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 85,
+            "dco_class": "iUseDCO"
+          }
+        ],
+        "diagrams": []
+      },
+      {
+        "uid": 74,
+        "class": "iUse",
+        "name": "Path To Command Line String.vi",
+        "terminals": [
+          {
+            "uid": 94,
+            "direction": "output",
+            "wired": false,
+            "data_type": "string",
+            "dco": 95,
+            "dco_class": "iUseDCO"
+          },
+          {
+            "uid": 97,
+            "direction": "input",
+            "wired": true,
+            "data_type": "path",
+            "dco": 98,
+            "dco_class": "iUseDCO"
+          }
+        ],
+        "diagrams": []
+      },
+      {
+        "uid": 155,
+        "class": "statVIRef",
+        "name": null,
+        "terminals": [
+          {
+            "uid": 162,
+            "direction": "output",
+            "wired": false,
+            "data_type": {
+              "reference": "vi_server"
+            },
+            "dco": 163,
+            "dco_class": "bDDCO"
+          }
+        ],
+        "diagrams": []
+      }
+    ],
+    "wires": [
+      {
+        "uid": 136,
+        "source": 126,
+        "sinks": [
+          97
+        ]
+      }
+    ]
+  }
+}

@@ -5,6 +5,8 @@ use thiserror::Error;
 pub enum RsrcError {
     #[error("file is too small to be an RSRC container ({0} bytes)")]
     TooSmall(usize),
+    #[error("file is {0} bytes, over the limit of {1}")]
+    TooLarge(u64, u64),
     #[error("missing RSRC signature")]
     BadSignature,
     #[error("unsupported RSRC format version {0}")]

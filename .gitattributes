@@ -1,0 +1,8 @@
+# Binary conformance fixtures must never be line-ending converted.
+*.vi binary
+*.ctl binary
+*.llb binary
+# Golden snapshots are compared byte for byte.
+crates/buzzard-rsrc/tests/snapshots/** text eol=lf
+# Project file fixtures are kept byte for byte as published upstream.
+crates/buzzard-lint/tests/fixtures/project/** -text

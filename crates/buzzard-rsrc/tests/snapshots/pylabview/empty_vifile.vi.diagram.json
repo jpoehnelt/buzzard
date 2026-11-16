@@ -1,0 +1,15 @@
+{
+  "root": {
+    "uid": 3,
+    "nodes": [
+      {
+        "uid": 7,
+        "class": "sRN",
+        "name": null,
+        "terminals": [],
+        "diagrams": []
+      }
+    ],
+    "wires": []
+  }
+}

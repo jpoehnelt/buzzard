@@ -166,7 +166,10 @@ mod tests {
         assert!(header.validate(0x0e30 + 0x0531).is_ok());
         assert!(matches!(
             header.validate(0x0e30 + 0x0530),
-            Err(RsrcError::OutOfBounds { what: "info section", .. })
+            Err(RsrcError::OutOfBounds {
+                what: "info section",
+                ..
+            })
         ));
     }
 }
