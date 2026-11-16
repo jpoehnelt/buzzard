@@ -215,8 +215,12 @@ pub fn diagram_to_markdown(diagram: &BlockDiagram) -> String {
         let indent = "  ".repeat(depth);
         match item {
             Item::Diagram(inner, frame) => {
-                if let Some(frame) = frame {
-                    let _ = writeln!(out, "{indent}- frame {frame}");
+                if let Some((frame, label)) = &frame {
+                    let label = match label.as_str() {
+                        "" => String::new(),
+                        label => format!(": {}", cell(label)),
+                    };
+                    let _ = writeln!(out, "{indent}- frame {frame}{label}");
                 }
                 let depth = depth + usize::from(frame.is_some());
                 for node in inner.nodes.iter().rev() {
@@ -243,16 +247,25 @@ pub fn diagram_to_markdown(diagram: &BlockDiagram) -> String {
                             }),
                         ),
                     };
+                    let constant = match &terminal.constant {
+                        Some(value) => format!(" constant {}", cell(&value.to_string())),
+                        None => String::new(),
+                    };
                     let _ = writeln!(
                         out,
-                        "{indent}  - {word} #{} {}{}",
+                        "{indent}  - {word} #{} {}{constant}{}",
                         terminal.uid,
                         type_name(terminal.data_type),
                         link.unwrap_or_else(|| " (unwired)".to_owned()),
                     );
                 }
                 for (index, inner) in node.diagrams.iter().enumerate().rev() {
-                    stack.push((depth + 1, Item::Diagram(inner, Some(index))));
+                    let label = node
+                        .selector
+                        .as_ref()
+                        .map(|selector| selector.label(index))
+                        .unwrap_or_default();
+                    stack.push((depth + 1, Item::Diagram(inner, Some((index, label)))));
                 }
             }
         }
@@ -261,7 +274,8 @@ pub fn diagram_to_markdown(diagram: &BlockDiagram) -> String {
 }
 
 enum Item<'a> {
-    Diagram(&'a Diagram, Option<usize>),
+    /// A diagram and, for a frame, its index and case label.
+    Diagram(&'a Diagram, Option<(usize, String)>),
     Node(&'a Node),
 }
 

@@ -55,7 +55,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 52,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 0
           },
           {
             "uid": 57,
@@ -69,7 +70,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 55,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 1
           },
           {
             "uid": 60,
@@ -83,7 +85,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 58,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 2
           },
           {
             "uid": 63,
@@ -97,7 +100,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 61,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 3
           },
           {
             "uid": 66,
@@ -111,7 +115,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 64,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 4
           },
           {
             "uid": 69,
@@ -125,7 +130,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 67,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 5
           },
           {
             "uid": 72,
@@ -139,7 +145,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 70,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 6
           },
           {
             "uid": 75,
@@ -153,7 +160,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 73,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 7
           },
           {
             "uid": 78,
@@ -167,7 +175,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 76,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 8
           },
           {
             "uid": 81,
@@ -181,7 +190,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 79,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 9
           },
           {
             "uid": 84,
@@ -195,7 +205,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 82,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 10
           },
           {
             "uid": 87,
@@ -209,7 +220,8 @@
             "wired": false,
             "data_type": "void",
             "dco": 85,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 11
           }
         ],
         "diagrams": []
@@ -238,7 +250,8 @@
             "wired": false,
             "data_type": "string",
             "dco": 95,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 0
           },
           {
             "uid": 97,
@@ -252,7 +265,8 @@
             "wired": true,
             "data_type": "path",
             "dco": 98,
-            "dco_class": "iUseDCO"
+            "dco_class": "iUseDCO",
+            "param": 1
           }
         ],
         "diagrams": []

@@ -57,6 +57,7 @@ fn terminal(uid: i32, data_type: DataType) -> Terminal {
         data_type: Some(data_type),
         dco: Some(uid + 10_000),
         dco_class: Some("parm".to_owned()),
+        ..Terminal::default()
     }
 }
 
@@ -78,6 +79,7 @@ fn node(uid: i32, class: &str, terminals: Vec<Terminal>) -> Node {
         bounds: Some(rect(uid as i16, 0)),
         terminals,
         diagrams: Vec::new(),
+        ..Node::default()
     }
 }
 
@@ -873,4 +875,53 @@ fn functions_are_named_where_the_table_knows_them() {
         "1 node changed\n\
          changed: built-in function 999999 #10: function id 1050 (Add) -> 999999\n"
     );
+}
+
+#[test]
+fn changed_constants_and_case_labels_are_reported() {
+    use buzzard_rsrc::{CaseSelector, SelectorKind, SelectorMatch, Value};
+
+    let constant = |uid: i32, text: &str| Terminal {
+        constant: Some(Value::String(text.to_owned())),
+        dco_class: Some("bDConstDCO".to_owned()),
+        ..terminal(uid, STR)
+    };
+    let case = |labels: &[&str]| Node {
+        selector: Some(CaseSelector {
+            kind: SelectorKind::String,
+            enum_items: Vec::new(),
+            frames: labels
+                .iter()
+                .map(|label| vec![SelectorMatch::Text((*label).to_owned())])
+                .collect(),
+            default_frame: Some(0),
+        }),
+        ..structure(
+            20,
+            "select",
+            (0..labels.len() as i32)
+                .map(|i| frame(30 + i, Vec::new(), &[]))
+                .collect(),
+        )
+    };
+    let boundary = |values: &[&str]| {
+        let terminals = values.iter().zip(11..).map(|(v, uid)| constant(uid, v));
+        node(10, "sRN", terminals.collect())
+    };
+    let old = file(
+        vec![boundary(&["Init", "Idle", "Idle"]), case(&["Init", "Idle"])],
+        &[],
+    );
+    let new = file(
+        vec![boundary(&["Init", "Idle", "Exit"]), case(&["Init", "Exit"])],
+        &[],
+    );
+    assert_eq!(
+        text(&old, &new),
+        "2 nodes changed\n\
+         changed: case structure #20: case labels [\"Init\", Default; \"Idle\"] -> \
+         [\"Init\", Default; \"Exit\"]\n\
+         changed: diagram boundary #10: constants -\"Idle\" +\"Exit\"\n"
+    );
+    assert!(diff(Some(&old), Some(&old), DiffOptions::default()).identical);
 }

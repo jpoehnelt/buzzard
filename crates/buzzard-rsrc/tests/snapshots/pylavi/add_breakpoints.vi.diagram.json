@@ -26,7 +26,8 @@
             "wired": true,
             "data_type": "numeric",
             "dco": 76,
-            "dco_class": "fPDCO"
+            "dco_class": "fPDCO",
+            "numeric": "float"
           },
           {
             "uid": 120,
@@ -40,7 +41,8 @@
             "wired": true,
             "data_type": "numeric",
             "dco": 118,
-            "dco_class": "fPDCO"
+            "dco_class": "fPDCO",
+            "numeric": "float"
           },
           {
             "uid": 162,
@@ -54,7 +56,8 @@
             "wired": true,
             "data_type": "numeric",
             "dco": 160,
-            "dco_class": "fPDCO"
+            "dco_class": "fPDCO",
+            "numeric": "float"
           }
         ],
         "diagrams": []
@@ -83,7 +86,8 @@
             "wired": true,
             "data_type": "numeric",
             "dco": 52,
-            "dco_class": "overridableParm"
+            "dco_class": "overridableParm",
+            "numeric": "float"
           },
           {
             "uid": 54,
@@ -97,7 +101,9 @@
             "wired": true,
             "data_type": "numeric",
             "dco": 55,
-            "dco_class": "parm"
+            "dco_class": "parm",
+            "numeric": "float",
+            "param": 1
           },
           {
             "uid": 57,
@@ -111,7 +117,9 @@
             "wired": true,
             "data_type": "numeric",
             "dco": 58,
-            "dco_class": "parm"
+            "dco_class": "parm",
+            "numeric": "float",
+            "param": 2
           }
         ],
         "diagrams": []
