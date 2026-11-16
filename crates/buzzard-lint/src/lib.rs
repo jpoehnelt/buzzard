@@ -9,6 +9,7 @@ pub mod diagnostic;
 pub mod graph;
 pub mod inspector;
 pub mod project;
+pub mod render;
 pub mod rules;
 pub mod sarif;
 pub mod summary;

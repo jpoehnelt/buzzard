@@ -156,6 +156,15 @@ fn inspect_prints_markdown_and_json() {
         3
     );
 
+    // Pictures of the diagram.
+    let (code, svg, _) = run(&["inspect", "add.vi", "--format", "svg"], &fixtures);
+    assert_eq!(code, 0);
+    assert!(svg.starts_with("<svg ") && svg.trim_end().ends_with("</svg>"));
+    let (_, mermaid, _) = run(&["inspect", "add.vi", "--format", "mermaid"], &fixtures);
+    assert!(mermaid.starts_with("flowchart LR\n"));
+    let (_, dot, _) = run(&["inspect", "add.vi", "--format", "dot"], &fixtures);
+    assert!(dot.starts_with("digraph diagram {\n"));
+
     let dir = TempDir::new("inspect");
     std::fs::write(dir.0.join("bad.vi"), b"nope").unwrap();
     let (code, _, stderr) = run(&["inspect", "bad.vi"], &dir.0);

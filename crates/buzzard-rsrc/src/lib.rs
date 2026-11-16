@@ -20,7 +20,7 @@ pub use blocks::lvsr::{Reentrancy, ViFlags};
 pub use blocks::path::{LvPath, PathKind};
 pub use blocks::types::{DataType, RefKind};
 pub use container::{Resource, RsrcFile};
-pub use diagram::{BlockDiagram, Diagram, Direction, Node, Terminal, Wire};
+pub use diagram::{BlockDiagram, Diagram, Direction, Node, Rect, Terminal, Wire};
 pub use error::{Result, RsrcError};
 pub use fourcc::FourCc;
 pub use header::RsrcHeader;

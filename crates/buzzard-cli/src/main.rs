@@ -5,7 +5,8 @@ use std::process::ExitCode;
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::Inspection;
 use buzzard_lint::{
-    lint, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity, Workspace,
+    lint, render, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity,
+    Workspace,
 };
 use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -59,6 +60,12 @@ enum CheckFormat {
 enum InspectFormat {
     Markdown,
     Json,
+    /// Picture of the block diagram, laid out as in the editor.
+    Svg,
+    /// Block diagram as a Graphviz graph.
+    Dot,
+    /// Block diagram as a Mermaid flowchart.
+    Mermaid,
 }
 
 /// JSON shape of `inspect`: the metadata fields plus the block diagram.
@@ -120,6 +127,13 @@ fn main() -> ExitCode {
                         InspectFormat::Markdown => {
                             summary::project_to_markdown(&project.name, &project, None)
                         }
+                        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+                            eprintln!(
+                                "error: {}: a project file has no block diagram",
+                                file.display()
+                            );
+                            return ExitCode::from(2);
+                        }
                     };
                     print(&rendered);
                     ExitCode::SUCCESS
@@ -132,26 +146,46 @@ fn main() -> ExitCode {
         }
         Command::Inspect { file, format } => match Inspection::from_path(&file) {
             Ok(inspection) => {
-                let rendered = match format {
-                    InspectFormat::Json => to_json(&InspectOutput {
-                        metadata: &inspection.metadata,
-                        diagram: inspection.diagram.as_ref(),
-                    }),
-                    InspectFormat::Markdown => {
-                        let title = file
-                            .file_name()
-                            .unwrap_or(file.as_os_str())
-                            .to_string_lossy();
-                        let mut text = summary::to_markdown(&title, &inspection.metadata, None);
-                        if let Some(diagram) = &inspection.diagram {
-                            text.push('\n');
-                            text.push_str(&summary::diagram_to_markdown(diagram));
-                        }
-                        text
-                    }
+                let picture = |draw: fn(&BlockDiagram) -> String| match &inspection.diagram {
+                    Some(diagram) => Ok(draw(diagram)),
+                    None => Err("file has no block diagram"),
                 };
-                print(&rendered);
-                ExitCode::SUCCESS
+                let rendered = match format {
+                    InspectFormat::Svg => picture(render::to_svg),
+                    InspectFormat::Dot => picture(render::to_dot),
+                    InspectFormat::Mermaid => picture(render::to_mermaid),
+                    other => Ok(match other {
+                        InspectFormat::Json => to_json(&InspectOutput {
+                            metadata: &inspection.metadata,
+                            diagram: inspection.diagram.as_ref(),
+                        }),
+                        InspectFormat::Markdown => {
+                            let title = file
+                                .file_name()
+                                .unwrap_or(file.as_os_str())
+                                .to_string_lossy();
+                            let mut text = summary::to_markdown(&title, &inspection.metadata, None);
+                            if let Some(diagram) = &inspection.diagram {
+                                text.push('\n');
+                                text.push_str(&summary::diagram_to_markdown(diagram));
+                            }
+                            text
+                        }
+                        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+                            unreachable!("pictures are handled above")
+                        }
+                    }),
+                };
+                match rendered {
+                    Ok(rendered) => {
+                        print(&rendered);
+                        ExitCode::SUCCESS
+                    }
+                    Err(reason) => {
+                        eprintln!("error: {}: {reason}", file.display());
+                        ExitCode::from(2)
+                    }
+                }
             }
             Err(err) => {
                 eprintln!("error: {}: {err}", file.display());

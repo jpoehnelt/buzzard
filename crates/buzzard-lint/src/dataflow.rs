@@ -69,6 +69,17 @@ pub fn describe(node: &Node) -> String {
         "invokeNode" => "invoke node",
         "callByRefNode" => "call by reference node",
         "printf" => "format string function",
+        // The remaining names are read off the class names, which follow
+        // the function names closely.
+        "scanf" => "scan string function",
+        "mux" => "bundle",
+        "nMux" => "bundle or unbundle by name",
+        "aBuild" => "build array",
+        "aIndx" => "index array",
+        "aDel" => "delete from array",
+        "concat" => "concatenate strings",
+        "cpdArith" => "compound arithmetic",
+        "mergeErrors" => "merge errors",
         other => other,
     };
     match &node.name {
@@ -220,6 +231,7 @@ mod tests {
     fn terminal(uid: i32, direction: Direction, data_type: DataType) -> Terminal {
         Terminal {
             uid,
+            bounds: None,
             direction,
             wired: false,
             data_type: Some(data_type),
@@ -233,6 +245,8 @@ mod tests {
             uid,
             class: class.to_owned(),
             name: name.map(str::to_owned),
+            primitive: None,
+            bounds: None,
             terminals,
             diagrams: Vec::new(),
         }

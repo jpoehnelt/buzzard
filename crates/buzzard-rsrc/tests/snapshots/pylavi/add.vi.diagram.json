@@ -6,9 +6,22 @@
         "uid": 7,
         "class": "sRN",
         "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 0,
+          "left": 0,
+          "bottom": 0,
+          "right": 0
+        },
         "terminals": [
           {
             "uid": 78,
+            "bounds": {
+              "top": 220,
+              "left": 287,
+              "bottom": 258,
+              "right": 325
+            },
             "direction": "output",
             "wired": true,
             "data_type": "numeric",
@@ -17,6 +30,12 @@
           },
           {
             "uid": 120,
+            "bounds": {
+              "top": 230,
+              "left": 249,
+              "bottom": 268,
+              "right": 287
+            },
             "direction": "output",
             "wired": true,
             "data_type": "numeric",
@@ -25,6 +44,12 @@
           },
           {
             "uid": 162,
+            "bounds": {
+              "top": 225,
+              "left": 378,
+              "bottom": 263,
+              "right": 416
+            },
             "direction": "input",
             "wired": true,
             "data_type": "numeric",
@@ -38,9 +63,22 @@
         "uid": 43,
         "class": "prim",
         "name": null,
+        "primitive": 1050,
+        "bounds": {
+          "top": 228,
+          "left": 335,
+          "bottom": 260,
+          "right": 367
+        },
         "terminals": [
           {
             "uid": 51,
+            "bounds": {
+              "top": 0,
+              "left": 10,
+              "bottom": 21,
+              "right": 21
+            },
             "direction": "output",
             "wired": true,
             "data_type": "numeric",
@@ -49,6 +87,12 @@
           },
           {
             "uid": 54,
+            "bounds": {
+              "top": 10,
+              "left": 0,
+              "bottom": 21,
+              "right": 10
+            },
             "direction": "input",
             "wired": true,
             "data_type": "numeric",
@@ -57,6 +101,12 @@
           },
           {
             "uid": 57,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 10,
+              "right": 10
+            },
             "direction": "input",
             "wired": true,
             "data_type": "numeric",

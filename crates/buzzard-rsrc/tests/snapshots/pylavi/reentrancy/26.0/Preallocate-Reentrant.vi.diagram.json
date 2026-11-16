@@ -6,9 +6,17 @@
         "uid": 7,
         "class": "sRN",
         "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 0,
+          "left": 0,
+          "bottom": 0,
+          "right": 0
+        },
         "terminals": [
           {
             "uid": 77,
+            "bounds": null,
             "direction": "output",
             "wired": true,
             "data_type": "numeric",
@@ -17,6 +25,7 @@
           },
           {
             "uid": 100,
+            "bounds": null,
             "direction": "output",
             "wired": true,
             "data_type": "numeric",
@@ -30,9 +39,22 @@
         "uid": 43,
         "class": "prim",
         "name": null,
+        "primitive": 1050,
+        "bounds": {
+          "top": 239,
+          "left": 296,
+          "bottom": 271,
+          "right": 328
+        },
         "terminals": [
           {
             "uid": 51,
+            "bounds": {
+              "top": 0,
+              "left": 10,
+              "bottom": 21,
+              "right": 21
+            },
             "direction": "output",
             "wired": false,
             "data_type": "numeric",
@@ -41,6 +63,12 @@
           },
           {
             "uid": 54,
+            "bounds": {
+              "top": 10,
+              "left": 0,
+              "bottom": 21,
+              "right": 10
+            },
             "direction": "input",
             "wired": true,
             "data_type": "numeric",
@@ -49,6 +77,12 @@
           },
           {
             "uid": 57,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 10,
+              "right": 10
+            },
             "direction": "input",
             "wired": true,
             "data_type": "numeric",
