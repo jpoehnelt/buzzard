@@ -1,7 +1,9 @@
 //! Protocol-independent analysis state behind the language server.
 
 use std::collections::BTreeMap;
+use std::ops::Bound;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use buzzard_lint::workspace::{is_analyzable, normalize};
 use buzzard_lint::{
@@ -39,15 +41,31 @@ pub struct Symbol {
 /// Diagnostics to publish for one file; an empty list clears them.
 pub type Update = (PathBuf, Vec<Diagnostic>);
 
+/// An immutable view of the analyzed workspace. Readers (hover, references,
+/// symbols) hold one of these while the next one is being computed, so a
+/// long scan never blocks a request.
+#[derive(Debug, Default)]
+pub struct Snapshot {
+    workspace: Workspace,
+    graph: DependencyGraph,
+}
+
 /// The analyzed workspace, its dependency graph, and the diagnostics last
 /// published for each file.
 #[derive(Debug, Default)]
 pub struct Engine {
     roots: Vec<PathBuf>,
     config: LintConfig,
-    workspace: Workspace,
-    graph: DependencyGraph,
+    snapshot: Arc<Snapshot>,
     published: BTreeMap<PathBuf, Vec<Diagnostic>>,
+}
+
+impl std::ops::Deref for Engine {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Snapshot {
+        &self.snapshot
+    }
 }
 
 impl Engine {
@@ -66,10 +84,14 @@ impl Engine {
         &self.roots
     }
 
+    /// The current state, cheap to clone and safe to read from any thread.
+    pub fn snapshot(&self) -> Arc<Snapshot> {
+        self.snapshot.clone()
+    }
+
     /// Scan every root from scratch and return the diagnostics to publish.
     pub fn scan(&mut self) -> Vec<Update> {
-        self.workspace = Workspace::scan(&self.roots);
-        self.relint()
+        self.install(Workspace::scan(&self.roots))
     }
 
     /// True if a change to this path can affect analysis results.
@@ -81,22 +103,26 @@ impl Engine {
     /// return only the diagnostics that differ from what was last published.
     /// Project-level XML files are handled like any other file: pass the
     /// state from [`FileState::load`].
+    ///
+    /// The next state is built beside the current one and swapped in at the
+    /// end; snapshots handed out earlier are not affected.
     pub fn apply(&mut self, changes: Vec<(PathBuf, Option<FileState>)>) -> Vec<Update> {
+        let mut workspace = self.snapshot.workspace.clone();
         for (path, state) in changes {
             let path = normalize(&path);
             if let Some(state) = state {
-                self.workspace.insert(&path, state);
+                workspace.insert(&path, state);
             } else {
-                self.workspace.remove(&path);
+                workspace.remove(&path);
             }
         }
-        self.relint()
+        self.install(workspace)
     }
 
-    fn relint(&mut self) -> Vec<Update> {
-        self.graph = DependencyGraph::build(&self.workspace);
+    fn install(&mut self, workspace: Workspace) -> Vec<Update> {
+        let graph = DependencyGraph::build(&workspace);
         let mut current: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
-        for diagnostic in lint(&self.workspace, &self.graph, &self.config) {
+        for diagnostic in lint(&workspace, &graph, &self.config) {
             current
                 .entry(diagnostic.path.clone())
                 .or_default()
@@ -115,7 +141,35 @@ impl Engine {
         }
         updates.sort();
         self.published = current;
+        self.snapshot = Arc::new(Snapshot { workspace, graph });
         updates
+    }
+}
+
+impl Snapshot {
+    /// True if `path` is one of the analyzed files.
+    pub fn contains(&self, path: &Path) -> bool {
+        self.workspace.get(path).is_some()
+    }
+
+    /// Every analyzed file, sorted.
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.workspace.files().keys().map(PathBuf::as_path)
+    }
+
+    /// Analyzed files strictly below the directory `dir`, sorted.
+    pub fn paths_under(&self, dir: &Path) -> Vec<PathBuf> {
+        let dir = normalize(dir);
+        // Paths order by component, so everything below `dir` sits in one
+        // run right after it: no need to look at the whole workspace.
+        let after = (Bound::Excluded(dir.as_path()), Bound::Unbounded);
+        self.workspace
+            .files()
+            .range::<Path, _>(after)
+            .map(|(path, _)| path)
+            .take_while(|path| path.starts_with(&dir))
+            .cloned()
+            .collect()
     }
 
     /// The metadata of the binary file at `path`, if it parsed.

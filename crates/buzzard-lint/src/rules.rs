@@ -148,7 +148,7 @@ pub fn lint(
                     let meta = &analysis.metadata;
                     check_separate_code(meta, &mut emit);
                     check_version(meta, majority.as_ref(), &mut emit);
-                    check_paths(path, meta, config, &mut emit);
+                    check_paths(&workspace.root_relative(path), meta, config, &mut emit);
                     check_debug_and_lock(meta, &mut emit);
                     found.extend(check_dataflow(path, analysis));
                 }
@@ -201,7 +201,7 @@ fn check_separate_code(meta: &ViMetadata, emit: &mut impl FnMut(&'static str, St
     }
 }
 
-/// `(major, minor)` saved by the most files; ties go to the newer version.
+/// `(major, minor)` saved by more files than any other version.
 struct Majority {
     version: (u8, u8),
     count: usize,
@@ -214,10 +214,15 @@ fn majority_version(workspace: &Workspace) -> Option<Majority> {
             *counts.entry((v.major, v.minor)).or_default() += 1;
         }
     }
-    counts
-        .into_iter()
-        .max_by_key(|&(version, count)| (count, version))
-        .map(|(version, count)| Majority { version, count })
+    // On a tie no version is the one the workspace "mostly uses", and
+    // picking one would flag half the files against the other half.
+    let top = counts.values().copied().max()?;
+    let mut leaders = counts.into_iter().filter(|&(_, count)| count == top);
+    let (version, count) = leaders.next()?;
+    leaders
+        .next()
+        .is_none()
+        .then_some(Majority { version, count })
 }
 
 fn check_version(
@@ -244,19 +249,24 @@ fn check_version(
     }
 }
 
+/// `own` is the file's path from its scan root. The length of the absolute
+/// path would depend on where the workspace happens to be checked out, so
+/// the same tree would give different results on different machines.
 fn check_paths(
-    path: &Path,
+    own: &Path,
     meta: &ViMetadata,
     config: &LintConfig,
     emit: &mut impl FnMut(&'static str, String),
 ) {
     let limit = config.max_path_length;
-    let own = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let own_len = own.to_string_lossy().chars().count();
     if own_len > limit {
         emit(
             "BZ003",
-            format!("file path is {own_len} characters long, over the limit of {limit}"),
+            format!(
+                "file path is {own_len} characters long from the scan root, \
+                 over the limit of {limit}"
+            ),
         );
     }
 

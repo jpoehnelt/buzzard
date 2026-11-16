@@ -15,6 +15,9 @@ struct Entry {
     data: Vec<u8>,
 }
 
+/// A link given as raw bytes: `(name, path kind, path components)`.
+pub type ByteLink<'a> = (&'a [u8], PathKind, &'a [&'a [u8]]);
+
 /// Collects resources and lays them out as an RSRC file with
 /// [`build`](Self::build).
 #[derive(Debug)]
@@ -78,6 +81,32 @@ impl RsrcBuilder {
     /// more than 65,535 components.
     #[must_use]
     pub fn links(self, links: &[(&str, LvPath)]) -> Self {
+        let encoded: Vec<(&[u8], Vec<u8>)> = links
+            .iter()
+            .map(|(name, path)| (name.as_bytes(), encode_pth0(path)))
+            .collect();
+        self.encoded_links(&encoded)
+    }
+
+    /// Like [`links`](Self::links), with names and path components given as
+    /// raw bytes: `(name, kind, components)`. Old link forms store text in
+    /// the code page of the machine that saved the file, which a `&str`
+    /// cannot express.
+    ///
+    /// # Panics
+    ///
+    /// If a name or path component is longer than 255 bytes, or a path has
+    /// more than 65,535 components.
+    #[must_use]
+    pub fn links_bytes(self, links: &[ByteLink<'_>]) -> Self {
+        let encoded: Vec<(&[u8], Vec<u8>)> = links
+            .iter()
+            .map(|(name, kind, components)| (*name, encode_pth0_bytes(*kind, components)))
+            .collect();
+        self.encoded_links(&encoded)
+    }
+
+    fn encoded_links(self, links: &[(&[u8], Vec<u8>)]) -> Self {
         let mut data = vec![0, 1];
         data.extend_from_slice(b"LVIN");
         data.extend_from_slice(&u32_field(links.len()).to_be_bytes());
@@ -92,7 +121,7 @@ impl RsrcBuilder {
             if data.len() % 2 != 0 {
                 data.push(0);
             }
-            data.extend(encode_pth0(path));
+            data.extend_from_slice(path);
             data.extend_from_slice(&[0; 4]);
         }
         self.resource(b"LIvi", 0, None, data)
@@ -131,7 +160,7 @@ impl RsrcBuilder {
                 let name_offset = match &entry.name {
                     Some(name) => {
                         let at = u32_field(names.len());
-                        push_pstr(&mut names, name);
+                        push_pstr(&mut names, name.as_bytes());
                         at
                     }
                     None => u32::MAX,
@@ -183,9 +212,9 @@ fn u32_field(value: usize) -> u32 {
 }
 
 /// Append `text` as a Pascal string with a one-byte length prefix.
-fn push_pstr(out: &mut Vec<u8>, text: &str) {
+fn push_pstr(out: &mut Vec<u8>, text: &[u8]) {
     out.push(u8::try_from(text.len()).expect("a Pascal string holds at most 255 bytes"));
-    out.extend_from_slice(text.as_bytes());
+    out.extend_from_slice(text);
 }
 
 /// Encode a path in the `PTH0` form.
@@ -195,17 +224,28 @@ fn push_pstr(out: &mut Vec<u8>, text: &str) {
 /// If the path has more than 65,535 components or a component is longer
 /// than 255 bytes.
 pub fn encode_pth0(path: &LvPath) -> Vec<u8> {
-    let kind: u16 = match path.kind {
+    let components: Vec<&[u8]> = path.components.iter().map(|c| c.as_bytes()).collect();
+    encode_pth0_bytes(path.kind, &components)
+}
+
+/// Encode a path in the `PTH0` form from raw component bytes.
+///
+/// # Panics
+///
+/// If there are more than 65,535 components or a component is longer than
+/// 255 bytes.
+pub fn encode_pth0_bytes(kind: PathKind, components: &[&[u8]]) -> Vec<u8> {
+    let kind: u16 = match kind {
         PathKind::Absolute => 0,
         PathKind::Relative => 1,
         PathKind::NotAPath => 2,
         PathKind::Unc => 3,
     };
     let mut body = kind.to_be_bytes().to_vec();
-    let count = u16::try_from(path.components.len())
-        .expect("a `PTH0` path holds at most 65,535 components");
+    let count =
+        u16::try_from(components.len()).expect("a `PTH0` path holds at most 65,535 components");
     body.extend_from_slice(&count.to_be_bytes());
-    for component in &path.components {
+    for component in components {
         push_pstr(&mut body, component);
     }
     let mut out = b"PTH0".to_vec();
@@ -286,5 +326,22 @@ mod tests {
             .links
             .iter()
             .all(|l| l.link_type == Some(FourCc::new(b"VIVI"))));
+    }
+
+    #[test]
+    fn built_byte_links_keep_their_bytes() {
+        // Shift-JIS bytes are not UTF-8, so the reader shows one character
+        // per byte, which loses nothing.
+        let name: &[u8] = b"\x83\x65\x83\x58\x83\x67.vi";
+        let bytes = RsrcBuilder::default()
+            .save_record(0x2300_8000, &[0, 0x400])
+            .links_bytes(&[(name, PathKind::Relative, &[b"", name])])
+            .build();
+        let meta = ViMetadata::from_bytes(&bytes).unwrap();
+        let expected: String = name.iter().map(|&b| char::from(b)).collect();
+        assert_eq!(meta.links.len(), 1);
+        assert_eq!(meta.links[0].name(), Some(expected.as_str()));
+        assert_eq!(meta.links[0].path.kind, PathKind::Relative);
+        assert_eq!(meta.links[0].path.components, ["", expected.as_str()]);
     }
 }

@@ -6,9 +6,22 @@
         "uid": 7,
         "class": "sRN",
         "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 0,
+          "left": 0,
+          "bottom": 0,
+          "right": 0
+        },
         "terminals": [
           {
             "uid": 126,
+            "bounds": {
+              "top": 294,
+              "left": 367,
+              "bottom": 332,
+              "right": 405
+            },
             "direction": "output",
             "wired": true,
             "data_type": "path",
@@ -22,9 +35,22 @@
         "uid": 43,
         "class": "iUse",
         "name": "PTH empty PTH.vi",
+        "primitive": null,
+        "bounds": {
+          "top": 338,
+          "left": 261,
+          "bottom": 370,
+          "right": 293
+        },
         "terminals": [
           {
             "uid": 54,
+            "bounds": {
+              "top": 24,
+              "left": 24,
+              "bottom": 32,
+              "right": 32
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -33,6 +59,12 @@
           },
           {
             "uid": 57,
+            "bounds": {
+              "top": 16,
+              "left": 24,
+              "bottom": 24,
+              "right": 32
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -41,6 +73,12 @@
           },
           {
             "uid": 60,
+            "bounds": {
+              "top": 8,
+              "left": 24,
+              "bottom": 16,
+              "right": 32
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -49,6 +87,12 @@
           },
           {
             "uid": 63,
+            "bounds": {
+              "top": 0,
+              "left": 24,
+              "bottom": 8,
+              "right": 32
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -57,6 +101,12 @@
           },
           {
             "uid": 66,
+            "bounds": {
+              "top": 16,
+              "left": 16,
+              "bottom": 32,
+              "right": 24
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -65,6 +115,12 @@
           },
           {
             "uid": 69,
+            "bounds": {
+              "top": 0,
+              "left": 16,
+              "bottom": 16,
+              "right": 24
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -73,6 +129,12 @@
           },
           {
             "uid": 72,
+            "bounds": {
+              "top": 16,
+              "left": 8,
+              "bottom": 32,
+              "right": 16
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -81,6 +143,12 @@
           },
           {
             "uid": 75,
+            "bounds": {
+              "top": 0,
+              "left": 8,
+              "bottom": 16,
+              "right": 16
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -89,6 +157,12 @@
           },
           {
             "uid": 78,
+            "bounds": {
+              "top": 24,
+              "left": 0,
+              "bottom": 32,
+              "right": 8
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -97,6 +171,12 @@
           },
           {
             "uid": 81,
+            "bounds": {
+              "top": 16,
+              "left": 0,
+              "bottom": 24,
+              "right": 8
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -105,6 +185,12 @@
           },
           {
             "uid": 84,
+            "bounds": {
+              "top": 8,
+              "left": 0,
+              "bottom": 16,
+              "right": 8
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -113,6 +199,12 @@
           },
           {
             "uid": 87,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 8,
+              "right": 8
+            },
             "direction": "input",
             "wired": false,
             "data_type": "void",
@@ -126,9 +218,22 @@
         "uid": 74,
         "class": "iUse",
         "name": "Path To Command Line String.vi",
+        "primitive": null,
+        "bounds": {
+          "top": 297,
+          "left": 413,
+          "bottom": 329,
+          "right": 445
+        },
         "terminals": [
           {
             "uid": 94,
+            "bounds": {
+              "top": 0,
+              "left": 16,
+              "bottom": 32,
+              "right": 32
+            },
             "direction": "output",
             "wired": false,
             "data_type": "string",
@@ -137,6 +242,12 @@
           },
           {
             "uid": 97,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 32,
+              "right": 16
+            },
             "direction": "input",
             "wired": true,
             "data_type": "path",
@@ -150,9 +261,22 @@
         "uid": 155,
         "class": "statVIRef",
         "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 507,
+          "left": 363,
+          "bottom": 555,
+          "right": 399
+        },
         "terminals": [
           {
             "uid": 162,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 48,
+              "right": 36
+            },
             "direction": "output",
             "wired": false,
             "data_type": {

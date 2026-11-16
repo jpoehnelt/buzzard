@@ -57,11 +57,49 @@ pub enum Direction {
     Output,
 }
 
+/// A rectangle in diagram pixels, as stored in the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Rect {
+    /// Top edge.
+    pub top: i16,
+    /// Left edge.
+    pub left: i16,
+    /// Bottom edge.
+    pub bottom: i16,
+    /// Right edge.
+    pub right: i16,
+}
+
+impl Rect {
+    fn parse(bytes: &[u8]) -> Option<Self> {
+        let word = |i: usize| i16::from_be_bytes([bytes[i], bytes[i + 1]]);
+        (bytes.len() == 8).then(|| Self {
+            top: word(0),
+            left: word(2),
+            bottom: word(4),
+            right: word(6),
+        })
+    }
+
+    /// Width in pixels: `right - left`.
+    pub fn width(&self) -> i32 {
+        i32::from(self.right) - i32::from(self.left)
+    }
+
+    /// Height in pixels: `bottom - top`.
+    pub fn height(&self) -> i32 {
+        i32::from(self.bottom) - i32::from(self.top)
+    }
+}
+
 /// A point on a node where a wire can attach.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Terminal {
     /// Unique id of the terminal object; wires refer to terminals by it.
     pub uid: i32,
+    /// Position: relative to the owning node's top-left corner, except for
+    /// front-panel terminals, which are positioned in their diagram.
+    pub bounds: Option<Rect>,
     /// Which way data flows; see [`direction_is_reliable`](Self::direction_is_reliable).
     pub direction: Direction,
     /// Whether any wire attaches to the terminal.
@@ -100,6 +138,14 @@ pub struct Node {
     pub class: String,
     /// Name of the called file for subVI calls and similar linked nodes.
     pub name: Option<String>,
+    /// Resource id of a built-in function. The ids are stable across
+    /// versions. The file does not name the function;
+    /// [`primitive_name`](crate::primitive_name) looks the id up in a
+    /// vendored table.
+    pub primitive: Option<u32>,
+    /// Position within the enclosing diagram. Nodes inside a structure are
+    /// positioned relative to the structure's top-left corner.
+    pub bounds: Option<Rect>,
     /// Terminals in the order the node's `termList` gives them.
     pub terminals: Vec<Terminal>,
     /// Nested diagrams of a structure, one per frame or case.
@@ -259,6 +305,12 @@ struct Builder<'h, 'a> {
     names: &'h HashMap<i32, String>,
 }
 
+fn rect(node: &HeapNode<'_>, field: &str) -> Option<Rect> {
+    node.child_named(field)
+        .and_then(HeapNode::bytes)
+        .and_then(Rect::parse)
+}
+
 fn class_of(node: &HeapNode<'_>) -> Option<String> {
     let id = node.class()?;
     Some(
@@ -362,6 +414,8 @@ impl<'h, 'a> Builder<'h, 'a> {
             uid,
             class: class_of(object).unwrap_or_default(),
             name: self.names.get(&uid).cloned(),
+            primitive: object.child_named("primResID").and_then(HeapNode::uint),
+            bounds: rect(object, "bounds"),
             terminals,
             diagrams: nested.into_iter().map(|d| self.diagram(d)).collect(),
         }
@@ -389,8 +443,13 @@ impl<'h, 'a> Builder<'h, 'a> {
         } else {
             Direction::Output
         };
+        let bounds = dco
+            .and_then(|d| rect(d, "termBounds"))
+            .or_else(|| rect(term, "termBounds"))
+            .or_else(|| rect(term, "bounds"));
         Some(Terminal {
             uid,
+            bounds,
             direction,
             wired: is_source || is_sink,
             data_type: type_id.and_then(|id| self.types.heap_type(id)),

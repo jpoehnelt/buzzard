@@ -66,7 +66,17 @@ fn must_be_closed(kind: RefKind) -> bool {
     )
 }
 
+/// Name of the built-in function a node is, when the node has a function id
+/// and the vendored table knows it. The name is not unique and, for ids the
+/// table marks unverified, may be wrong.
+pub fn function_name(node: &Node) -> Option<&'static str> {
+    Some(buzzard_rsrc::primitive_name(node.primitive?)?.name)
+}
+
 /// Human-readable description of a node for use in messages.
+///
+/// A built-in function is named when its id is in the vendored table
+/// (``built-in function `Add` ``); otherwise it is only `built-in function`.
 pub fn describe(node: &Node) -> String {
     let what = match node.class.as_str() {
         "prim" => "built-in function",
@@ -78,11 +88,23 @@ pub fn describe(node: &Node) -> String {
         "invokeNode" => "invoke node",
         "callByRefNode" => "call by reference node",
         "printf" => "format string function",
+        // The remaining names are read off the class names, which follow
+        // the function names closely.
+        "scanf" => "scan string function",
+        "mux" => "bundle",
+        "nMux" => "bundle or unbundle by name",
+        "aBuild" => "build array",
+        "aIndx" => "index array",
+        "aDel" => "delete from array",
+        "concat" => "concatenate strings",
+        "cpdArith" => "compound arithmetic",
+        "mergeErrors" => "merge errors",
         other => other,
     };
-    match &node.name {
-        Some(name) => format!("{what} `{name}`"),
-        None => what.to_owned(),
+    match (&node.name, function_name(node)) {
+        (Some(name), _) => format!("{what} `{name}`"),
+        (None, Some(function)) if node.class == "prim" => format!("{what} `{function}`"),
+        (None, _) => what.to_owned(),
     }
 }
 
@@ -226,9 +248,66 @@ mod tests {
     use super::*;
     use buzzard_rsrc::{Diagram, Wire};
 
+    #[test]
+    fn built_in_functions_are_named_from_the_table() {
+        let function = |id| Node {
+            primitive: id,
+            ..node(1, "prim", None, vec![])
+        };
+        assert_eq!(describe(&function(Some(1050))), "built-in function `Add`");
+        assert_eq!(function_name(&function(Some(1050))), Some("Add"));
+        // Unverified names are used as well.
+        assert!(!buzzard_rsrc::primitive_name(8011).unwrap().verified);
+        assert_eq!(
+            describe(&function(Some(8011))),
+            "built-in function `Close Reference`"
+        );
+        // An id outside the table, and a function without an id.
+        assert_eq!(describe(&function(Some(999_999))), "built-in function");
+        assert_eq!(function_name(&function(Some(999_999))), None);
+        assert_eq!(describe(&function(None)), "built-in function");
+        // The linked name of a call wins, and other classes are not renamed.
+        let call = Node {
+            primitive: Some(1050),
+            ..node(1, "iUse", Some("Sum.vi"), vec![])
+        };
+        assert_eq!(describe(&call), "subVI `Sum.vi`");
+        let other = Node {
+            primitive: Some(1050),
+            ..node(1, "concat", None, vec![])
+        };
+        assert_eq!(describe(&other), "concatenate strings");
+    }
+
+    #[test]
+    fn findings_name_the_function() {
+        let add = |uid| Node {
+            primitive: Some(1050),
+            ..node(uid, "prim", None, vec![terminal(uid + 1, Output, ERROR)])
+        };
+        let unknown = Node {
+            primitive: Some(999_999),
+            ..node(30, "prim", None, vec![terminal(31, Output, ERROR)])
+        };
+        assert_eq!(
+            analyze(&diagram(vec![add(10), add(20), unknown], &[])),
+            [
+                Finding::UnwiredError {
+                    node: "built-in function".to_owned(),
+                    places: 1
+                },
+                Finding::UnwiredError {
+                    node: "built-in function `Add`".to_owned(),
+                    places: 2
+                },
+            ]
+        );
+    }
+
     fn terminal(uid: i32, direction: Direction, data_type: DataType) -> Terminal {
         Terminal {
             uid,
+            bounds: None,
             direction,
             wired: false,
             data_type: Some(data_type),
@@ -242,6 +321,8 @@ mod tests {
             uid,
             class: class.to_owned(),
             name: name.map(str::to_owned),
+            primitive: None,
+            bounds: None,
             terminals,
             diagrams: Vec::new(),
         }

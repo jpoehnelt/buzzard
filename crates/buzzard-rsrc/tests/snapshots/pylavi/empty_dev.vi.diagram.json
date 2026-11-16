@@ -6,6 +6,13 @@
         "uid": 7,
         "class": "sRN",
         "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 0,
+          "left": 0,
+          "bottom": 0,
+          "right": 0
+        },
         "terminals": [],
         "diagrams": []
       }

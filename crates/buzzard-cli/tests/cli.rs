@@ -139,7 +139,10 @@ fn inspect_prints_markdown_and_json() {
         markdown.contains("## Block diagram\n\n2 nodes, 3 wires, 1 diagrams.\n"),
         "{markdown}"
     );
-    assert!(markdown.contains("- built-in function #43\n"), "{markdown}");
+    assert!(
+        markdown.contains("- built-in function `Add` #43\n"),
+        "{markdown}"
+    );
     assert!(
         markdown.contains("  - out #51 numeric -> diagram boundary #7 (terminal #162)\n"),
         "{markdown}"
@@ -155,6 +158,15 @@ fn inspect_prints_markdown_and_json() {
         parsed["diagram"]["root"]["wires"].as_array().unwrap().len(),
         3
     );
+
+    // Pictures of the diagram.
+    let (code, svg, _) = run(&["inspect", "add.vi", "--format", "svg"], &fixtures);
+    assert_eq!(code, 0);
+    assert!(svg.starts_with("<svg ") && svg.trim_end().ends_with("</svg>"));
+    let (_, mermaid, _) = run(&["inspect", "add.vi", "--format", "mermaid"], &fixtures);
+    assert!(mermaid.starts_with("flowchart LR\n"));
+    let (_, dot, _) = run(&["inspect", "add.vi", "--format", "dot"], &fixtures);
+    assert!(dot.starts_with("digraph diagram {\n"));
 
     let dir = TempDir::new("inspect");
     std::fs::write(dir.0.join("bad.vi"), b"nope").unwrap();
@@ -203,4 +215,81 @@ fn check_and_inspect_cover_project_files() {
     let (code, _, stderr) = run(&["inspect", "Bad.lvproj"], &dir.0);
     assert_eq!(code, 2);
     assert!(stderr.contains("invalid XML"), "{stderr}");
+}
+
+/// Run with stdout connected to a device that accepts no data, like a full
+/// disk. Returns the exit status and stderr.
+#[cfg(target_os = "linux")]
+fn run_with_full_stdout(args: &[&str], dir: &std::path::Path) -> (i32, String) {
+    let full = std::fs::File::options()
+        .write(true)
+        .open("/dev/full")
+        .unwrap();
+    let output = Command::new(BIN)
+        .args(args)
+        .current_dir(dir)
+        .stdout(full)
+        .output()
+        .unwrap();
+    (
+        output.status.code().unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+/// A report that could not be written is a failure, not a clean result: a
+/// CI step must not pass with an empty or truncated SARIF file.
+#[cfg(target_os = "linux")]
+#[test]
+fn failing_to_write_the_report_exits_two() {
+    let dir = TempDir::new("full");
+    dir.vi("a.vi", &CLEAN, &[]);
+    for args in [
+        &["check"][..],
+        &["check", "--format", "json"],
+        &["check", "--format", "sarif"],
+        &["check", "--exit-zero"],
+        &["inspect", "a.vi"],
+        &["inspect", "a.vi", "--format", "json"],
+    ] {
+        let (code, stderr) = run_with_full_stdout(args, &dir.0);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(
+            stderr.starts_with("error: cannot write output: "),
+            "{args:?}: {stderr}"
+        );
+    }
+    std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
+    let (code, stderr) = run_with_full_stdout(&["inspect", "App.lvproj"], &dir.0);
+    assert_eq!(code, 2, "{stderr}");
+
+    // The write failure wins over "problems found" as well.
+    dir.vi("b.vi", &INLINE_CODE, &[]);
+    let (code, stderr) = run_with_full_stdout(&["check"], &dir.0);
+    assert_eq!(code, 2, "{stderr}");
+}
+
+/// A reader that goes away early (`buzzard check | head`) is not an error.
+#[cfg(unix)]
+#[test]
+fn closed_pipe_is_not_an_error() {
+    use std::process::Stdio;
+
+    let dir = TempDir::new("pipe");
+    for i in 0..200 {
+        dir.vi(&format!("f{i:03}.vi"), &INLINE_CODE, &[]);
+    }
+    let mut child = Command::new(BIN)
+        .args(["check", "--exit-zero", "--format", "json"])
+        .current_dir(&dir.0)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Close the read end before the report is written.
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stderr}");
+    assert_eq!(stderr, "");
 }

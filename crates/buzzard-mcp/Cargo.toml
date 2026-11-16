@@ -1,0 +1,21 @@
+[package]
+name = "buzzard-mcp"
+description = "Model Context Protocol server exposing buzzard's analysis as tools for AI agents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["mcp", "static-analysis", "ai-agents", "lint"]
+categories = ["development-tools"]
+
+[dependencies]
+buzzard-lint.workspace = true
+buzzard-ls.workspace = true
+buzzard-rsrc.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

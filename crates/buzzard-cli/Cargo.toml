@@ -17,11 +17,15 @@ path = "src/main.rs"
 [dependencies]
 buzzard-lint.workspace = true
 buzzard-ls.workspace = true
+buzzard-mcp.workspace = true
 buzzard-rsrc.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+url = "2"
 
 [lints]
 workspace = true

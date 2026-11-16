@@ -4,10 +4,11 @@ use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use buzzard_lint::graph::CaseSensitivity;
 use buzzard_lint::project::encode_parent_link;
 use buzzard_lint::{lint, DependencyGraph, Diagnostic, EdgeKind, LintConfig, Workspace};
 use buzzard_rsrc::builder::RsrcBuilder;
-use buzzard_rsrc::LvPath;
+use buzzard_rsrc::{LvPath, PathKind};
 
 const V23: u32 = 0x2300_8000;
 const V21: u32 = 0x2100_8000;
@@ -36,6 +37,48 @@ impl TempDir {
                 .links(&links)
                 .build(),
         );
+    }
+
+    /// A clean file whose links are given as `(name, path)` pairs.
+    fn linked(&self, rel: &str, links: &[(&str, LvPath)]) {
+        self.write(
+            rel,
+            RsrcBuilder::default()
+                .save_record(V23, &CLEAN)
+                .links(links)
+                .build(),
+        );
+    }
+
+    fn graph(&self, case: CaseSensitivity) -> DependencyGraph {
+        let workspace = Workspace::scan(std::slice::from_ref(&self.0));
+        DependencyGraph::build_with(&workspace, case)
+    }
+
+    /// Every edge as `from -> to`, with paths relative to the directory.
+    fn edges(&self, graph: &DependencyGraph) -> Vec<String> {
+        let rel = |p: &Path| {
+            p.strip_prefix(&self.0)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        };
+        graph
+            .edges()
+            .into_iter()
+            .map(|(from, to, _)| format!("{} -> {}", rel(from), rel(to)))
+            .collect()
+    }
+
+    /// This directory spelled relative to the current directory.
+    #[cfg(unix)]
+    fn relative_spelling(&self) -> PathBuf {
+        let cwd = std::env::current_dir().unwrap();
+        let mut out = PathBuf::new();
+        for _ in cwd.components().skip(1) {
+            out.push("..");
+        }
+        out.join(self.0.strip_prefix("/").unwrap())
     }
 
     fn write(&self, rel: &str, bytes: Vec<u8>) {
@@ -126,11 +169,83 @@ fn bz002_version_mismatch_flags_the_minority() {
 }
 
 #[test]
-fn bz002_tie_prefers_newer_version() {
+fn bz002_tie_reports_nothing() {
+    // With as many files on one version as on the other, neither is what
+    // the workspace "mostly uses".
     let dir = TempDir::new("bz002-tie");
     dir.vi("new.vi", V23, &CLEAN, &[]);
     dir.vi("old.vi", V21, &CLEAN, &[]);
-    assert_eq!(codes(&dir.check()), [("old.vi", "BZ002")]);
+    assert_eq!(dir.check(), []);
+
+    // A three-way tie is still a tie.
+    dir.vi("older.vi", 0x2000_8000, &CLEAN, &[]);
+    assert_eq!(dir.check(), []);
+
+    // One more file makes 23.0 a strict plurality, and the others stand out.
+    dir.vi("new2.vi", V23, &CLEAN, &[]);
+    let found = dir.check();
+    assert_eq!(codes(&found), [("old.vi", "BZ002"), ("older.vi", "BZ002")]);
+    assert_eq!(
+        found[0].2,
+        "saved with version 21.0 but the workspace mostly uses 23.0 (2 files)"
+    );
+}
+
+#[test]
+fn bz003_own_path_is_measured_from_the_scan_root() {
+    // 64 characters from the root, wherever the root is.
+    let rel = format!("{}/{}/a.vi", "d".repeat(29), "e".repeat(29));
+    let config = LintConfig {
+        max_path_length: 63,
+        ..LintConfig::default()
+    };
+    let expected = "file path is 64 characters long from the scan root, over the limit of 63";
+    let own = |root: &Path| -> Vec<String> {
+        let workspace = Workspace::scan(&[root.to_path_buf()]);
+        let graph = DependencyGraph::build(&workspace);
+        lint(&workspace, &graph, &config)
+            .into_iter()
+            .filter(|d| d.code == "BZ003")
+            .map(|d| d.message)
+            .collect()
+    };
+
+    // The same tree under a short and a long location gives one answer.
+    let short = TempDir::new("bz003-own");
+    short.vi(&rel, V23, &CLEAN, &[]);
+    assert_eq!(own(&short.0), [expected]);
+    let nested = short.0.join("x".repeat(40));
+    let long = TempDir(nested.join("checkout"));
+    long.vi(&rel, V23, &CLEAN, &[]);
+    assert_eq!(own(&long.0), [expected]);
+    // Spelling the root differently does not change it either.
+    assert_eq!(own(&long.0.join("d".repeat(29)).join("..")), [expected]);
+    #[cfg(unix)]
+    assert_eq!(own(&long.relative_spelling()), [expected]);
+
+    // One character shorter is within the limit.
+    let config = LintConfig {
+        max_path_length: 64,
+        ..LintConfig::default()
+    };
+    let workspace = Workspace::scan(std::slice::from_ref(&long.0));
+    let graph = DependencyGraph::build(&workspace);
+    assert_eq!(lint(&workspace, &graph, &config), []);
+    // A file given as the root itself is measured by its name.
+    let file = long.0.join(&rel);
+    let workspace = Workspace::scan(std::slice::from_ref(&file));
+    let graph = DependencyGraph::build(&workspace);
+    let config = LintConfig {
+        max_path_length: 3,
+        ..LintConfig::default()
+    };
+    let found = lint(&workspace, &graph, &config);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].message,
+        "file path is 4 characters long from the scan root, over the limit of 3"
+    );
+    drop(long);
 }
 
 #[test]
@@ -733,4 +848,310 @@ fn real_project_fixtures_scan_without_parse_errors() {
     // The members were not copied along with the three files.
     assert!(!found.is_empty(), "the fixture members are missing on disk");
     assert!(found.iter().all(|d| d.code == "BZ006"), "{found:#?}");
+}
+
+#[test]
+fn symbolic_links_never_bind_to_a_workspace_file_of_the_same_name() {
+    let dir = TempDir::new("symbolic");
+    let name = "Path To Command Line String.vi";
+    // A wrapper named like the installed VI it calls.
+    let vilib = LvPath::absolute(&["<vilib>", "AdvancedString", name]);
+    dir.linked(name, &[(name, vilib.clone())]);
+    // Common names: an unrelated project file must not become the callee.
+    dir.linked("drivers/Open.vi", &[]);
+    let open = LvPath::absolute(&["<userlib>", "instr", "Open.vi"]);
+    dir.linked("main.vi", &[("Open.vi", open), (name, vilib)]);
+    // Neither does a link that is not a path at all.
+    let not_a_path = LvPath {
+        kind: PathKind::NotAPath,
+        components: vec!["Open.vi".into()],
+    };
+    dir.linked("other.vi", &[("Open.vi", not_a_path)]);
+
+    let graph = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
+    assert!(graph.cycles().is_empty());
+    assert_eq!(dir.check(), []);
+}
+
+#[test]
+fn stale_links_fall_back_to_a_unique_name_but_never_to_the_file_itself() {
+    let dir = TempDir::new("stale");
+    dir.linked("lib/util.vi", &[]);
+    // Absolute path from another machine.
+    let foreign = LvPath::absolute(&["Volumes", "old", "util.vi"]);
+    dir.linked("a.vi", &[("util.vi", foreign)]);
+    // Relative path that no longer leads anywhere.
+    dir.linked("b.vi", &[("util.vi", LvPath::sibling("util.vi"))]);
+    // A stale link to something with the file's own name is not a
+    // self-reference.
+    let own = LvPath::absolute(&["Volumes", "old", "c.vi"]);
+    dir.linked("c.vi", &[("c.vi", own)]);
+    let gone = LvPath {
+        kind: PathKind::Relative,
+        components: vec!["".into(), "elsewhere".into(), "d.vi".into()],
+    };
+    dir.linked("d.vi", &[("d.vi", gone)]);
+
+    let graph = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(
+        dir.edges(&graph),
+        ["a.vi -> lib/util.vi", "b.vi -> lib/util.vi"]
+    );
+    assert!(graph.cycles().is_empty());
+    assert!(!dir.check().iter().any(|(_, code, _)| *code == "BZ005"));
+}
+
+#[test]
+fn absolute_links_match_files_scanned_under_another_spelling() {
+    let dir = TempDir::new("identity");
+    // Two files share a name, so only the exact path can tell them apart.
+    dir.linked("a/Init.vi", &[]);
+    dir.linked("b/Init.vi", &[]);
+    let target = dir.0.join("b/Init.vi");
+    let components: Vec<String> = target
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+            std::path::Component::Prefix(prefix) => match prefix.kind() {
+                std::path::Prefix::Disk(letter) => Some(char::from(letter).to_string()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let link = LvPath {
+        kind: PathKind::Absolute,
+        components,
+    };
+    dir.linked("main.vi", &[("Init.vi", link)]);
+
+    let expected = ["main.vi -> b/Init.vi"];
+    assert_eq!(
+        dir.edges(&dir.graph(CaseSensitivity::Sensitive)),
+        expected,
+        "absolute root"
+    );
+
+    // The root spelled with a detour, and relative to the current directory.
+    let spellings = [
+        dir.0.join("a/.."),
+        #[cfg(unix)]
+        dir.relative_spelling(),
+    ];
+    for root in spellings {
+        let workspace = Workspace::scan(std::slice::from_ref(&root));
+        let graph = DependencyGraph::build_with(&workspace, CaseSensitivity::Sensitive);
+        let edges: Vec<String> = graph
+            .edges()
+            .into_iter()
+            .map(|(from, to, _)| {
+                let name = |p: &Path| {
+                    let parent = p.parent().and_then(Path::file_name).unwrap();
+                    let file = p.file_name().unwrap();
+                    format!("{}/{}", parent.to_string_lossy(), file.to_string_lossy())
+                };
+                format!(
+                    "{} -> {}",
+                    from.file_name().unwrap().to_string_lossy(),
+                    name(to)
+                )
+            })
+            .collect();
+        assert_eq!(edges, expected, "{}", root.display());
+        // Queries accept any spelling of a file's path, too.
+        let callers = graph.callers(&dir.0.join("b/./Init.vi"));
+        assert_eq!(callers.len(), 1, "{}", root.display());
+        assert_eq!(callers[0].file_name().unwrap(), "main.vi");
+    }
+}
+
+#[test]
+fn a_file_reached_through_two_roots_is_analyzed_once() {
+    let dir = TempDir::new("two-roots");
+    dir.vi("sub/a.vi", V23, &[0; 6], &["b.vi"]);
+    dir.vi("sub/b.vi", V23, &CLEAN, &[]);
+
+    let once = Workspace::scan(std::slice::from_ref(&dir.0));
+    let mut roots = vec![dir.0.clone(), dir.0.join("sub"), dir.0.join("sub/../sub")];
+    #[cfg(unix)]
+    roots.push(dir.relative_spelling());
+    let twice = Workspace::scan(&roots);
+    // The spelling of the first root is the one that is kept.
+    let keys = |w: &Workspace| -> Vec<PathBuf> { w.files().keys().cloned().collect() };
+    assert_eq!(keys(&twice), keys(&once));
+    assert_eq!(keys(&twice).len(), 2);
+    assert_eq!(
+        buzzard_lint::workspace::discover(&roots),
+        buzzard_lint::workspace::discover(std::slice::from_ref(&dir.0))
+    );
+
+    let graph = DependencyGraph::build(&twice);
+    assert_eq!((graph.file_count(), graph.edge_count()), (2, 1));
+    let found = lint(&twice, &graph, &LintConfig::default());
+    assert_eq!(
+        found,
+        lint(
+            &once,
+            &DependencyGraph::build(&once),
+            &LintConfig::default()
+        )
+    );
+    assert_eq!(found.len(), 1);
+
+    // With the roots in the other order the first spelling still wins.
+    #[cfg(unix)]
+    {
+        let relative = dir.relative_spelling();
+        let workspace = Workspace::scan(&[relative.clone(), dir.0.clone()]);
+        assert_eq!(
+            keys(&workspace),
+            [relative.join("sub/a.vi"), relative.join("sub/b.vi")]
+        );
+    }
+}
+
+#[test]
+fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
+    let dir = TempDir::new("case");
+    // The link was stored as `Util.vi`; the file is now `util.vi`.
+    dir.linked("a.vi", &[("Util.vi", LvPath::sibling("Util.vi"))]);
+    dir.linked("util.vi", &[("A.VI", LvPath::sibling("A.VI"))]);
+    // A directory component that differs in case.
+    let nested = LvPath {
+        kind: PathKind::Relative,
+        components: vec!["".into(), "Lib".into(), "Deep.vi".into()],
+    };
+    dir.linked("b.vi", &[("Deep.vi", nested)]);
+    dir.linked("lib/deep.vi", &[]);
+    // A stale path whose name differs in case.
+    let stale = LvPath::absolute(&["Volumes", "old", "DEEP.VI"]);
+    dir.linked("c.vi", &[("DEEP.VI", stale)]);
+
+    let sensitive = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(dir.edges(&sensitive), [] as [&str; 0]);
+    assert!(sensitive.cycles().is_empty());
+
+    let insensitive = dir.graph(CaseSensitivity::Insensitive);
+    assert_eq!(
+        dir.edges(&insensitive),
+        [
+            "a.vi -> util.vi",
+            "b.vi -> lib/deep.vi",
+            "c.vi -> lib/deep.vi",
+            "util.vi -> a.vi"
+        ]
+    );
+    // The cycle a.vi <-> util.vi is now visible.
+    assert_eq!(insensitive.cycles().len(), 1);
+    // Queries find a file whatever the case of the path they are given.
+    assert_eq!(insensitive.callers(&dir.0.join("UTIL.vi")).len(), 1);
+    assert_eq!(sensitive.callers(&dir.0.join("UTIL.vi")).len(), 0);
+}
+
+/// Two files whose names differ only in case can only be created where the
+/// file system tells them apart.
+#[cfg(target_os = "linux")]
+#[test]
+fn case_insensitive_lookup_prefers_exact_and_refuses_ambiguity() {
+    let dir = TempDir::new("case-ambiguous");
+    dir.linked("util.vi", &[]);
+    dir.linked("UTIL.vi", &[]);
+    dir.linked("exact.vi", &[("UTIL.vi", LvPath::sibling("UTIL.vi"))]);
+    dir.linked("vague.vi", &[("Util.vi", LvPath::sibling("Util.vi"))]);
+    let stale = LvPath::absolute(&["Volumes", "old", "uTiL.vi"]);
+    dir.linked("stale.vi", &[("uTiL.vi", stale)]);
+
+    for case in [CaseSensitivity::Sensitive, CaseSensitivity::Insensitive] {
+        let graph = dir.graph(case);
+        assert_eq!(dir.edges(&graph), ["exact.vi -> UTIL.vi"], "{case:?}");
+    }
+}
+
+/// `テスト.vi` as Japanese LabVIEW stores it: Shift-JIS bytes.
+const SJIS_NAME: &[u8] = b"\x83\x65\x83\x58\x83\x67.vi";
+
+fn byte_links(links: &[buzzard_rsrc::builder::ByteLink<'_>]) -> Vec<u8> {
+    RsrcBuilder::default()
+        .save_record(V23, &CLEAN)
+        .links_bytes(links)
+        .build()
+}
+
+#[test]
+fn links_stored_in_a_legacy_code_page_resolve() {
+    let dir = TempDir::new("shift-jis");
+    dir.linked("テスト.vi", &[]);
+    // A sibling link, and a link through a directory that is also Shift-JIS
+    // (`日本`).
+    dir.write(
+        "main.vi",
+        byte_links(&[(SJIS_NAME, PathKind::Relative, &[b"", SJIS_NAME])]),
+    );
+    let folder: &[u8] = b"\x93\xfa\x96\x7b";
+    dir.linked("日本/深い.vi", &[]);
+    let deep: &[u8] = b"\x90\x5b\x82\xa2.vi";
+    dir.write(
+        "nested.vi",
+        byte_links(&[(deep, PathKind::Relative, &[b"", folder, deep])]),
+    );
+    // A stale absolute path still finds the file by its recovered name.
+    dir.write(
+        "sub/stale.vi",
+        byte_links(&[(
+            SJIS_NAME,
+            PathKind::Absolute,
+            &[b"C", b"\x8c\xc3\x82\xa2", SJIS_NAME],
+        )]),
+    );
+
+    let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
+    // The parser shows the bytes one character each; the graph recovers them.
+    let stored = &workspace.get(&dir.0.join("main.vi")).unwrap();
+    let stored = stored.metadata().unwrap().links[0].name().unwrap();
+    assert_eq!(stored, "\u{83}e\u{83}X\u{83}g.vi");
+
+    let graph = DependencyGraph::build_with(&workspace, CaseSensitivity::Sensitive);
+    assert_eq!(
+        dir.edges(&graph),
+        [
+            "main.vi -> テスト.vi",
+            "nested.vi -> 日本/深い.vi",
+            "sub/stale.vi -> テスト.vi"
+        ]
+    );
+    let callers = graph.callers(&dir.0.join("テスト.vi"));
+    assert_eq!(file_names(&callers), ["main.vi", "stale.vi"]);
+}
+
+#[test]
+fn code_page_recovery_needs_a_single_candidate() {
+    // 0xC4 0xE3 is `你` in GBK, `Дг` in Windows-1251 and `Äã` in Windows-1252.
+    let name: &[u8] = b"\xc4\xe3.vi";
+    let link = byte_links(&[(name, PathKind::Relative, &[b"", name])]);
+
+    let dir = TempDir::new("code-page-one");
+    dir.linked("你.vi", &[]);
+    dir.write("main.vi", link.clone());
+    let graph = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(dir.edges(&graph), ["main.vi -> 你.vi"]);
+
+    // With a file for each reading there is no telling which one is meant.
+    dir.linked("Дг.vi", &[]);
+    let graph = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
+
+    // A name that is right as stored is taken as stored, whatever else
+    // its bytes could mean.
+    dir.linked("\u{c4}\u{e3}.vi", &[]);
+    let graph = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(dir.edges(&graph), ["main.vi -> Äã.vi"]);
+
+    // Bytes that are valid in no candidate reading match nothing, and plain
+    // ASCII names are never reinterpreted.
+    let dir = TempDir::new("code-page-none");
+    dir.linked("テスト.vi", &[]);
+    dir.linked("main.vi", &[("missing.vi", LvPath::sibling("missing.vi"))]);
+    let graph = dir.graph(CaseSensitivity::Sensitive);
+    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
 }

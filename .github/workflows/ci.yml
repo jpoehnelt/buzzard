@@ -123,12 +123,49 @@ jobs:
           command: check
           arguments: --all-features --locked
 
+  # The VS Code extension under editors/vscode: TypeScript, outside the
+  # Cargo workspace. Its unit tests also run the real `buzzard` on a real
+  # file, so the binary is built first.
+  vscode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run lint
+        working-directory: editors/vscode
+      - run: npm run compile
+        working-directory: editors/vscode
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --locked -p buzzard-cli
+      - run: npm test
+        working-directory: editors/vscode
+        env:
+          BUZZARD_BIN: ${{ github.workspace }}/target/debug/buzzard
+          BUZZARD_FIXTURE: ${{ github.workspace }}/crates/buzzard-rsrc/tests/fixtures/pylabview/empty_vifile.vi
+      # Proves that the extension still packages. Nothing is published.
+      - run: npm run package
+        working-directory: editors/vscode
+
   # The one check to require in branch protection. It fails if any job above
   # failed or was cancelled, and the list of jobs can change without touching
   # the repository settings.
   ci:
     if: always()
-    needs: [fmt, lint, test, msrv, deny]
+    needs: [fmt, lint, test, msrv, deny, vscode]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

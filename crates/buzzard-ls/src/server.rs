@@ -1,49 +1,34 @@
-//! The `tower-lsp` front end over [`Engine`].
+//! The `tower-lsp` front end over the analyzed state.
 
-use std::future::{ready, Future, Ready};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Duration;
 
-use buzzard_lint::project::is_project_file;
-use buzzard_lint::{
-    summary, Diagnostic as Finding, FileState, LintConfig, RsrcInspector, Severity, ViInspector,
-};
-use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
+use buzzard_lint::{summary, Diagnostic as Finding, RsrcInspector, Severity, ViInspector};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tokio::sync::{mpsc, Notify};
-use tower_lsp::jsonrpc::{Error, Request, Result};
-use tower_lsp::lsp_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeWatchedFilesParams,
-    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Range,
-    ReferenceParams, ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind, Url,
-    WorkspaceSymbolParams,
-};
+use tokio::sync::mpsc::{self, UnboundedSender};
+use tokio::sync::Notify;
+use tower_lsp::jsonrpc::{Error, Request, Response, Result};
+use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use tower_service::Service;
 
-use crate::engine::{self, Engine};
+use crate::engine;
+use crate::worker::{self, Job, Publisher, State};
 
-/// How long to wait for a burst of file events to settle before re-analyzing.
-const DEBOUNCE: Duration = Duration::from_millis(150);
 const MAX_SYMBOLS: usize = 500;
 
-type Watcher = Debouncer<notify::RecommendedWatcher>;
-
+/// The protocol front end. It never changes the analyzed state itself:
+/// handlers read the current snapshot, and anything that may change the
+/// state is queued for the worker (see [`crate::worker`]).
 struct Backend {
-    client: Client,
-    engine: Arc<Mutex<Engine>>,
+    state: Arc<State>,
+    jobs: UnboundedSender<Job>,
     inspector: Arc<dyn ViInspector>,
-    watcher: Mutex<Option<Watcher>>,
-}
-
-fn lock(engine: &Mutex<Engine>) -> MutexGuard<'_, Engine> {
-    engine.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn to_url(path: &Path) -> Option<Url> {
@@ -53,7 +38,7 @@ fn to_url(path: &Path) -> Option<Url> {
 
 fn to_path(uri: &Url) -> Result<PathBuf> {
     uri.to_file_path()
-        .map_err(|()| Error::invalid_params(format!("not a file URI: {uri}")))
+        .map_err(|_| Error::invalid_params(format!("not a file URI: {uri}")))
 }
 
 fn file_location(path: &Path) -> Option<Location> {
@@ -89,87 +74,28 @@ fn to_lsp_diagnostic(finding: &Finding) -> Diagnostic {
     }
 }
 
-async fn publish(client: &Client, updates: Vec<engine::Update>) {
-    for (path, findings) in updates {
-        if let Some(uri) = to_url(&path) {
-            let diagnostics = findings.iter().map(to_lsp_diagnostic).collect();
-            client.publish_diagnostics(uri, diagnostics, None).await;
-        }
-    }
-}
+/// Publishes to the client, one file after the other, in the order given.
+struct ClientPublisher(Client);
 
-/// Re-inspect the given files and publish whatever diagnostics changed.
-async fn refresh(
-    client: &Client,
-    engine: &Arc<Mutex<Engine>>,
-    inspector: &Arc<dyn ViInspector>,
-    paths: Vec<PathBuf>,
-) {
-    let mut changes = Vec::new();
-    for path in paths {
-        if !Engine::is_relevant(&path) {
-            continue;
+#[tower_lsp::async_trait]
+impl Publisher for ClientPublisher {
+    async fn publish(&self, updates: Vec<engine::Update>) {
+        for (path, findings) in updates {
+            if let Some(uri) = to_url(&path) {
+                let diagnostics = findings.iter().map(to_lsp_diagnostic).collect();
+                self.0.publish_diagnostics(uri, diagnostics, None).await;
+            }
         }
-        let state = if !path.is_file() {
-            None
-        } else if is_project_file(&path) {
-            // Project-level XML is always read from disk; the inspector
-            // backend only knows binary files.
-            Some(FileState::load(&path))
-        } else {
-            Some(FileState::from_inspection(inspector.inspect(&path).await))
-        };
-        changes.push((path, state));
     }
-    if changes.is_empty() {
-        return;
-    }
-    let engine = Arc::clone(engine);
-    let updates = tokio::task::spawn_blocking(move || lock(&engine).apply(changes)).await;
-    publish(client, updates.unwrap_or_default()).await;
 }
 
 impl Backend {
-    fn start_watcher(&self) {
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<PathBuf>>();
-        let debouncer = new_debouncer(DEBOUNCE, move |result: DebounceEventResult| {
-            if let Ok(events) = result {
-                let _ = tx.send(events.into_iter().map(|e| e.path).collect());
-            }
-        });
-        let Ok(mut debouncer) = debouncer else { return };
-        for root in lock(&self.engine).roots() {
-            let _ = debouncer.watcher().watch(root, RecursiveMode::Recursive);
-        }
-        *self.watcher.lock().unwrap_or_else(PoisonError::into_inner) = Some(debouncer);
-
-        let client = self.client.clone();
-        let engine = Arc::clone(&self.engine);
-        let inspector = Arc::clone(&self.inspector);
-        tokio::spawn(async move {
-            while let Some(paths) = rx.recv().await {
-                refresh(&client, &engine, &inspector, paths).await;
-            }
-        });
-    }
-
     /// `buzzard/inspect`: metadata and graph neighbours of one file as JSON.
     /// A project, library or class answers with `project` instead of
     /// `metadata`.
-    ///
-    /// tower-lsp wants a future, but the answer comes straight from the
-    /// in-memory engine, so the future is ready at once.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "tower-lsp passes the deserialized params by value"
-    )]
-    fn inspect(&self, params: InspectParams) -> Ready<Result<Value>> {
-        ready(self.inspect_now(&params.uri))
-    }
-
-    fn inspect_now(&self, uri: &Url) -> Result<Value> {
-        let path = to_path(uri)?;
-        let engine = lock(&self.engine);
+    async fn inspect(&self, params: InspectParams) -> Result<Value> {
+        let path = to_path(&params.uri)?;
+        let engine = self.state.view();
         let uris =
             |paths: Vec<PathBuf>| -> Vec<Url> { paths.iter().filter_map(|p| to_url(p)).collect() };
         if let Some(project) = engine.project(&path) {
@@ -209,11 +135,14 @@ impl Backend {
                 )))
             }
         };
-        let inspection = self
-            .inspector
-            .inspect(&path)
-            .await
-            .map_err(|reason| Error::invalid_params(format!("cannot read file: {reason}")))?;
+        // Reading and decoding a file must not stall the other requests.
+        let inspector = self.inspector.clone();
+        let runtime = tokio::runtime::Handle::current();
+        let inspection =
+            tokio::task::spawn_blocking(move || runtime.block_on(inspector.inspect(&path)))
+                .await
+                .map_err(|_| Error::internal_error())?
+                .map_err(|reason| Error::invalid_params(format!("cannot read file: {reason}")))?;
         Ok(match inspection.diagram {
             None => Value::Null,
             Some(diagram) if markdown => {
@@ -246,12 +175,11 @@ impl LanguageServer for Backend {
             .iter()
             .filter_map(|folder| folder.uri.to_file_path().ok())
             .collect();
-        // `rootUri` is superseded by workspace folders; it is the fallback
-        // for clients that send none.
         if roots.is_empty() {
+            #[allow(deprecated)]
             roots.extend(params.root_uri.and_then(|uri| uri.to_file_path().ok()));
         }
-        *lock(&self.engine) = Engine::new(roots, LintConfig::default());
+        let _ = self.jobs.send(Job::Roots(roots));
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -268,18 +196,12 @@ impl LanguageServer for Backend {
     }
 
     async fn initialized(&self, _: InitializedParams) {
-        // Watch before scanning so that a save during the scan is not missed.
-        self.start_watcher();
-        let engine = Arc::clone(&self.engine);
-        let updates = tokio::task::spawn_blocking(move || lock(&engine).scan()).await;
-        publish(&self.client, updates.unwrap_or_default()).await;
+        let _ = self.jobs.send(Job::Scan);
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.watcher
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        // Stops the file watcher and ends the worker.
+        let _ = self.jobs.send(Job::Shutdown);
         Ok(())
     }
 
@@ -289,12 +211,12 @@ impl LanguageServer for Backend {
             .iter()
             .filter_map(|c| c.uri.to_file_path().ok())
             .collect();
-        refresh(&self.client, &self.engine, &self.inspector, paths).await;
+        let _ = self.jobs.send(Job::Paths(paths));
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let path = to_path(&params.text_document_position_params.text_document.uri)?;
-        Ok(lock(&self.engine).hover(&path).map(|value| Hover {
+        Ok(self.state.view().hover(&path).map(|value| Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value,
@@ -305,7 +227,7 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let path = to_path(&params.text_document_position.text_document.uri)?;
-        let callers = lock(&self.engine).callers(&path);
+        let callers = self.state.view().callers(&path);
         Ok(Some(
             callers.iter().filter_map(|p| file_location(p)).collect(),
         ))
@@ -315,14 +237,11 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
-        let symbols = lock(&self.engine).symbols(&params.query, MAX_SYMBOLS);
+        let symbols = self.state.view().symbols(&params.query, MAX_SYMBOLS);
         let out = symbols
             .into_iter()
             .filter_map(|symbol| {
-                #[expect(
-                    deprecated,
-                    reason = "`SymbolInformation::deprecated` is superseded by `tags`, but a struct literal must still set it"
-                )]
+                #[allow(deprecated)]
                 Some(SymbolInformation {
                     kind: match symbol.kind {
                         engine::SymbolKind::Vi => SymbolKind::FUNCTION,
@@ -343,16 +262,43 @@ impl LanguageServer for Backend {
     }
 }
 
-/// Wraps the LSP service to signal when the client sends `exit`. The
-/// underlying server otherwise keeps running until stdin is closed.
-struct ExitAware<S> {
-    inner: S,
-    exit: Arc<Notify>,
+/// What the client has said about ending the session.
+#[derive(Default)]
+struct Lifecycle {
+    /// A `shutdown` request was answered successfully.
+    shutdown: AtomicBool,
+    exit: Notify,
 }
 
-impl<S> Service<Request> for ExitAware<S>
+impl Lifecycle {
+    /// The process status the protocol asks for after `exit`: 0 if the
+    /// client sent `shutdown` first, else 1.
+    fn status_after_exit(&self) -> i32 {
+        if self.shutdown.load(Ordering::SeqCst) {
+            0
+        } else {
+            1
+        }
+    }
+}
+
+/// Wraps the LSP service to follow the handshakes at both ends of a
+/// session, where the underlying server does not tell enough:
+///
+/// - `shutdown` / `exit`: it keeps running until stdin is closed, and does
+///   not say whether `shutdown` came first.
+/// - `initialize` / `initialized`: it drops an `initialized` that arrives
+///   before `initialize` has been answered, which a client that sends both
+///   in one write can cause. The workspace would never be scanned.
+struct Handshake<S> {
+    inner: S,
+    lifecycle: Arc<Lifecycle>,
+    jobs: UnboundedSender<Job>,
+}
+
+impl<S> Service<Request> for Handshake<S>
 where
-    S: Service<Request>,
+    S: Service<Request, Response = Option<Response>>,
     S::Future: Send + 'static,
 {
     type Response = S::Response;
@@ -363,14 +309,25 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, req: Request) -> Self::Future {
-        let is_exit = req.method() == "exit";
-        let response = self.inner.call(req);
-        let exit = Arc::clone(&self.exit);
+    fn call(&mut self, request: Request) -> Self::Future {
+        let is_exit = request.method() == "exit";
+        let is_shutdown = request.method() == "shutdown";
+        if request.method() == "initialized" {
+            // The worker waits for the roots and scans once, however often
+            // it is asked.
+            let _ = self.jobs.send(Job::Scan);
+        }
+        let response = self.inner.call(request);
+        let lifecycle = self.lifecycle.clone();
         Box::pin(async move {
             let response = response.await;
+            // A `shutdown` that was refused (sent before `initialize`, or
+            // twice) does not count.
+            if is_shutdown && matches!(&response, Ok(Some(answer)) if answer.is_ok()) {
+                lifecycle.shutdown.store(true, Ordering::SeqCst);
+            }
             if is_exit {
-                exit.notify_one();
+                lifecycle.exit.notify_one();
             }
             response
         })
@@ -379,24 +336,39 @@ where
 
 /// Serve the language server over stdin/stdout until the client sends
 /// `exit` or closes the connection.
-pub async fn run_stdio() {
-    let (service, socket) = LspService::build(|client| Backend {
-        client,
-        engine: Arc::new(Mutex::new(Engine::default())),
-        inspector: Arc::new(RsrcInspector),
-        watcher: Mutex::new(None),
+///
+/// Returns the status the process should exit with: 1 if `exit` arrived
+/// without a preceding `shutdown`, as the protocol requires, and 0
+/// otherwise (including when the client just closes the connection).
+pub async fn run_stdio() -> i32 {
+    let inspector: Arc<dyn ViInspector> = Arc::new(RsrcInspector);
+    let state = Arc::new(State::new(inspector.clone()));
+    let (jobs, queue) = mpsc::unbounded_channel();
+    let (service, socket) = LspService::build(|client| {
+        tokio::spawn(worker::run(
+            state.clone(),
+            ClientPublisher(client),
+            queue,
+            jobs.clone(),
+        ));
+        Backend {
+            state,
+            jobs: jobs.clone(),
+            inspector,
+        }
     })
     .custom_method("buzzard/inspect", Backend::inspect)
     .custom_method("buzzard/exportAst", Backend::export_ast)
     .finish();
-    let exit = Arc::new(Notify::new());
-    let service = ExitAware {
+    let lifecycle = Arc::new(Lifecycle::default());
+    let service = Handshake {
         inner: service,
-        exit: Arc::clone(&exit),
+        lifecycle: lifecycle.clone(),
+        jobs,
     };
     let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);
     tokio::select! {
-        () = server.serve(service) => {}
-        () = exit.notified() => {}
+        () = server.serve(service) => 0,
+        () = lifecycle.exit.notified() => lifecycle.status_after_exit(),
     }
 }

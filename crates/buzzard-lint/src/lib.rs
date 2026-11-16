@@ -6,12 +6,15 @@
 
 pub mod dataflow;
 pub mod diagnostic;
+pub mod diff;
 pub mod graph;
 pub mod inspector;
 pub mod project;
+pub mod render;
 pub mod rules;
 pub mod sarif;
 pub mod summary;
+pub mod verify;
 pub mod workspace;
 
 pub use diagnostic::{Diagnostic, Severity};
