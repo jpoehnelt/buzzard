@@ -1,6 +1,7 @@
 //! The `buzzard` command: `check`, `inspect` and `diff` over the analysis in
-//! `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, and `mcp`
-//! for the Model Context Protocol server in `buzzard-mcp`.
+//! `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, `mcp`
+//! for the Model Context Protocol server in `buzzard-mcp`, and `tdms` for
+//! the measurement file reader in `buzzard-tdms`.
 
 #![expect(
     clippy::print_stderr,
@@ -23,6 +24,7 @@ use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod diff_cmd;
+mod tdms_cmd;
 
 /// Static analyzer and language server that reads binary .vi and .ctl files
 /// and .lvproj, .lvlib and .lvclass files directly, without the IDE.
@@ -70,6 +72,9 @@ enum Command {
         #[arg(long, value_enum, default_value_t = VerifyFormat::Text)]
         format: VerifyFormat,
     },
+    /// Read TDMS measurement files: describe one, or export its channels
+    /// as a Parquet or CSV table.
+    Tdms(tdms_cmd::Args),
     /// Run the language server over stdin/stdout.
     Lsp,
     /// Run the Model Context Protocol server over stdin/stdout, so that AI
@@ -128,6 +133,13 @@ fn main() -> ExitCode {
         Command::Verify { paths, format } => verify(&paths, format),
         Command::Diff(args) => match diff_cmd::run(&args) {
             Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::from(2)
+            }
+        },
+        Command::Tdms(args) => match tdms_cmd::run(&args) {
+            Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
             Err(message) => {
                 eprintln!("error: {message}");
                 ExitCode::from(2)

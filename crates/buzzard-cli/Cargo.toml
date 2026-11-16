@@ -14,12 +14,20 @@ categories = ["command-line-utilities", "development-tools"]
 name = "buzzard"
 path = "src/main.rs"
 
+[features]
+default = ["parquet"]
+# `buzzard tdms export --format parquet`. Without it the export writes CSV
+# only and the binary does not carry the Arrow and Parquet crates.
+parquet = ["buzzard-tdms/parquet"]
+
 [dependencies]
 buzzard-lint.workspace = true
 buzzard-ls.workspace = true
 buzzard-mcp.workspace = true
 buzzard-rsrc.workspace = true
+buzzard-tdms.workspace = true
 clap.workspace = true
+rayon.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 tokio.workspace = true
