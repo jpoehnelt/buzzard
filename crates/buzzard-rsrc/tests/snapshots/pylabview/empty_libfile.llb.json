@@ -1,0 +1,20 @@
+{
+  "kind": "library",
+  "file_type": "LVAR",
+  "saved_name": null,
+  "version": null,
+  "flags": null,
+  "password_protected": null,
+  "libraries": [],
+  "links": [],
+  "resource_types": [
+    "ADir",
+    "PALM",
+    "PLM2",
+    "CPST",
+    "ICON",
+    "icl4",
+    "icl8",
+    "STR "
+  ]
+}

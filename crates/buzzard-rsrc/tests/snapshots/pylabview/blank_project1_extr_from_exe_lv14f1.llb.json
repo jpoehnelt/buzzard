@@ -1,0 +1,14 @@
+{
+  "kind": "library",
+  "file_type": "LVAR",
+  "saved_name": null,
+  "version": null,
+  "flags": null,
+  "password_protected": null,
+  "libraries": [],
+  "links": [],
+  "resource_types": [
+    "FLAG",
+    "LVzp"
+  ]
+}
