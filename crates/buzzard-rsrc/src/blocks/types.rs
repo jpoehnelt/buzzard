@@ -57,15 +57,10 @@ pub enum RefKind {
     /// TCP connection (kind 5).
     Tcp,
     /// ActiveX automation object (kind 7).
-    #[expect(clippy::doc_markdown, reason = "ActiveX is a product name, not code")]
     Automation,
     /// VI Server reference to an application, VI or control (kind 8).
     ViServer,
     /// DataSocket connection (kind 13).
-    #[expect(
-        clippy::doc_markdown,
-        reason = "DataSocket is a product name, not code"
-    )]
     DataSocket,
     /// VISA resource (kind 14).
     Visa,
@@ -78,7 +73,6 @@ pub enum RefKind {
     /// Queue (kind 18).
     Queue,
     /// IrDA connection (kind 19).
-    #[expect(clippy::doc_markdown, reason = "IrDA is a protocol name, not code")]
     Irda,
     /// User-defined refnum (kinds 20, 21 and 29).
     UserDefined,
