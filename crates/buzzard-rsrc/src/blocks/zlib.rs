@@ -11,6 +11,12 @@ use crate::reader::Reader;
 /// Upper bound on a single decompressed block, to bound memory on bad input.
 const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
 
+/// Inflate a compressed block.
+///
+/// # Errors
+///
+/// If the size prefix is missing or over 256 MiB, the zlib stream is
+/// corrupt, or it inflates to a different size than declared.
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut r = Reader::new(data, "compressed block");
     let size = r.u32()? as usize;
@@ -50,7 +56,11 @@ mod tests {
     fn round_trips() {
         let payload = b"hello hello hello hello";
         assert_eq!(
-            decompress(&compress(payload, payload.len() as u32)).unwrap(),
+            decompress(&compress(
+                payload,
+                u32::try_from(payload.len()).expect("test payload fits in a u32")
+            ))
+            .unwrap(),
             payload
         );
     }

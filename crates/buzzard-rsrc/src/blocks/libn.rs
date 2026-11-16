@@ -3,13 +3,21 @@
 use crate::error::{malformed, Result};
 use crate::reader::{decode_text, Reader};
 
+/// Read the library names: a `u32` count, then that many Pascal strings.
+///
+/// # Errors
+///
+/// If the count is larger than the rest of the block or a name runs past
+/// its end.
 pub fn parse(data: &[u8]) -> Result<Vec<String>> {
     let mut r = Reader::new(data, "LIBN");
     let count = r.u32()? as usize;
     if count > r.remaining() {
         return Err(malformed("LIBN", format!("implausible name count {count}")));
     }
-    (0..count).map(|_| Ok(decode_text(r.pstr()?))).collect()
+    std::iter::repeat_with(|| Ok(decode_text(r.pstr()?)))
+        .take(count)
+        .collect()
 }
 
 #[cfg(test)]

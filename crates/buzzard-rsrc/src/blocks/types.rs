@@ -46,28 +46,57 @@ struct TypeDesc {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefKind {
+    /// Datalog file (kind 1).
     DataLog,
+    /// Byte stream file (kind 2).
     File,
+    /// Device (kind 3).
     Device,
+    /// Occurrence (kind 4).
     Occurrence,
+    /// TCP connection (kind 5).
     Tcp,
+    /// ActiveX automation object (kind 7).
+    #[expect(clippy::doc_markdown, reason = "ActiveX is a product name, not code")]
     Automation,
+    /// VI Server reference to an application, VI or control (kind 8).
     ViServer,
+    /// DataSocket connection (kind 13).
+    #[expect(
+        clippy::doc_markdown,
+        reason = "DataSocket is a product name, not code"
+    )]
     DataSocket,
+    /// VISA resource (kind 14).
     Visa,
+    /// IVI instrument driver session (kind 15).
     Ivi,
+    /// UDP connection (kind 16).
     Udp,
+    /// Notifier (kind 17).
     Notifier,
+    /// Queue (kind 18).
     Queue,
+    /// IrDA connection (kind 19).
+    #[expect(clippy::doc_markdown, reason = "IrDA is a protocol name, not code")]
     Irda,
+    /// User-defined refnum (kinds 20, 21 and 29).
     UserDefined,
+    /// Event registration (kind 23).
     EventRegistration,
+    /// .NET object (kind 24).
     DotNet,
+    /// User event (kind 25).
     UserEvent,
+    /// Bluetooth connection (kind 31).
     Bluetooth,
+    /// Data value reference (kind 32).
     DataValue,
+    /// FIFO (kind 33).
     Fifo,
+    /// TDMS file (kind 34).
     Tdms,
+    /// Any other kind.
     Other,
 }
 
@@ -107,20 +136,32 @@ impl RefKind {
 pub enum DataType {
     /// The standard error cluster: Boolean status, 32-bit code, string source.
     ErrorCluster,
+    /// A refnum, with the kind of thing it refers to.
     Reference(RefKind),
+    /// Boolean (type codes `0x20` and `0x21`).
     Boolean,
+    /// Number of any representation (type codes `0x01` to `0x1E`, `0x5E`
+    /// and `0x5F`).
     Numeric,
+    /// String (type codes `0x30` and `0x31`).
     String,
+    /// Path (type code `0x32`).
     Path,
+    /// Array of any element type (type code `0x40`).
     Array,
+    /// Any cluster other than the error cluster.
     Cluster,
+    /// Variant (type code `0x53`).
     Variant,
     /// A VI's connector pane signature.
     Function,
+    /// No data (type code `0x00`).
     Void,
+    /// Any other type.
     Other,
 }
 
+/// A VI's type table, used to classify the types of heap objects.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TypeTable {
     flat: Vec<TypeDesc>,
@@ -132,6 +173,12 @@ pub struct TypeTable {
 
 impl TypeTable {
     /// Parse an inflated `VCTP` block and the raw `DTHP` block, if present.
+    ///
+    /// # Errors
+    ///
+    /// If either block is truncated, a count is too large for the data that
+    /// follows it, or a descriptor is shorter than its own header. A
+    /// descriptor whose body does not parse is kept as an opaque type.
     pub fn parse(vctp: &[u8], dthp: Option<&[u8]>) -> Result<Self> {
         let mut r = Reader::new(vctp, "VCTP");
         let count = r.u32()? as usize;
@@ -149,8 +196,8 @@ impl TypeTable {
                 format!("implausible top-level count {top_count}"),
             ));
         }
-        let top = (0..top_count)
-            .map(|_| var_u2p2(&mut r))
+        let top = std::iter::repeat_with(|| var_u2p2(&mut r))
+            .take(top_count)
             .collect::<Result<Vec<u32>>>()?;
 
         let mut heap_slice = (0, 0);
@@ -168,10 +215,12 @@ impl TypeTable {
         })
     }
 
+    /// Number of flat type descriptors.
     pub fn len(&self) -> usize {
         self.flat.len()
     }
 
+    /// Whether the table has no descriptors.
     pub fn is_empty(&self) -> bool {
         self.flat.is_empty()
     }
@@ -206,7 +255,7 @@ impl TypeTable {
             (Body::Cluster(elements), _) => {
                 let codes: Vec<Option<u8>> = elements
                     .iter()
-                    .map(|&i| self.flat.get(i as usize).map(|d| self.unwrap_code(d)))
+                    .map(|&i| self.flat.get(i as usize).map(unwrap_code))
                     .collect();
                 if codes == [Some(CODE_BOOLEAN), Some(CODE_INT32), Some(CODE_STRING)] {
                     DataType::ErrorCluster
@@ -216,9 +265,9 @@ impl TypeTable {
             }
             (Body::Refnum(kind), _) => DataType::Reference(RefKind::from_code(*kind)),
             (_, 0x00) => DataType::Void,
-            (_, 0x01..=0x1E) | (_, 0x5E) | (_, 0x5F) => DataType::Numeric,
-            (_, 0x20) | (_, CODE_BOOLEAN) => DataType::Boolean,
-            (_, CODE_STRING) | (_, 0x31) => DataType::String,
+            (_, 0x01..=0x1E | 0x5E | 0x5F) => DataType::Numeric,
+            (_, 0x20 | CODE_BOOLEAN) => DataType::Boolean,
+            (_, CODE_STRING | 0x31) => DataType::String,
             (_, CODE_PATH) => DataType::Path,
             (_, CODE_ARRAY) => DataType::Array,
             (_, CODE_VARIANT) => DataType::Variant,
@@ -226,18 +275,18 @@ impl TypeTable {
             _ => DataType::Other,
         }
     }
+}
 
-    /// Type code after looking through type definitions.
-    fn unwrap_code(&self, desc: &TypeDesc) -> u8 {
-        let mut desc = desc;
-        for _ in 0..MAX_TYPEDEF_DEPTH {
-            match &desc.body {
-                Body::TypeDef(inner) => desc = inner,
-                _ => break,
-            }
+/// Type code after looking through type definitions.
+fn unwrap_code(desc: &TypeDesc) -> u8 {
+    let mut desc = desc;
+    for _ in 0..MAX_TYPEDEF_DEPTH {
+        match &desc.body {
+            Body::TypeDef(inner) => desc = inner,
+            _ => break,
         }
-        desc.code
     }
+    desc.code
 }
 
 /// 16-bit value, or 31 bits when the top bit of the first word is set.
@@ -267,7 +316,7 @@ fn parse_desc(r: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
     // is known, so the table stays in step.
     let parsed = match code {
         CODE_CLUSTER => parse_cluster(&mut body).unwrap_or(Body::Other),
-        CODE_REFNUM => body.u16().map(Body::Refnum).unwrap_or(Body::Other),
+        CODE_REFNUM => body.u16().map_or(Body::Other, Body::Refnum),
         CODE_TYPEDEF if depth < MAX_TYPEDEF_DEPTH => {
             parse_typedef(&mut body, depth).unwrap_or(Body::Other)
         }
@@ -282,8 +331,8 @@ fn parse_cluster(body: &mut Reader<'_>) -> Result<Body> {
         return Err(malformed("VCTP", "implausible cluster size"));
     }
     Ok(Body::Cluster(
-        (0..count)
-            .map(|_| var_u2p2(body))
+        std::iter::repeat_with(|| var_u2p2(body))
+            .take(count)
             .collect::<Result<Vec<u32>>>()?,
     ))
 }
@@ -305,17 +354,24 @@ mod tests {
     use super::*;
 
     fn desc(code: u8, body: &[u8]) -> Vec<u8> {
-        let mut out = ((body.len() + 4) as u16).to_be_bytes().to_vec();
+        let len = u16::try_from(body.len() + 4).expect("test descriptor length fits in a u16");
+        let mut out = len.to_be_bytes().to_vec();
         out.extend([0, code]);
         out.extend_from_slice(body);
         out
     }
 
     fn table(descs: &[Vec<u8>], top: &[u16]) -> Vec<u8> {
-        let mut out = (descs.len() as u32).to_be_bytes().to_vec();
-        descs.iter().for_each(|d| out.extend(d));
-        out.extend((top.len() as u16).to_be_bytes());
-        top.iter().for_each(|t| out.extend(t.to_be_bytes()));
+        let count = u32::try_from(descs.len()).expect("test type count fits in a u32");
+        let mut out = count.to_be_bytes().to_vec();
+        for d in descs {
+            out.extend(d);
+        }
+        let top_count = u16::try_from(top.len()).expect("test top-level count fits in a u16");
+        out.extend(top_count.to_be_bytes());
+        for t in top {
+            out.extend(t.to_be_bytes());
+        }
         out
     }
 

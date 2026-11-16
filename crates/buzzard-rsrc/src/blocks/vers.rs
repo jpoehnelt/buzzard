@@ -6,16 +6,26 @@ use crate::error::Result;
 use crate::reader::{decode_text, Reader};
 use crate::version::Version;
 
+/// Decoded `vers` block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Vers {
+    /// The packed version number.
     pub version: Version,
+    /// Language code stored after the version number.
     pub language: u16,
     /// Human-readable version text, e.g. `21.0`.
     pub text: String,
+    /// Pascal string after the version text; empty when the block omits it.
     pub name: String,
 }
 
 impl Vers {
+    /// Parse a `vers` block.
+    ///
+    /// # Errors
+    ///
+    /// If the version number, language or version text is truncated, or a
+    /// name string is present but runs past the end of the block.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut r = Reader::new(data, "vers");
         let version = Version::from_u32(r.u32()?);

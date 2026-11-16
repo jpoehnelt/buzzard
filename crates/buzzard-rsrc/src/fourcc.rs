@@ -1,3 +1,5 @@
+//! Four-character codes, which name file types and resource block types.
+
 use std::fmt;
 
 use serde::{Serialize, Serializer};
@@ -7,10 +9,12 @@ use serde::{Serialize, Serializer};
 pub struct FourCc(pub [u8; 4]);
 
 impl FourCc {
+    /// Make a code from its four bytes; usable in `const` items.
     pub const fn new(code: &[u8; 4]) -> Self {
         Self(*code)
     }
 
+    /// The four bytes of the code, in file order.
     pub fn as_bytes(&self) -> &[u8; 4] {
         &self.0
     }

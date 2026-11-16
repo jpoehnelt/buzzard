@@ -47,17 +47,24 @@ const RELIABLE_DIRECTION: [&str; 16] = [
     "aDelDCO",
 ];
 
+/// Which way data flows through a terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
+    /// The terminal takes data in.
     Input,
+    /// The terminal produces data; a wire attached to it starts there.
     Output,
 }
 
+/// A point on a node where a wire can attach.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Terminal {
+    /// Unique id of the terminal object; wires refer to terminals by it.
     pub uid: i32,
+    /// Which way data flows; see [`direction_is_reliable`](Self::direction_is_reliable).
     pub direction: Direction,
+    /// Whether any wire attaches to the terminal.
     pub wired: bool,
     /// `None` when the type table has no entry for the terminal.
     pub data_type: Option<DataType>,
@@ -81,8 +88,11 @@ impl Terminal {
     }
 }
 
+/// An object on a diagram: a function, subVI call, structure or the
+/// diagram's boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Node {
+    /// Unique id of the node object in the heap.
     pub uid: i32,
     /// Object class, e.g. `prim` (built-in function), `iUse` (subVI call),
     /// `whileLoop`, `select` (case structure), `sRN` (the diagram's own
@@ -90,33 +100,52 @@ pub struct Node {
     pub class: String,
     /// Name of the called file for subVI calls and similar linked nodes.
     pub name: Option<String>,
+    /// Terminals in the order the node's `termList` gives them.
     pub terminals: Vec<Terminal>,
     /// Nested diagrams of a structure, one per frame or case.
     pub diagrams: Vec<Diagram>,
 }
 
+/// A wire (a `signal` object): one source terminal feeding any number of
+/// sinks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Wire {
+    /// Unique id of the signal object in the heap.
     pub uid: i32,
+    /// Uid of the terminal that drives the wire.
     pub source: i32,
+    /// Uids of the terminals the wire feeds.
     pub sinks: Vec<i32>,
 }
 
+/// One diagram: the top-level block diagram, or one frame or case of a
+/// structure.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Diagram {
+    /// Unique id of the `diag` object, or 0 if it has none.
     pub uid: i32,
+    /// Nodes from the diagram's `nodeList`, in order.
     pub nodes: Vec<Node>,
+    /// Wires from the diagram's `signalList`, in order.
     pub wires: Vec<Wire>,
 }
 
+/// The block diagram of a VI as a tree of diagrams.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlockDiagram {
+    /// The top-level diagram; structures on it hold the nested ones.
     pub root: Diagram,
 }
 
 impl BlockDiagram {
     /// Decode the block diagram of a file. Returns `Ok(None)` when the file
     /// has no block diagram heap (for example a control).
+    ///
+    /// # Errors
+    ///
+    /// If the `BDHb` block does not decompress or parse. The type table and
+    /// front-panel heap are optional: when they are missing or do not parse,
+    /// terminals simply lack types or front-panel objects.
     pub fn from_rsrc(file: &RsrcFile<'_>) -> Result<Option<Self>> {
         let Some(raw) = file.first(b"BDHb") else {
             return Ok(None);
@@ -136,7 +165,9 @@ impl BlockDiagram {
             for link in linkinfo::scan(resource.data) {
                 if let Some(name) = link.name() {
                     for uid in &link.heap_uids {
-                        names.entry(*uid as i32).or_insert_with(|| name.to_owned());
+                        names
+                            .entry(uid.cast_signed())
+                            .or_insert_with(|| name.to_owned());
                     }
                 }
             }
@@ -232,8 +263,7 @@ fn class_of(node: &HeapNode<'_>) -> Option<String> {
     let id = node.class()?;
     Some(
         node.class_name()
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("class{id}")),
+            .map_or_else(|| format!("class{id}"), str::to_owned),
     )
 }
 
@@ -243,7 +273,7 @@ impl<'h, 'a> Builder<'h, 'a> {
             self.objects.entry(uid).or_insert(node);
         }
         if node.class_name() == Some("signal") {
-            let mut terminals = self.list(node, "termList").filter_map(HeapNode::uid);
+            let mut terminals = Self::list(node, "termList").filter_map(HeapNode::uid);
             self.sources.extend(terminals.next());
             self.sinks.extend(terminals);
         }
@@ -264,7 +294,6 @@ impl<'h, 'a> Builder<'h, 'a> {
 
     /// Elements of a named list child, e.g. `nodeList`.
     fn list(
-        &self,
         node: &'h HeapNode<'a>,
         name: &str,
     ) -> impl Iterator<Item = &'h HeapNode<'a>> + use<'h, 'a> {
@@ -292,7 +321,7 @@ impl<'h, 'a> Builder<'h, 'a> {
         if !self.seen.insert(uid) {
             return out;
         }
-        let elements: Vec<_> = self.list(diag, "nodeList").collect();
+        let elements: Vec<_> = Self::list(diag, "nodeList").collect();
         for element in elements {
             let Some(object) = self.resolve(element) else {
                 continue;
@@ -304,12 +333,12 @@ impl<'h, 'a> Builder<'h, 'a> {
                 out.nodes.push(self.node(object, node_uid));
             }
         }
-        let signals: Vec<_> = self.list(diag, "signalList").collect();
+        let signals: Vec<_> = Self::list(diag, "signalList").collect();
         for element in signals {
             let Some(signal) = self.resolve(element) else {
                 continue;
             };
-            let mut terminals = self.list(signal, "termList").filter_map(HeapNode::uid);
+            let mut terminals = Self::list(signal, "termList").filter_map(HeapNode::uid);
             if let (Some(wire_uid), Some(source)) = (signal.uid(), terminals.next()) {
                 out.wires.push(Wire {
                     uid: wire_uid,
@@ -322,13 +351,11 @@ impl<'h, 'a> Builder<'h, 'a> {
     }
 
     fn node(&mut self, object: &'h HeapNode<'a>, uid: i32) -> Node {
-        let terminals = self
-            .list(object, "termList")
+        let terminals = Self::list(object, "termList")
             .filter_map(|element| self.resolve(element))
             .filter_map(|term| self.terminal(term))
             .collect();
-        let nested: Vec<_> = self
-            .list(object, "diagramList")
+        let nested: Vec<_> = Self::list(object, "diagramList")
             .filter_map(|element| self.resolve(element))
             .collect();
         Node {

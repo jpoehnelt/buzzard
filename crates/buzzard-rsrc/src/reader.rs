@@ -10,7 +10,7 @@ pub(crate) struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    pub fn new(bytes: &'a [u8], what: &'static str) -> Self {
+    pub(crate) fn new(bytes: &'a [u8], what: &'static str) -> Self {
         Self {
             bytes,
             pos: 0,
@@ -18,19 +18,19 @@ impl<'a> Reader<'a> {
         }
     }
 
-    pub fn at(bytes: &'a [u8], pos: usize, what: &'static str) -> Self {
+    pub(crate) fn at(bytes: &'a [u8], pos: usize, what: &'static str) -> Self {
         Self { bytes, pos, what }
     }
 
-    pub fn pos(&self) -> usize {
+    pub(crate) fn pos(&self) -> usize {
         self.pos
     }
 
-    pub fn remaining(&self) -> usize {
+    pub(crate) fn remaining(&self) -> usize {
         self.bytes.len().saturating_sub(self.pos)
     }
 
-    pub fn take(&mut self, len: usize) -> Result<&'a [u8]> {
+    pub(crate) fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self.pos.checked_add(len).filter(|&e| e <= self.bytes.len());
         match end {
             Some(end) => {
@@ -47,33 +47,33 @@ impl<'a> Reader<'a> {
         }
     }
 
-    pub fn u8(&mut self) -> Result<u8> {
+    pub(crate) fn u8(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
-    pub fn u16(&mut self) -> Result<u16> {
+    pub(crate) fn u16(&mut self) -> Result<u16> {
         let b = self.take(2)?;
         Ok(u16::from_be_bytes([b[0], b[1]]))
     }
 
-    pub fn u32(&mut self) -> Result<u32> {
+    pub(crate) fn u32(&mut self) -> Result<u32> {
         let b = self.take(4)?;
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
 
-    pub fn fourcc(&mut self) -> Result<[u8; 4]> {
+    pub(crate) fn fourcc(&mut self) -> Result<[u8; 4]> {
         let b = self.take(4)?;
         Ok([b[0], b[1], b[2], b[3]])
     }
 
     /// Pascal string with a one-byte length prefix.
-    pub fn pstr(&mut self) -> Result<&'a [u8]> {
+    pub(crate) fn pstr(&mut self) -> Result<&'a [u8]> {
         let len = self.u8()? as usize;
         self.take(len)
     }
 
     /// Pascal string with a two-byte length prefix.
-    pub fn pstr16(&mut self) -> Result<&'a [u8]> {
+    pub(crate) fn pstr16(&mut self) -> Result<&'a [u8]> {
         let len = self.u16()? as usize;
         self.take(len)
     }

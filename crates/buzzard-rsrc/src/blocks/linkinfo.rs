@@ -40,6 +40,7 @@ pub struct LinkRef {
     pub link_type: Option<FourCc>,
     /// Qualified name: owning libraries followed by the item name.
     pub qualified_name: Vec<String>,
+    /// Where the referenced file was when the link was saved.
     pub path: LvPath,
     /// Unique ids of the heap objects (for example subVI call nodes) that
     /// use this link. Empty for links that are not tied to heap objects.
@@ -152,7 +153,7 @@ fn prefix_before(
         while start >= lowest {
             // Cheap filter first: a name list starts with a small `u32`.
             let plausible = data[start..start + 3] == [0, 0, 0]
-                && (1..=MAX_NAME_PARTS as u8).contains(&data[start + 3]);
+                && (1..=MAX_NAME_PARTS).contains(&u32::from(data[start + 3]));
             if plausible {
                 if let Some(names) = names_between(data, start, end) {
                     return Some((link_type_before(data, start), names));
@@ -184,7 +185,9 @@ fn names_between(data: &[u8], start: usize, end: usize) -> Option<Vec<String>> {
     parts(&mut Reader::new(&data[start + 4..end], "link name"))?;
 
     let mut r = Reader::new(&data[start + 4..end], "link name");
-    (0..count).map(|_| r.pstr().ok().map(decode_text)).collect()
+    std::iter::repeat_with(|| r.pstr().ok().map(decode_text))
+        .take(count as usize)
+        .collect()
 }
 
 fn link_type_before(data: &[u8], names_at: usize) -> Option<FourCc> {
