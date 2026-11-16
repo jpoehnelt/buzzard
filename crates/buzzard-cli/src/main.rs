@@ -47,6 +47,9 @@ enum Command {
     },
     /// Run the language server over stdin/stdout.
     Lsp,
+    /// Run the Model Context Protocol server over stdin/stdout, so that AI
+    /// agents can call the analysis as tools.
+    Mcp,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -205,6 +208,13 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::Mcp => match buzzard_mcp::run_stdio() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: mcp transport failed: {err}");
+                ExitCode::from(2)
+            }
+        },
     }
 }
 

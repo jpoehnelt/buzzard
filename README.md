@@ -113,6 +113,43 @@ accepted as well.
 | `textDocument/references` | Every file in the workspace that uses the target file |
 | `buzzard/inspect` | Custom request: `{ "uri": ... }` returns metadata, callers, callees and owners as JSON; for a project, library or class: the parsed file, its members, owners, parent and child classes |
 
+## Use with AI agents (MCP)
+
+`buzzard mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio, so an AI agent can call the analysis as tools. Register it
+in Claude Code:
+
+```bash
+claude mcp add buzzard -- buzzard mcp
+```
+
+Or commit a `.mcp.json` at the root of the project to share it with a team:
+
+```json
+{
+  "mcpServers": {
+    "buzzard": { "command": "buzzard", "args": ["mcp"] }
+  }
+}
+```
+
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `buzzard_check` | `paths[]`, `ignore?[]`, `limit?`, `refresh?` | Diagnostics (code, severity, path, message) and a summary |
+| `buzzard_inspect` | `path` | Metadata and dependency list of one file, as Markdown and JSON |
+| `buzzard_diagram` | `path`, `format?` (`markdown`, `json`, `mermaid`, `dot`, `svg`) | The block diagram |
+| `buzzard_callers` | `path`, `root`, `refresh?` | Files under `root` that use the file |
+| `buzzard_callees` | `path`, `root`, `refresh?` | Files under `root` that the file uses |
+| `buzzard_symbols` | `root`, `query`, `limit?`, `refresh?` | Fuzzy file search |
+| `buzzard_rules` | none | The rule table |
+
+Every tool is read-only. Relative paths are resolved against the directory
+the server was started in. The parsed workspace is cached per root; each call
+compares file sizes and modification times with the cached scan and re-parses
+when anything differs, and `refresh: true` forces a re-parse. A failed tool
+call (missing or unreadable file, bad argument) is returned as a result with
+`isError` set, so the agent can read the reason.
+
 ## Design goals
 
 - **Fast.** Files are parsed in parallel without copying resource payloads.
@@ -132,7 +169,8 @@ accepted as well.
 | `crates/buzzard-rsrc` | Parser for the binary RSRC resource container |
 | `crates/buzzard-lint` | Lint rules, project file parser, dependency graph, SARIF, the `ViInspector` backend trait |
 | `crates/buzzard-ls` | Language Server Protocol implementation |
-| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `lsp`) |
+| `crates/buzzard-mcp` | Model Context Protocol server |
+| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `lsp`, `mcp`) |
 
 ## Development
 

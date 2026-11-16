@@ -4,6 +4,7 @@ members = [
     "crates/buzzard-rsrc",
     "crates/buzzard-lint",
     "crates/buzzard-ls",
+    "crates/buzzard-mcp",
     "crates/buzzard-cli",
 ]
 
@@ -18,6 +19,7 @@ repository = "https://github.com/jpoehnelt/buzzard"
 buzzard-rsrc = { path = "crates/buzzard-rsrc", version = "0.1.0" }
 buzzard-lint = { path = "crates/buzzard-lint", version = "0.1.0" }
 buzzard-ls = { path = "crates/buzzard-ls", version = "0.1.0" }
+buzzard-mcp = { path = "crates/buzzard-mcp", version = "0.1.0" }
 
 # Binary parsing & decompression
 binrw = "0.15"
