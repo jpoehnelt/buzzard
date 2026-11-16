@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords = ["lint", "static-analysis", "lsp", "sarif", "cli"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "buzzard"
@@ -22,6 +25,7 @@ serde.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-buzzard-rsrc.workspace = true
-serde_json.workspace = true
 url = "2"
+
+[lints]
+workspace = true

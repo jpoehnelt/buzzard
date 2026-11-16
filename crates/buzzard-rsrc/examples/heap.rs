@@ -1,6 +1,11 @@
 //! Print the object tree of a heap block:
 //! `cargo run --example heap -- file.vi [BDHb|FPHb]`
 
+#![expect(
+    clippy::print_stdout,
+    reason = "an example that reports to the terminal"
+)]
+
 use buzzard_rsrc::blocks::heap::{Content, Heap, HeapNode};
 use buzzard_rsrc::blocks::zlib;
 use buzzard_rsrc::RsrcFile;
@@ -8,33 +13,35 @@ use buzzard_rsrc::RsrcFile;
 fn print(node: &HeapNode<'_>, depth: usize) {
     let name = node
         .tag_name()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("tag{}", node.tag));
-    let mut line = format!("{}{name}", "  ".repeat(depth));
+        .map_or_else(|| format!("tag{}", node.tag), str::to_owned);
+    print!("{}{name}", "  ".repeat(depth));
     if let Some(class) = node.class() {
-        line += &format!(
-            " class={}",
-            node.class_name()
-                .map(str::to_owned)
-                .unwrap_or(class.to_string())
-        );
+        let class = node
+            .class_name()
+            .map_or_else(|| class.to_string(), str::to_owned);
+        print!(" class={class}");
     }
     for (id, value) in &node.attrs {
         match *id {
             -2 => {}
-            -3 => line += &format!(" uid={value}"),
-            other => line += &format!(" attr{other}={value}"),
+            -3 => print!(" uid={value}"),
+            other => print!(" attr{other}={value}"),
         }
     }
     match node.content {
         Content::None => {}
-        Content::Bool(b) => line += &format!(" = {b}"),
+        Content::Bool(b) => print!(" = {b}"),
         Content::Bytes(b) => {
-            let hex: String = b.iter().take(24).map(|x| format!("{x:02x}")).collect();
-            line += &format!(" = 0x{hex}{}", if b.len() > 24 { "..." } else { "" });
+            print!(" = 0x");
+            for x in b.iter().take(24) {
+                print!("{x:02x}");
+            }
+            if b.len() > 24 {
+                print!("...");
+            }
         }
     }
-    println!("{line}");
+    println!();
     for child in &node.children {
         print(child, depth + 1);
     }

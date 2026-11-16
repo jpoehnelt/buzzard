@@ -27,8 +27,10 @@ const BREAKPOINTS_SET: Flag = (5, 0x2000_0000);
 const DEBUGGABLE: Flag = (5, 0x4000_0200);
 const BREAKPOINT_COUNT_WORD: usize = 28;
 
+/// Decoded `LVSR` block: the version plus the raw flag words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lvsr {
+    /// Version of the editor that saved the file.
     pub version: Version,
     words: Vec<u32>,
 }
@@ -37,29 +39,52 @@ pub struct Lvsr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reentrancy {
+    /// Not reentrant: all callers share one instance.
     NonReentrant,
+    /// Reentrant, with a pool of clones shared between callers.
     SharedClones,
+    /// Reentrant, with a clone preallocated for each call site.
     PreallocatedClones,
 }
 
 /// Decoded view of the flags most relevant to static analysis.
+///
+/// A field is `None` when the file has no flag word for it, or when the
+/// setting is newer than the editor that saved the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ViFlags {
+    /// Compiled code is kept out of the file. Exists since version 10.
     pub separate_compiled_code: Option<bool>,
+    /// Automatic error handling is on.
     pub auto_error_handling: Option<bool>,
+    /// Debugging is allowed.
     pub debuggable: Option<bool>,
+    /// At least one breakpoint is set.
     pub has_breakpoints: Option<bool>,
+    /// Number of breakpoints set.
     pub breakpoint_count: Option<u32>,
+    /// The VI pauses when it is called.
     pub suspend_when_called: Option<bool>,
+    /// The VI runs as soon as it is opened.
     pub run_on_open: Option<bool>,
+    /// Editing is locked, with or without a password.
     pub locked: Option<bool>,
+    /// Indicators are cleared each time the VI is called.
     pub clear_indicators: Option<bool>,
+    /// The file was saved for an earlier editor version.
     pub saved_for_previous: Option<bool>,
+    /// How concurrent calls are handled.
     pub reentrancy: Option<Reentrancy>,
+    /// The VI is inlined into its callers. Exists since version 10.
     pub inline: Option<bool>,
 }
 
 impl Lvsr {
+    /// Parse an `LVSR` block. Trailing bytes short of a full word are ignored.
+    ///
+    /// # Errors
+    ///
+    /// If the block is shorter than the 4-byte version number.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut r = Reader::new(data, "LVSR");
         let version = Version::from_u32(r.u32()?);
@@ -88,6 +113,7 @@ impl Lvsr {
         self.flag(flag)
     }
 
+    /// Reentrancy setting, from bits of the first flag word.
     pub fn reentrancy(&self) -> Option<Reentrancy> {
         let reentrant = self.flag(REENTRANT)? || self.flag(PREALLOCATE_CLONES)?;
         Some(if !reentrant {
@@ -99,6 +125,7 @@ impl Lvsr {
         })
     }
 
+    /// Decode the flags this crate knows about.
     pub fn flags(&self) -> ViFlags {
         ViFlags {
             separate_compiled_code: self.flag_since(SEPARATE_CODE, 10),

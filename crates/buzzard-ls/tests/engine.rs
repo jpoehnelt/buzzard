@@ -1,5 +1,6 @@
 //! Incremental behaviour of the analysis engine, without the protocol layer.
 
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,7 +23,7 @@ impl Fixture {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("buzzard-ls-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).expect("create the temp dir");
         let engine = Engine::new(vec![dir.clone()], LintConfig::default());
         Self { dir, engine }
     }
@@ -33,7 +34,7 @@ impl Fixture {
             .save_record(V23, words)
             .links(&links)
             .build();
-        fs::write(self.dir.join(name), bytes).unwrap();
+        fs::write(self.dir.join(name), bytes).expect("write the VI");
     }
 
     /// Tell the engine a file changed on disk, as the watcher would.
@@ -50,7 +51,7 @@ impl Fixture {
             .map(|(path, diagnostics)| {
                 let name = path
                     .strip_prefix(&self.dir)
-                    .unwrap()
+                    .expect("updates are for files under the fixture dir")
                     .to_string_lossy()
                     .into_owned();
                 (name, diagnostics.iter().map(|d| d.code).collect())
@@ -63,6 +64,24 @@ impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
+}
+
+/// Fail with the unexpected items, which `assert!(v.is_empty())` would hide.
+#[track_caller]
+fn assert_none<T: std::fmt::Debug>(items: &[T]) {
+    assert!(items.is_empty(), "expected nothing, got {items:?}");
+}
+
+fn names(paths: &[PathBuf]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| {
+            p.file_name()
+                .expect("engine paths name files")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
 }
 
 #[test]
@@ -124,22 +143,16 @@ fn answers_navigation_queries() {
     fs::write(fx.dir.join("Motor.lvclass"), "<Library/>").unwrap();
     assert_eq!(fx.engine.scan(), []);
 
-    let names = |paths: Vec<PathBuf>| -> Vec<String> {
-        paths
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect()
-    };
     assert_eq!(
-        names(fx.engine.callers(&fx.dir.join("Read Config.vi"))),
+        names(&fx.engine.callers(&fx.dir.join("Read Config.vi"))),
         ["Main.vi", "Test Main.vi"]
     );
     assert_eq!(
-        names(fx.engine.callees(&fx.dir.join("Main.vi"))),
+        names(&fx.engine.callees(&fx.dir.join("Main.vi"))),
         ["Read Config.vi", "Type.ctl"]
     );
     assert_eq!(
-        names(fx.engine.callers(&fx.dir.join("missing.vi"))),
+        names(&fx.engine.callers(&fx.dir.join("missing.vi"))),
         Vec::<String>::new()
     );
 
@@ -169,7 +182,7 @@ fn answers_navigation_queries() {
     assert_eq!(found, ["Main.vi", "Test Main.vi"]);
     assert_eq!(fx.engine.symbols("rdcfg", 100)[0].name, "Read Config.vi");
     assert_eq!(fx.engine.symbols("", 2).len(), 2);
-    assert!(fx.engine.symbols("zzz", 100).is_empty());
+    assert_none(&fx.engine.symbols("zzz", 100));
 }
 
 fn class_xml(members: &[&str], parent: Option<&str>) -> String {
@@ -178,14 +191,16 @@ fn class_xml(members: &[&str], parent: Option<&str>) -> String {
         let text = encode_parent_link(V23, &[parent], &LvPath::sibling(parent))
             .replace('&', "&amp;")
             .replace('<', "&lt;");
-        xml.push_str(&format!(
-            "<Property Name=\"NI.LVClass.ParentClassLinkInfo\" Type=\"Bin\">{text}</Property>\n"
-        ));
+        let _ = writeln!(
+            xml,
+            "<Property Name=\"NI.LVClass.ParentClassLinkInfo\" Type=\"Bin\">{text}</Property>"
+        );
     }
     for member in members {
-        xml.push_str(&format!(
-            "<Item Name=\"{member}\" Type=\"VI\" URL=\"../{member}\"/>\n"
-        ));
+        let _ = writeln!(
+            xml,
+            "<Item Name=\"{member}\" Type=\"VI\" URL=\"../{member}\"/>"
+        );
     }
     xml.push_str("</LVClass>\n");
     xml
@@ -196,9 +211,10 @@ fn project_xml(members: &[&str]) -> String {
         "<Project Type=\"Project\" LVVersion=\"23008000\">\n<Item Name=\"My Computer\" Type=\"My Computer\">\n",
     );
     for member in members {
-        xml.push_str(&format!(
-            "<Item Name=\"{member}\" Type=\"LVClass\" URL=\"../{member}\"/>\n"
-        ));
+        let _ = writeln!(
+            xml,
+            "<Item Name=\"{member}\" Type=\"LVClass\" URL=\"../{member}\"/>"
+        );
     }
     xml.push_str(
         "<Item Name=\"Dependencies\" Type=\"Dependencies\">\n\
@@ -207,18 +223,13 @@ fn project_xml(members: &[&str]) -> String {
     xml
 }
 
-#[test]
-fn parses_and_tracks_project_files() {
-    let mut fx = Fixture::new("projects");
-    let names = |paths: Vec<PathBuf>| -> Vec<String> {
-        paths
-            .iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect()
+/// A class with two member VIs, a child class, a project that lists both
+/// classes and one that does not exist, and a library in a hidden directory.
+fn project_fixture(name: &str) -> Fixture {
+    let fx = Fixture::new(name);
+    let write = |name: &str, text: &str| {
+        fs::write(fx.dir.join(name), text).expect("write the project file");
     };
-    let dir = fx.dir.clone();
-    let at = |name: &str| dir.join(name);
-    let write = |name: &str, text: &str| fs::write(at(name), text).unwrap();
     fx.vi("Run.vi", &CLEAN, &[]);
     fx.vi("Stop.vi", &CLEAN, &[]);
     write("Base.lvclass", &class_xml(&["Run.vi", "Stop.vi"], None));
@@ -227,8 +238,16 @@ fn parses_and_tracks_project_files() {
         "App.lvproj",
         &project_xml(&["Base.lvclass", "Child.lvclass", "Gone.lvclass"]),
     );
-    fs::create_dir_all(at(".cache")).unwrap();
+    fs::create_dir_all(fx.dir.join(".cache")).expect("create the hidden dir");
     write(".cache/Hidden.lvlib", "<Library/>");
+    fx
+}
+
+#[test]
+fn parses_project_files() {
+    let mut fx = project_fixture("projects");
+    let dir = fx.dir.clone();
+    let at = |name: &str| dir.join(name);
 
     // The one scan finds and parses the XML files along with the binaries.
     let updates = fx.engine.scan();
@@ -240,21 +259,21 @@ fn parses_and_tracks_project_files() {
     assert!(fx.engine.project(&at("Run.vi")).is_none());
     assert!(fx.engine.metadata(&at("Base.lvclass")).is_none());
     assert_eq!(
-        names(fx.engine.members(&at("Base.lvclass"))),
+        names(&fx.engine.members(&at("Base.lvclass"))),
         ["Run.vi", "Stop.vi"]
     );
     assert_eq!(
-        names(fx.engine.members(&at("App.lvproj"))),
+        names(&fx.engine.members(&at("App.lvproj"))),
         ["Base.lvclass", "Child.lvclass"]
     );
-    assert_eq!(names(fx.engine.owners(&at("Run.vi"))), ["Base.lvclass"]);
+    assert_eq!(names(&fx.engine.owners(&at("Run.vi"))), ["Base.lvclass"]);
     assert_eq!(
         fx.engine.parent_class(&at("Child.lvclass")),
         Some(at("Base.lvclass"))
     );
     assert_eq!(fx.engine.parent_class(&at("Base.lvclass")), None);
     assert_eq!(
-        names(fx.engine.child_classes(&at("Base.lvclass"))),
+        names(&fx.engine.child_classes(&at("Base.lvclass"))),
         ["Child.lvclass"]
     );
 
@@ -303,6 +322,18 @@ fn parses_and_tracks_project_files() {
         assert!(Engine::is_relevant(Path::new(name)), "{name}");
     }
     assert!(!Engine::is_relevant(Path::new("a.xml")));
+}
+
+#[test]
+fn tracks_changes_to_project_files() {
+    let mut fx = project_fixture("project-changes");
+    let dir = fx.dir.clone();
+    let at = |name: &str| dir.join(name);
+    let updates = fx.engine.scan();
+    assert_eq!(
+        fx.simplify(updates),
+        [("App.lvproj".to_owned(), vec!["BZ006"])]
+    );
 
     // Saving the project without the missing member clears the finding.
     fs::write(
@@ -319,7 +350,7 @@ fn parses_and_tracks_project_files() {
         fx.touch("Stop.vi"),
         [("Base.lvclass".to_owned(), vec!["BZ006"])]
     );
-    assert_eq!(names(fx.engine.members(&at("Base.lvclass"))), ["Run.vi"]);
+    assert_eq!(names(&fx.engine.members(&at("Base.lvclass"))), ["Run.vi"]);
     fs::write(at("Base.lvclass"), class_xml(&["Run.vi"], None)).unwrap();
     assert_eq!(
         fx.touch("Base.lvclass"),
@@ -330,7 +361,7 @@ fn parses_and_tracks_project_files() {
     fs::write(at("Child.lvclass"), class_xml(&[], None)).unwrap();
     assert_eq!(fx.touch("Child.lvclass"), []);
     assert_eq!(fx.engine.parent_class(&at("Child.lvclass")), None);
-    assert!(fx.engine.child_classes(&at("Base.lvclass")).is_empty());
+    assert_none(&fx.engine.child_classes(&at("Base.lvclass")));
 
     // A file that stops being valid XML is reported and stays a symbol.
     fs::write(at("App.lvproj"), "<Project><Item").unwrap();
@@ -339,7 +370,7 @@ fn parses_and_tracks_project_files() {
         [("App.lvproj".to_owned(), vec!["BZ000"])]
     );
     assert!(fx.engine.project(&at("App.lvproj")).is_none());
-    assert!(fx.engine.members(&at("App.lvproj")).is_empty());
+    assert_none(&fx.engine.members(&at("App.lvproj")));
     let hover = fx.engine.hover(&at("App.lvproj")).unwrap();
     assert!(
         hover.contains("Cannot analyze file: invalid XML"),
@@ -350,7 +381,7 @@ fn parses_and_tracks_project_files() {
     // Deleting it removes the diagnostics and the symbol.
     fs::remove_file(at("App.lvproj")).unwrap();
     assert_eq!(fx.touch("App.lvproj"), [("App.lvproj".to_owned(), vec![])]);
-    assert!(fx.engine.symbols("app", 10).is_empty());
+    assert_none(&fx.engine.symbols("app", 10));
     assert!(fx.engine.hover(&at("App.lvproj")).is_none());
 }
 
@@ -373,7 +404,7 @@ fn snapshots_are_not_affected_by_later_changes() {
     assert!(before.hover(&b).is_some());
     let after = f.engine.snapshot();
     assert!(!after.contains(&b));
-    assert!(after.callees(&a).is_empty());
+    assert_none(&after.callees(&a));
     assert_eq!(after.paths().collect::<Vec<_>>(), [a.as_path()]);
 }
 

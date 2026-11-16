@@ -87,6 +87,8 @@ fn location(path: &Path) -> Value {
     json!({ "physicalLocation": { "artifactLocation": { "uri": uri(path) } } })
 }
 
+/// A SARIF log with one run that lists every rule and the given
+/// diagnostics. `tool_version` is reported as the version of the tool.
 pub fn to_sarif(diagnostics: &[Diagnostic], tool_version: &str) -> Value {
     let rules: Vec<Value> = RULES
         .iter()

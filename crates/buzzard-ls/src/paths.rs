@@ -14,7 +14,7 @@ use buzzard_lint::workspace::{is_analyzable, normalize};
 
 /// What discovery would make of one path right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
+pub(crate) enum Presence {
     /// A file that a fresh scan would analyze.
     File,
     /// A directory that a fresh scan would walk into.
@@ -30,16 +30,16 @@ struct Root {
     /// Every workspace key and every published URI starts with it.
     given: PathBuf,
     /// The same directory with symbolic links resolved, when that differs.
-    /// Some file watchers (FSEvents on macOS) report paths in this form.
+    /// Some file watchers (`FSEvents` on macOS) report paths in this form.
     canonical: Option<PathBuf>,
 }
 
 /// The workspace roots, in the client's spelling and in canonical form.
 #[derive(Debug, Clone, Default)]
-pub struct Roots(Vec<Root>);
+pub(crate) struct Roots(Vec<Root>);
 
 impl Roots {
-    pub fn new(roots: &[PathBuf]) -> Self {
+    pub(crate) fn new(roots: &[PathBuf]) -> Self {
         Self(
             roots
                 .iter()
@@ -57,7 +57,7 @@ impl Roots {
     /// Rewrite `path` into the spelling the client used for its root, so
     /// that one file never gets two names. `None` if the path is outside
     /// every root.
-    pub fn localize(&self, path: &Path) -> Option<PathBuf> {
+    pub(crate) fn localize(&self, path: &Path) -> Option<PathBuf> {
         let path = normalize(path);
         if self.0.iter().any(|root| path.starts_with(&root.given)) {
             return Some(path);
@@ -72,7 +72,7 @@ impl Roots {
 
     /// What a fresh scan would make of `path`, which must be in the
     /// client's spelling (see [`Roots::localize`]).
-    pub fn presence(&self, path: &Path) -> Presence {
+    pub(crate) fn presence(&self, path: &Path) -> Presence {
         self.0
             .iter()
             .map(|root| presence_in(&root.given, path))
@@ -236,7 +236,7 @@ mod tests {
         fs::remove_dir_all(&base).unwrap();
     }
 
-    /// A watcher that reports resolved paths (FSEvents) must not give a
+    /// A watcher that reports resolved paths (`FSEvents`) must not give a
     /// file a second name: the client's spelling of the root wins.
     #[cfg(unix)]
     #[test]

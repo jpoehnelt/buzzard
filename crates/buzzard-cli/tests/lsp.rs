@@ -13,6 +13,14 @@ use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
+/// `file://` URI for a path, in the form the server reports: percent-encoded
+/// where the path has a space or a character outside ASCII.
+fn file_uri(path: &Path) -> String {
+    url::Url::from_file_path(path)
+        .unwrap_or_else(|()| panic!("not an absolute path: {}", path.display()))
+        .to_string()
+}
+
 struct Session {
     child: Child,
     stdin: ChildStdin,
@@ -29,9 +37,9 @@ impl Session {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()
-            .unwrap();
-        let stdin = child.stdin.take().unwrap();
-        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+            .expect("start `buzzard lsp`");
+        let stdin = child.stdin.take().expect("stdin is piped");
+        let mut stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
         let (tx, incoming) = mpsc::channel();
         std::thread::spawn(move || loop {
             let mut length = None;
@@ -52,7 +60,8 @@ impl Session {
             if stdout.read_exact(&mut body).is_err() {
                 return;
             }
-            if tx.send(serde_json::from_slice(&body).unwrap()).is_err() {
+            let message = serde_json::from_slice(&body).expect("the server sends JSON");
+            if tx.send(message).is_err() {
                 return;
             }
         });
@@ -70,11 +79,11 @@ impl Session {
         format!("Content-Length: {}\r\n\r\n{body}", body.len())
     }
 
-    fn send(&mut self, message: Value) {
+    fn send(&mut self, message: &Value) {
         self.stdin
-            .write_all(Self::frame(&message).as_bytes())
-            .unwrap();
-        self.stdin.flush().unwrap();
+            .write_all(Self::frame(message).as_bytes())
+            .expect("write to the server");
+        self.stdin.flush().expect("flush to the server");
     }
 
     /// Start a server and complete the handshake for one workspace folder.
@@ -108,12 +117,22 @@ impl Session {
             .iter()
             .filter(|m| m["method"] == "textDocument/publishDiagnostics")
             .map(|m| {
-                let codes = m["params"]["diagnostics"].as_array().unwrap();
+                let codes = m["params"]["diagnostics"]
+                    .as_array()
+                    .expect("published diagnostics are an array");
                 (
-                    m["params"]["uri"].as_str().unwrap().to_owned(),
+                    m["params"]["uri"]
+                        .as_str()
+                        .expect("published diagnostics name a URI")
+                        .to_owned(),
                     codes
                         .iter()
-                        .map(|d| d["code"].as_str().unwrap().to_owned())
+                        .map(|d| {
+                            d["code"]
+                                .as_str()
+                                .expect("a diagnostic has a code")
+                                .to_owned()
+                        })
                         .collect(),
                 )
             })
@@ -126,8 +145,14 @@ impl Session {
             m["method"] == "textDocument/publishDiagnostics"
         });
         (
-            message["params"]["uri"].as_str().unwrap().to_owned(),
-            message["params"]["diagnostics"].as_array().unwrap().clone(),
+            message["params"]["uri"]
+                .as_str()
+                .expect("published diagnostics name a URI")
+                .to_owned(),
+            message["params"]["diagnostics"]
+                .as_array()
+                .expect("published diagnostics are an array")
+                .clone(),
         )
     }
 
@@ -136,9 +161,14 @@ impl Session {
         let symbols = self.request("workspace/symbol", json!({ "query": query }));
         let mut uris: Vec<String> = symbols
             .as_array()
-            .unwrap()
+            .expect("workspace/symbol answers with an array")
             .iter()
-            .map(|s| s["location"]["uri"].as_str().unwrap().to_owned())
+            .map(|s| {
+                s["location"]["uri"]
+                    .as_str()
+                    .expect("a symbol has a URI")
+                    .to_owned()
+            })
             .collect();
         uris.sort();
         uris
@@ -158,7 +188,7 @@ impl Session {
     fn exit_status(&mut self) -> i32 {
         let deadline = Instant::now() + TIMEOUT;
         loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
+            if let Some(status) = self.child.try_wait().expect("poll the server process") {
                 return status.code().expect("server was killed by a signal");
             }
             assert!(Instant::now() < deadline, "server did not exit");
@@ -171,7 +201,7 @@ impl Session {
         if !params.is_null() {
             message["params"] = params;
         }
-        self.send(message);
+        self.send(&message);
     }
 
     /// Wait for the first message matching `wanted`, keeping the others.
@@ -199,7 +229,7 @@ impl Session {
         if !params.is_null() {
             message["params"] = params;
         }
-        self.send(message);
+        self.send(&message);
         let response = self.wait_for(method, |m| m["id"] == id && m.get("method").is_none());
         assert!(
             response.get("error").is_none(),
@@ -215,9 +245,16 @@ impl Session {
                 && m["params"]["uri"]
                     .as_str()
                     .is_some_and(|uri| uri.ends_with(suffix))
-                && wanted(m["params"]["diagnostics"].as_array().unwrap())
+                && wanted(
+                    m["params"]["diagnostics"]
+                        .as_array()
+                        .expect("published diagnostics are an array"),
+                )
         });
-        message["params"]["diagnostics"].as_array().unwrap().clone()
+        message["params"]["diagnostics"]
+            .as_array()
+            .expect("the matched message has diagnostics")
+            .clone()
     }
 }
 
@@ -228,7 +265,17 @@ impl Drop for Session {
     }
 }
 
+/// Fail with the unexpected items, which `assert!(v.is_empty())` would hide.
+#[track_caller]
+fn assert_none<T: std::fmt::Debug>(items: &[T]) {
+    assert!(items.is_empty(), "expected nothing, got {items:?}");
+}
+
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one editor session from `initialize` to `exit`; each step depends on the state the previous ones left"
+)]
 fn full_editor_session() {
     let dir = TempDir::new("lsp");
     dir.vi("main.vi", &CLEAN, &["util.vi"]);
@@ -261,7 +308,7 @@ fn full_editor_session() {
         .iter()
         .map(|s| s["name"].as_str().unwrap())
         .collect();
-    names.sort();
+    names.sort_unstable();
     assert_eq!(names, ["App.lvproj", "main.vi", "util.vi"]);
     let symbols = session.request("workspace/symbol", json!({ "query": "utl" }));
     assert_eq!(symbols[0]["name"], "util.vi");
@@ -318,7 +365,7 @@ fn full_editor_session() {
     let inspected = session.request("buzzard/inspect", json!({ "uri": uri("main.vi") }));
     assert_eq!(inspected["owners"], json!([uri("App.lvproj")]));
     std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
-    session.diagnostics_for("/App.lvproj", |d| d.is_empty());
+    session.diagnostics_for("/App.lvproj", <[Value]>::is_empty);
 
     // The block diagram of a file on request, as a graph or as text.
     let real = fixtures().join("add.vi");
@@ -335,7 +382,7 @@ fn full_editor_session() {
 
     // Saving a fixed file from the IDE is picked up by the file watcher.
     dir.vi("util.vi", &CLEAN, &[]);
-    session.diagnostics_for("/util.vi", |d| d.is_empty());
+    session.diagnostics_for("/util.vi", <[Value]>::is_empty);
 
     // A newly saved file that closes a cycle is reported on both members.
     dir.vi("util.vi", &CLEAN, &["main.vi"]);
@@ -348,7 +395,7 @@ fn full_editor_session() {
 
     // Deleting a file clears diagnostics and updates the graph.
     std::fs::remove_file(dir.0.join("util.vi")).unwrap();
-    session.diagnostics_for("/main.vi", |d| d.is_empty());
+    session.diagnostics_for("/main.vi", <[Value]>::is_empty);
     let symbols = session.request("workspace/symbol", json!({ "query": "util" }));
     assert_eq!(symbols, json!([]));
 
@@ -417,7 +464,7 @@ fn workspace_path_with_space_and_non_ascii_characters() {
     dir.vi("sub dir/my file.vi", &CLEAN, &[]);
     let (cleared, diagnostics) = session.next_diagnostics();
     assert_eq!(cleared, uri("sub dir/my file.vi"));
-    assert!(diagnostics.is_empty());
+    assert_none(&diagnostics);
     assert_eq!(session.symbol_uris("my file"), [uri("sub dir/my file.vi")]);
 }
 
@@ -440,8 +487,8 @@ fn directory_rename_and_delete_are_followed() {
         let found = session.diagnostics_for(name, |d| !d.is_empty());
         assert_eq!(found[0]["code"], "BZ001");
     }
-    session.diagnostics_for("/sub/a.vi", |d| d.is_empty());
-    session.diagnostics_for("/sub/deep/b.vi", |d| d.is_empty());
+    session.diagnostics_for("/sub/a.vi", <[Value]>::is_empty);
+    session.diagnostics_for("/sub/deep/b.vi", <[Value]>::is_empty);
     assert_eq!(
         session.symbol_uris(""),
         [uri("sub2/a.vi"), uri("sub2/deep/b.vi")]
@@ -457,8 +504,8 @@ fn directory_rename_and_delete_are_followed() {
     session.diagnostics_for("/moved/c.vi", |d| !d.is_empty());
 
     std::fs::remove_dir_all(dir.0.join("sub2")).unwrap();
-    session.diagnostics_for("/sub2/a.vi", |d| d.is_empty());
-    session.diagnostics_for("/sub2/deep/b.vi", |d| d.is_empty());
+    session.diagnostics_for("/sub2/a.vi", <[Value]>::is_empty);
+    session.diagnostics_for("/sub2/deep/b.vi", <[Value]>::is_empty);
     assert_eq!(session.symbol_uris(""), [uri("moved/c.vi")]);
     assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
 }
@@ -497,7 +544,7 @@ fn files_that_the_scan_skips_stay_out_after_events() {
     // the ones above have been dealt with.
     std::thread::sleep(Duration::from_millis(400));
     outer.vi("ws/first.vi", &CLEAN, &[]);
-    session.diagnostics_for("/ws/first.vi", |d| d.is_empty());
+    session.diagnostics_for("/ws/first.vi", <[Value]>::is_empty);
 
     assert_eq!(session.symbol_uris(""), expected);
     assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
@@ -507,7 +554,7 @@ fn files_that_the_scan_skips_stay_out_after_events() {
 
 /// A workspace opened through a symbolic link: every file has one name,
 /// the one under the root as the client spelled it, whatever spelling a
-/// change is reported in. (FSEvents on macOS reports resolved paths.)
+/// change is reported in. (`FSEvents` on macOS reports resolved paths.)
 #[cfg(unix)]
 #[test]
 fn root_reached_through_a_symlink_keeps_one_name_per_file() {
@@ -531,7 +578,7 @@ fn root_reached_through_a_symlink_keeps_one_name_per_file() {
     session.changed(&[&canonical.join("util.vi")]);
     let (uri, diagnostics) = session.next_diagnostics();
     assert_eq!(uri, util);
-    assert!(diagnostics.is_empty());
+    assert_none(&diagnostics);
 
     // A new file, reported under the resolved path as well.
     outer.vi("actual/ws/extra.vi", &INLINE_CODE, &[]);
@@ -549,7 +596,7 @@ fn root_reached_through_a_symlink_keeps_one_name_per_file() {
     session.changed(&[&canonical.join("extra.vi")]);
     let (uri, diagnostics) = session.next_diagnostics();
     assert_eq!(uri, extra);
-    assert!(diagnostics.is_empty());
+    assert_none(&diagnostics);
     assert_eq!(session.symbol_uris(""), [util]);
 }
 
@@ -575,7 +622,7 @@ fn root_given_as_the_uncanonical_temp_dir() {
     dir.vi("util.vi", &CLEAN, &[]);
     let (uri, diagnostics) = session.next_diagnostics();
     assert_eq!(uri, util);
-    assert!(diagnostics.is_empty());
+    assert_none(&diagnostics);
     assert_eq!(session.symbol_uris(""), [util]);
 }
 

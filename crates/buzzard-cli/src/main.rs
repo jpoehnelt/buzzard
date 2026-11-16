@@ -1,5 +1,15 @@
+//! The `buzzard` command: `check`, `inspect` and `diff` over the analysis in
+//! `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, and `mcp`
+//! for the Model Context Protocol server in `buzzard-mcp`.
+
+#![expect(
+    clippy::print_stderr,
+    reason = "a command-line tool reports its errors on stderr"
+)]
+
+use std::fmt::Write as _;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use buzzard_lint::project::is_project_file;
@@ -91,110 +101,11 @@ fn main() -> ExitCode {
             ignore,
             max_path_length,
             exit_zero,
-        } => {
-            let unknown: Vec<&String> = ignore
-                .iter()
-                .filter(|code| buzzard_lint::rules::rule(code).is_none())
-                .collect();
-            if !unknown.is_empty() {
-                eprintln!("error: unknown rule code(s): {unknown:?}");
-                return ExitCode::from(2);
-            }
-            if let Some(missing) = paths.iter().find(|p| !p.exists()) {
-                eprintln!("error: path does not exist: {}", missing.display());
-                return ExitCode::from(2);
-            }
-            let config = LintConfig {
-                max_path_length,
-                ignore: ignore.into_iter().collect(),
-            };
-            let workspace = Workspace::scan(&paths);
-            let graph = DependencyGraph::build(&workspace);
-            let diagnostics = lint(&workspace, &graph, &config);
-            let rendered = match format {
-                CheckFormat::Human => render_human(&diagnostics, workspace.files().len()),
-                CheckFormat::Json => to_json(&diagnostics),
-                CheckFormat::Sarif => {
-                    to_json(&sarif::to_sarif(&diagnostics, env!("CARGO_PKG_VERSION")))
-                }
-            };
-            let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
-            let status = if failed && !exit_zero {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
-            };
-            print(&rendered, status)
-        }
+        } => check(&paths, format, ignore, max_path_length, exit_zero),
         Command::Inspect { file, format } if is_project_file(&file) => {
-            match ProjectFile::from_path(&file) {
-                Ok(project) => {
-                    let rendered = match format {
-                        InspectFormat::Json => to_json(&project),
-                        InspectFormat::Markdown => {
-                            summary::project_to_markdown(&project.name, &project, None)
-                        }
-                        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
-                            eprintln!(
-                                "error: {}: a project file has no block diagram",
-                                file.display()
-                            );
-                            return ExitCode::from(2);
-                        }
-                    };
-                    print(&rendered, ExitCode::SUCCESS)
-                }
-                Err(err) => {
-                    eprintln!("error: {}: {err}", file.display());
-                    ExitCode::from(2)
-                }
-            }
+            inspect_project(&file, format)
         }
-        Command::Inspect { file, format } => match Inspection::from_path(&file) {
-            Ok(inspection) => {
-                let picture = |draw: fn(&BlockDiagram) -> String| match &inspection.diagram {
-                    Some(diagram) => Ok(draw(diagram)),
-                    None => Err("file has no block diagram"),
-                };
-                let rendered = match format {
-                    InspectFormat::Svg => picture(render::to_svg),
-                    InspectFormat::Dot => picture(render::to_dot),
-                    InspectFormat::Mermaid => picture(render::to_mermaid),
-                    other => Ok(match other {
-                        InspectFormat::Json => to_json(&InspectOutput {
-                            metadata: &inspection.metadata,
-                            diagram: inspection.diagram.as_ref(),
-                        }),
-                        InspectFormat::Markdown => {
-                            let title = file
-                                .file_name()
-                                .unwrap_or(file.as_os_str())
-                                .to_string_lossy();
-                            let mut text = summary::to_markdown(&title, &inspection.metadata, None);
-                            if let Some(diagram) = &inspection.diagram {
-                                text.push('\n');
-                                text.push_str(&summary::diagram_to_markdown(diagram));
-                            }
-                            text
-                        }
-                        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
-                            unreachable!("pictures are handled above")
-                        }
-                    }),
-                };
-                match rendered {
-                    Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
-                    Err(reason) => {
-                        eprintln!("error: {}: {reason}", file.display());
-                        ExitCode::from(2)
-                    }
-                }
-            }
-            Err(err) => {
-                eprintln!("error: {}: {err}", file.display());
-                ExitCode::from(2)
-            }
-        },
+        Command::Inspect { file, format } => inspect_binary(&file, format),
         Command::Diff(args) => match diff_cmd::run(&args) {
             Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
             Err(message) => {
@@ -202,23 +113,7 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        Command::Lsp => {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build();
-            match runtime {
-                Ok(runtime) => {
-                    let status = runtime.block_on(buzzard_ls::run_stdio());
-                    // The runtime's blocking stdin reader would otherwise keep
-                    // the process alive until the client closes the pipe.
-                    std::process::exit(status)
-                }
-                Err(err) => {
-                    eprintln!("error: cannot start async runtime: {err}");
-                    ExitCode::from(2)
-                }
-            }
-        }
+        Command::Lsp => lsp(),
         Command::Mcp => match buzzard_mcp::run_stdio() {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -226,6 +121,138 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+    }
+}
+
+/// `buzzard check`: lint everything under `paths` and print the findings.
+fn check(
+    paths: &[PathBuf],
+    format: CheckFormat,
+    ignore: Vec<String>,
+    max_path_length: usize,
+    exit_zero: bool,
+) -> ExitCode {
+    let unknown: Vec<&String> = ignore
+        .iter()
+        .filter(|code| buzzard_lint::rules::rule(code).is_none())
+        .collect();
+    if !unknown.is_empty() {
+        eprintln!("error: unknown rule code(s): {unknown:?}");
+        return ExitCode::from(2);
+    }
+    if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+        eprintln!("error: path does not exist: {}", missing.display());
+        return ExitCode::from(2);
+    }
+    let config = LintConfig {
+        max_path_length,
+        ignore: ignore.into_iter().collect(),
+    };
+    let workspace = Workspace::scan(paths);
+    let graph = DependencyGraph::build(&workspace);
+    let diagnostics = lint(&workspace, &graph, &config);
+    let rendered = match format {
+        CheckFormat::Human => render_human(&diagnostics, workspace.files().len()),
+        CheckFormat::Json => to_json(&diagnostics),
+        CheckFormat::Sarif => to_json(&sarif::to_sarif(&diagnostics, env!("CARGO_PKG_VERSION"))),
+    };
+    let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
+    let status = if failed && !exit_zero {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    };
+    print(&rendered, status)
+}
+
+/// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
+fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
+    match ProjectFile::from_path(file) {
+        Ok(project) => {
+            let rendered = match format {
+                InspectFormat::Json => to_json(&project),
+                InspectFormat::Markdown => {
+                    summary::project_to_markdown(&project.name, &project, None)
+                }
+                InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+                    eprintln!(
+                        "error: {}: a project file has no block diagram",
+                        file.display()
+                    );
+                    return ExitCode::from(2);
+                }
+            };
+            print(&rendered, ExitCode::SUCCESS)
+        }
+        Err(err) => {
+            eprintln!("error: {}: {err}", file.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `buzzard inspect` on a binary file: its metadata and block diagram, or a
+/// picture of the diagram.
+fn inspect_binary(file: &Path, format: InspectFormat) -> ExitCode {
+    let inspection = match Inspection::from_path(file) {
+        Ok(inspection) => inspection,
+        Err(err) => {
+            eprintln!("error: {}: {err}", file.display());
+            return ExitCode::from(2);
+        }
+    };
+    let picture = |draw: fn(&BlockDiagram) -> String| match &inspection.diagram {
+        Some(diagram) => Ok(draw(diagram)),
+        None => Err("file has no block diagram"),
+    };
+    let rendered = match format {
+        InspectFormat::Svg => picture(render::to_svg),
+        InspectFormat::Dot => picture(render::to_dot),
+        InspectFormat::Mermaid => picture(render::to_mermaid),
+        InspectFormat::Json => Ok(to_json(&InspectOutput {
+            metadata: &inspection.metadata,
+            diagram: inspection.diagram.as_ref(),
+        })),
+        InspectFormat::Markdown => {
+            let title = file
+                .file_name()
+                .unwrap_or(file.as_os_str())
+                .to_string_lossy();
+            let mut text = summary::to_markdown(&title, &inspection.metadata, None);
+            if let Some(diagram) = &inspection.diagram {
+                text.push('\n');
+                text.push_str(&summary::diagram_to_markdown(diagram));
+            }
+            Ok(text)
+        }
+    };
+    match rendered {
+        Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
+        Err(reason) => {
+            eprintln!("error: {}: {reason}", file.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// `buzzard lsp`: serve the language server over stdin/stdout.
+fn lsp() -> ExitCode {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build();
+    match runtime {
+        Ok(runtime) => {
+            let status = runtime.block_on(buzzard_ls::run_stdio());
+            #[expect(
+                clippy::exit,
+                reason = "the runtime's blocking stdin reader would otherwise keep the process alive until the client closes the pipe"
+            )]
+            std::process::exit(status);
+        }
+        Err(err) => {
+            eprintln!("error: cannot start async runtime: {err}");
+            ExitCode::from(2)
+        }
     }
 }
 
@@ -261,13 +288,14 @@ fn to_json(value: &impl serde::Serialize) -> String {
 fn render_human(diagnostics: &[Diagnostic], file_count: usize) -> String {
     let mut out = String::new();
     for d in diagnostics {
-        out.push_str(&format!(
-            "{}: {}[{}]: {}\n",
+        let _ = writeln!(
+            out,
+            "{}: {}[{}]: {}",
             d.path.display(),
             d.severity.as_str(),
             d.code,
             d.message
-        ));
+        );
     }
     let errors = diagnostics
         .iter()
@@ -279,15 +307,16 @@ fn render_human(diagnostics: &[Diagnostic], file_count: usize) -> String {
         .count();
     let files = if file_count == 1 { "file" } else { "files" };
     if diagnostics.is_empty() {
-        out.push_str(&format!("No problems found in {file_count} {files}.\n"));
+        let _ = writeln!(out, "No problems found in {file_count} {files}.");
     } else {
-        out.push_str(&format!(
-            "Found {} problem{} ({errors} error{}, {warnings} warning{}) in {file_count} {files}.\n",
+        let _ = writeln!(
+            out,
+            "Found {} problem{} ({errors} error{}, {warnings} warning{}) in {file_count} {files}.",
             diagnostics.len(),
             if diagnostics.len() == 1 { "" } else { "s" },
             if errors == 1 { "" } else { "s" },
             if warnings == 1 { "" } else { "s" },
-        ));
+        );
     }
     out
 }
@@ -313,8 +342,8 @@ mod tests {
     struct FailingFlush;
 
     impl Write for FailingFlush {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            Ok(bytes.len())
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
         }
 
         fn flush(&mut self) -> io::Result<()> {

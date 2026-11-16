@@ -24,8 +24,8 @@ fn root() -> PathBuf {
 
 fn fixtures() -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
+        for entry in fs::read_dir(dir).expect("list a fixture directory") {
+            let path = entry.expect("read a fixture directory entry").path();
             if path.is_dir() {
                 walk(&path, out);
             } else if path.extension().is_some_and(|e| e != "md") {
@@ -45,14 +45,15 @@ fn fixtures() -> Vec<PathBuf> {
 }
 
 fn fixture(name: &str) -> ViMetadata {
-    ViMetadata::from_path(root().join("fixtures").join(name)).unwrap()
+    ViMetadata::from_path(root().join("fixtures").join(name)).expect("parse fixture metadata")
 }
 
 /// Compare `actual` with a snapshot file, or rewrite the file when blessing.
 fn check(snapshot: &Path, actual: String, failures: &mut Vec<String>) {
     if std::env::var_os("BUZZARD_BLESS").is_some() {
-        fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
-        fs::write(snapshot, actual).unwrap();
+        let dir = snapshot.parent().expect("snapshot path has a parent");
+        fs::create_dir_all(dir).expect("create the snapshot directory");
+        fs::write(snapshot, actual).expect("write the snapshot");
     } else if fs::read_to_string(snapshot).ok().as_deref() != Some(actual.as_str()) {
         failures.push(snapshot.display().to_string());
     }
@@ -223,9 +224,11 @@ fn hostile_heap_and_types_never_panic() {
 }
 
 fn diagram(name: &str) -> BlockDiagram {
-    let bytes = fs::read(root().join("fixtures").join(name)).unwrap();
-    let file = RsrcFile::parse(&bytes).unwrap();
-    BlockDiagram::from_rsrc(&file).unwrap().unwrap()
+    let bytes = fs::read(root().join("fixtures").join(name)).expect("read fixture");
+    let file = RsrcFile::parse(&bytes).expect("parse fixture container");
+    BlockDiagram::from_rsrc(&file)
+        .expect("decode fixture block diagram")
+        .expect("fixture has a block diagram")
 }
 
 /// `add.vi`: two numeric controls wired into an Add primitive, whose
@@ -286,7 +289,7 @@ fn diagram_names_subvi_calls() {
 
     let bd = diagram("pylavi/absolute_link_PTH.vi");
     let mut names: Vec<&str> = bd.nodes().filter_map(|n| n.name.as_deref()).collect();
-    names.sort();
+    names.sort_unstable();
     assert_eq!(
         names,
         ["PTH empty PTH.vi", "Path To Command Line String.vi"]
@@ -296,7 +299,11 @@ fn diagram_names_subvi_calls() {
 #[test]
 fn empty_diagram_and_files_without_one() {
     let bd = diagram("pylavi/empty.vi");
-    assert!(bd.root.wires.is_empty());
+    assert!(
+        bd.root.wires.is_empty(),
+        "expected nothing, got {:?}",
+        bd.root.wires
+    );
     assert!(bd
         .nodes()
         .all(|n| n.class == "sRN" && n.terminals.is_empty()));
@@ -315,7 +322,11 @@ fn baseline_vi() {
     assert_eq!(meta.kind, FileKind::Vi);
     assert_eq!(meta.version.unwrap().to_string(), "21.0.0");
     assert_eq!(meta.password_protected, Some(false));
-    assert!(meta.links.is_empty());
+    assert!(
+        meta.links.is_empty(),
+        "expected nothing, got {:?}",
+        meta.links
+    );
     let flags = meta.flags.unwrap();
     assert_eq!(flags.separate_compiled_code, Some(false));
     assert_eq!(flags.auto_error_handling, Some(true));

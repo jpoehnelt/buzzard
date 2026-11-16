@@ -51,9 +51,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Pinned so a new Rust release cannot fail CI with lints that are new
+      # in it. To move up, change this version, run
+      # `cargo +<version> clippy --workspace --all-targets -- -D warnings`
+      # and the doc build below, and fix what they report in the same commit.
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
-          toolchain: stable
+          toolchain: 1.100.0
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -105,6 +109,20 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
 
+  # Advisories, licenses, duplicate crates and sources; see deny.toml. Needs
+  # no compilation, only Cargo.lock and the RustSec database.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features --locked
+
   # The VS Code extension under editors/vscode: TypeScript, outside the
   # Cargo workspace. Its unit tests also run the real `buzzard` on a real
   # file, so the binary is built first.
@@ -147,7 +165,7 @@ jobs:
   # the repository settings.
   ci:
     if: always()
-    needs: [fmt, lint, test, msrv, vscode]
+    needs: [fmt, lint, test, msrv, deny, vscode]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

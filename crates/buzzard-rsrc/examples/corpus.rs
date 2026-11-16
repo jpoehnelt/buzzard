@@ -2,6 +2,11 @@
 //! conformance check against a large body of real files:
 //! `cargo run --release --example corpus -- <dir>`
 
+#![expect(
+    clippy::print_stdout,
+    reason = "an example that reports to the terminal"
+)]
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -31,8 +36,7 @@ fn classes(node: &HeapNode<'_>, counts: &mut BTreeMap<String, usize>) {
     if let Some(class) = node.class() {
         let name = node
             .class_name()
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("class{class}"));
+            .map_or_else(|| format!("class{class}"), str::to_owned);
         *counts.entry(name).or_default() += 1;
     }
     for child in &node.children {

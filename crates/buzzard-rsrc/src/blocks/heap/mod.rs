@@ -22,12 +22,18 @@ pub const ATTR_CLASS: i32 = -2;
 /// Attribute id of the object's unique id within the heap.
 pub const ATTR_UID: i32 = -3;
 
-/// Tag ids of the structural system tags.
+/// Tag ids of the structural system tags, named as [`tag_name`] names them.
 pub mod tag {
+    /// `SL__object`.
     pub const OBJECT: i32 = -3;
+    /// `SL__array`.
     pub const ARRAY: i32 = -4;
+    /// `SL__reference`.
     pub const REFERENCE: i32 = -5;
+    /// `SL__arrayElement`: one element of a list such as `nodeList`, either
+    /// an object definition or a reference to one by uid.
     pub const ARRAY_ELEMENT: i32 = -6;
+    /// `SL__rootObject`: the top-level object of a heap.
     pub const ROOT_OBJECT: i32 = -7;
 }
 
@@ -38,23 +44,33 @@ const SCOPE_OPEN: u8 = 0;
 const SCOPE_LEAF: u8 = 1;
 const SCOPE_CLOSE: u8 = 2;
 
+/// Content of a heap entry, as selected by its size spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Content<'a> {
+    /// No content: an opening tag with size spec 0.
     None,
+    /// A flag without content bytes: size spec 7 means `true`, and a leaf
+    /// with size spec 0 means `false`.
     Bool(bool),
+    /// Content bytes: 1 to 4 of them, or a length-prefixed run.
     Bytes(&'a [u8]),
 }
 
+/// One node of the heap tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeapNode<'a> {
+    /// Tag id: a system tag from [`tag`] or a field tag; see [`tag_name`].
     pub tag: i32,
     /// `(attribute id, value)` pairs in stream order.
     pub attrs: Vec<(i32, i32)>,
+    /// Content of the entry that opened the node, or of the leaf itself.
     pub content: Content<'a>,
+    /// Nodes between this node's opening and closing entries.
     pub children: Vec<HeapNode<'a>>,
 }
 
 impl<'a> HeapNode<'a> {
+    /// Value of the first attribute with the given id.
     pub fn attr(&self, id: i32) -> Option<i32> {
         self.attrs.iter().find(|(k, _)| *k == id).map(|(_, v)| *v)
     }
@@ -64,14 +80,19 @@ impl<'a> HeapNode<'a> {
         self.attr(ATTR_CLASS)
     }
 
+    /// Unique id from the `uid` attribute. Objects defined elsewhere in the
+    /// heap are referred to by it.
     pub fn uid(&self) -> Option<i32> {
         self.attr(ATTR_UID)
     }
 
+    /// Name of the object class, e.g. `prim`, if the node is an object of a
+    /// known class.
     pub fn class_name(&self) -> Option<&'static str> {
         class_name(self.class()?)
     }
 
+    /// Name of the node's tag, e.g. `termList`, if it is known.
     pub fn tag_name(&self) -> Option<&'static str> {
         tag_name(self.tag)
     }
@@ -86,6 +107,7 @@ impl<'a> HeapNode<'a> {
         self.children.iter().find(|c| c.tag_name() == Some(name))
     }
 
+    /// Content bytes, if the entry has any.
     pub fn bytes(&self) -> Option<&'a [u8]> {
         match self.content {
             Content::Bytes(b) => Some(b),
@@ -139,6 +161,7 @@ pub fn tag_name(id: i32) -> Option<&'static str> {
     }
 }
 
+/// Name of an object class, e.g. `prim` for 47.
 pub fn class_name(id: i32) -> Option<&'static str> {
     lookup(tables::CLASS_TAGS, id)
 }
@@ -201,11 +224,24 @@ fn lookup(table: &'static [(i32, &'static str)], id: i32) -> Option<&'static str
 /// A decoded heap: usually a single root object.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Heap<'a> {
+    /// Top-level nodes in stream order.
     pub roots: Vec<HeapNode<'a>>,
 }
 
 impl<'a> Heap<'a> {
-    /// Parse a decompressed heap block.
+    /// Parse a decompressed heap block. Nodes still open at the end of the
+    /// stream are closed.
+    ///
+    /// # Errors
+    ///
+    /// If the declared length runs past `data`, an entry is truncated or has
+    /// an unknown size spec or scope, an attribute count is too large for the
+    /// rest of the stream, nesting exceeds [`MAX_DEPTH`], or a closing tag
+    /// has no matching opening tag.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the `expect`s rely on the stack holding the root list plus one child list per open node"
+    )]
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         let mut r = Reader::new(data, "heap");
         let length = r.u32()? as usize;
@@ -222,7 +258,7 @@ impl<'a> Heap<'a> {
             let scope = (b0 >> 2) & 3;
             let raw_tag = i32::from(b1) | (i32::from(b0 & 3) << 8);
             let tag = if raw_tag == 1023 {
-                r.u32()? as i32
+                r.u32()?.cast_signed()
             } else {
                 raw_tag - 31
             };
@@ -301,6 +337,7 @@ impl<'a> Heap<'a> {
         })
     }
 
+    /// Total number of nodes in the heap.
     pub fn node_count(&self) -> usize {
         self.roots.iter().map(HeapNode::count).sum()
     }
@@ -317,17 +354,17 @@ fn var_u124(r: &mut Reader<'_>) -> Result<u32> {
 
 /// Signed 8-bit value, widened to 16 bits after `-128` or 32 after `-127`.
 fn var_s124(r: &mut Reader<'_>) -> Result<i32> {
-    Ok(match r.u8()? as i8 {
-        -128 => i32::from(r.u16()? as i16),
-        -127 => r.u32()? as i32,
+    Ok(match r.u8()?.cast_signed() {
+        -128 => i32::from(r.u16()?.cast_signed()),
+        -127 => r.u32()?.cast_signed(),
         small => i32::from(small),
     })
 }
 
 /// Signed 16-bit value, or 32 bits after `-0x8000`.
 fn var_s24(r: &mut Reader<'_>) -> Result<i32> {
-    Ok(match r.u16()? as i16 {
-        i16::MIN => r.u32()? as i32,
+    Ok(match r.u16()?.cast_signed() {
+        i16::MIN => r.u32()?.cast_signed(),
         small => i32::from(small),
     })
 }
@@ -337,17 +374,19 @@ mod tests {
     use super::*;
 
     fn heap(body: &[u8]) -> Vec<u8> {
-        let mut out = (body.len() as u32).to_be_bytes().to_vec();
+        let len = u32::try_from(body.len()).expect("test heap length fits in a u32");
+        let mut out = len.to_be_bytes().to_vec();
         out.extend_from_slice(body);
         out
     }
 
     /// Entry header for a tag id, scope and size spec, optionally with attributes.
     fn entry(tag: i32, scope: u8, size_spec: u8, attrs: bool) -> [u8; 2] {
-        let raw = (tag + 31) as u16;
+        let raw = u16::try_from(tag + 31).expect("test raw tag id fits in a u16");
+        let [high, low] = raw.to_be_bytes();
         [
-            (size_spec << 5) | (u8::from(attrs) << 4) | (scope << 2) | (raw >> 8) as u8,
-            raw as u8,
+            (size_spec << 5) | (u8::from(attrs) << 4) | (scope << 2) | high,
+            low,
         ]
     }
 
@@ -416,7 +455,15 @@ mod tests {
         let mut body = Vec::new();
         // <object class=47 uid=5>
         body.extend(entry(tag::OBJECT, SCOPE_OPEN, 0, true));
-        body.extend([2, (-2i8) as u8, 0, 47, (-3i8) as u8, 0, 5]);
+        body.extend([
+            2,
+            (-2i8).cast_unsigned(),
+            0,
+            47,
+            (-3i8).cast_unsigned(),
+            0,
+            5,
+        ]);
         //   <primIndex>0x0102</primIndex> (leaf, two bytes)
         body.extend(entry(202, SCOPE_LEAF, 2, false));
         body.extend([1, 2]);

@@ -8,10 +8,15 @@ use serde::Serialize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Stage {
+    /// A stage code other than 1 to 4, shown as `?`.
     Unknown,
+    /// Development build (stage code 1), shown as `d`.
     Development,
+    /// Alpha (stage code 2), shown as `a`.
     Alpha,
+    /// Beta (stage code 3), shown as `b`.
     Beta,
+    /// Release (stage code 4), shown as `f`.
     Release,
 }
 
@@ -43,14 +48,25 @@ impl Stage {
 /// the stage in the top three bits of the `s` nibble.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct Version {
+    /// Major version, from the two `M` digits.
     pub major: u8,
+    /// Minor version, from the `m` digit.
     pub minor: u8,
+    /// Patch version, from the `p` digit.
     pub patch: u8,
+    /// Release stage, from the top three bits of the `s` nibble.
     pub stage: Stage,
+    /// Build number: the three `b` digits, plus 1000 when the low bit of
+    /// the `s` nibble is set.
     pub build: u16,
 }
 
 impl Version {
+    /// Decode the packed on-disk form.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "every field is built from 4-bit nibbles: `major` is at most 165 and `build` at most 2665"
+    )]
     pub fn from_u32(raw: u32) -> Self {
         let nibble = |shift: u32| (raw >> shift) & 0xF;
         Self {

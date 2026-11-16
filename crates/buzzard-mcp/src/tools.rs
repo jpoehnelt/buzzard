@@ -20,7 +20,7 @@ use buzzard_lint::{
 use buzzard_rsrc::FileKind;
 use serde_json::{json, Map, Value};
 
-pub const NAMES: [&str; 7] = [
+pub(crate) const NAMES: [&str; 7] = [
     "buzzard_check",
     "buzzard_inspect",
     "buzzard_diagram",
@@ -30,7 +30,7 @@ pub const NAMES: [&str; 7] = [
     "buzzard_rules",
 ];
 
-pub const INSTRUCTIONS: &str =
+pub(crate) const INSTRUCTIONS: &str =
     "buzzard reads LabVIEW .vi/.ctl binaries and .lvproj/.lvlib/.lvclass \
 files directly from disk, without the LabVIEW IDE. All tools are read-only. Relative paths are \
 resolved against the directory the server was started in. Start with buzzard_symbols to find \
@@ -53,7 +53,7 @@ refresh to true to force a re-parse if a file was rewritten without its size or 
 time changing.";
 
 /// What a successful tool call returns.
-pub struct Output {
+pub(crate) struct Output {
     pub text: String,
     /// Machine-readable form of the same answer; always a JSON object.
     pub structured: Option<Value>,
@@ -72,7 +72,7 @@ struct Scan {
 
 /// Session state: the base directory and the most recent workspace scan.
 #[derive(Debug)]
-pub struct State {
+pub(crate) struct State {
     base: PathBuf,
     scan: Option<Scan>,
     /// How many times a workspace was parsed from scratch.
@@ -80,16 +80,16 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(base: PathBuf) -> Self {
+    pub(crate) fn new(base: &Path) -> Self {
         Self {
-            base: normalize(&base),
+            base: normalize(base),
             scan: None,
             parses: 0,
         }
     }
 
     /// Drop the cached scan.
-    pub fn forget(&mut self) {
+    pub(crate) fn forget(&mut self) {
         self.scan = None;
     }
 
@@ -238,7 +238,7 @@ fn check_text<'a>(key: &str, text: &'a str) -> Result<&'a str, String> {
 }
 
 /// Run one tool. `name` must be one of [`NAMES`].
-pub fn call(
+pub(crate) fn call(
     state: &mut State,
     name: &str,
     arguments: &Map<String, Value>,
@@ -632,7 +632,11 @@ fn rules(arguments: &Map<String, Value>) -> Result<Output, String> {
 }
 
 /// The `tools/list` payload, in the order of [`NAMES`].
-pub fn definitions() -> Value {
+#[expect(
+    clippy::too_many_lines,
+    reason = "the schemas of all seven tools, kept together as one table"
+)]
+pub(crate) fn definitions() -> Value {
     let path = |what: &str| {
         json!({
             "type": "string",
@@ -856,7 +860,7 @@ mod tests {
 
     #[test]
     fn shows_paths_relative_to_the_base() {
-        let state = State::new(PathBuf::from("/work/./project"));
+        let state = State::new(Path::new("/work/./project"));
         assert_eq!(state.show(Path::new("/work/project/a/b.vi")), "a/b.vi");
         assert_eq!(state.show(Path::new("/work/project")), ".");
         assert_eq!(state.show(Path::new("/elsewhere/b.vi")), "/elsewhere/b.vi");
@@ -868,7 +872,7 @@ mod tests {
     #[test]
     fn reuses_the_scan_until_the_root_changes_or_refresh_is_set() {
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../buzzard-rsrc/tests/fixtures");
-        let mut state = State::new(fixtures);
+        let mut state = State::new(&fixtures);
         let args = |value: Value| value.as_object().unwrap().clone();
         let mut search = |arguments: Value, expected_parses: u64| {
             let output = symbols(&mut state, &args(arguments)).unwrap();

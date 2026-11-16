@@ -5,6 +5,7 @@
 //! take part in cycle detection, because a member routinely refers back to
 //! the library or class that owns it.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Component, Path, PathBuf};
 
@@ -223,7 +224,7 @@ fn recode_text(text: &str, encoding: &'static Encoding) -> Option<String> {
     };
     encoding
         .decode_without_bom_handling_and_without_replacement(&bytes)
-        .map(|decoded| decoded.into_owned())
+        .map(Cow::into_owned)
 }
 
 /// Every distinct reading of a link under the candidate code pages. Empty
@@ -261,6 +262,7 @@ fn recode(link: &LvPath, name: Option<&str>) -> Vec<(LvPath, Option<String>)> {
     out
 }
 
+/// Every file of a workspace and the edges between them.
 #[derive(Debug, Default)]
 pub struct DependencyGraph {
     /// Nodes carry the path as given, which is what callers see.
@@ -379,6 +381,10 @@ impl DependencyGraph {
 
     /// Every group of mutually dependent files, with one concrete cycle
     /// through the group's first member. Groups and members are sorted.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the only `expect` is on a strongly connected component, which is never empty"
+    )]
     pub fn cycles(&self) -> Vec<Cycle> {
         let dependencies = EdgeFiltered::from_fn(&self.graph, |e| e.weight().is_dependency());
         let mut out: Vec<Cycle> = tarjan_scc(&dependencies)
@@ -438,6 +444,7 @@ impl DependencyGraph {
         vec![start]
     }
 
+    /// Number of files in the graph, which is every file in the workspace.
     pub fn file_count(&self) -> usize {
         self.graph.node_count()
     }
@@ -465,6 +472,7 @@ impl DependencyGraph {
     }
 }
 
+/// A circular dependency, as found by [`DependencyGraph::cycles`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cycle {
     /// Every file in the strongly connected group, sorted.
@@ -502,7 +510,7 @@ pub fn resolve(from: &Path, link: &LvPath) -> Option<PathBuf> {
             if component.len() == 1 && cfg!(windows) {
                 out.push(format!("{component}:\\"));
             } else {
-                out.push("/");
+                out = PathBuf::from("/");
                 out.push(component);
             }
         } else {
@@ -525,7 +533,7 @@ mod tests {
         );
         let up = LvPath {
             kind: PathKind::Relative,
-            components: vec!["".into(), "".into(), "lib".into(), "b.vi".into()],
+            components: vec![String::new(), String::new(), "lib".into(), "b.vi".into()],
         };
         assert_eq!(resolve(from, &up).unwrap(), Path::new("proj/lib/b.vi"));
     }
@@ -543,7 +551,7 @@ mod tests {
         // starting directory, not `lib/x.vi` inside it.
         let up = LvPath {
             kind: PathKind::Relative,
-            components: vec!["".into(), "".into(), "lib".into(), "x.vi".into()],
+            components: vec![String::new(), String::new(), "lib".into(), "x.vi".into()],
         };
         assert_eq!(
             resolve(Path::new("../main.vi"), &up).unwrap(),
@@ -570,7 +578,7 @@ mod tests {
     fn parent_steps_stop_at_the_root() {
         let up = LvPath {
             kind: PathKind::Relative,
-            components: vec!["".into(), "".into(), "".into(), "x.vi".into()],
+            components: vec![String::new(), String::new(), String::new(), "x.vi".into()],
         };
         assert_eq!(
             resolve(Path::new("/a/main.vi"), &up).unwrap(),
@@ -606,13 +614,13 @@ mod tests {
         );
         let up = LvPath {
             kind: PathKind::Relative,
-            components: vec!["".into(), "".into(), "lib".into(), "b.vi".into()],
+            components: vec![String::new(), String::new(), "lib".into(), "b.vi".into()],
         };
         assert_eq!(resolve(from, &up).unwrap(), Path::new(r"C:\proj\lib\b.vi"));
         // Stepping up never leaves the drive.
         let far = LvPath {
             kind: PathKind::Relative,
-            components: vec!["".into(); 6],
+            components: vec![String::new(); 6],
         };
         assert_eq!(resolve(from, &far).unwrap(), Path::new(r"C:\"));
     }
@@ -632,7 +640,11 @@ mod tests {
         // Plain ASCII and text beyond U+00FF are not code page bytes.
         assert_eq!(code_page_bytes("plain.vi"), None);
         assert_eq!(code_page_bytes("テスト.vi"), None);
-        assert!(recode(&LvPath::sibling("plain.vi"), Some("plain.vi")).is_empty());
+        assert!(
+            recode(&LvPath::sibling("plain.vi"), Some("plain.vi")).is_empty(),
+            "expected nothing, got {:?}",
+            recode(&LvPath::sibling("plain.vi"), Some("plain.vi"))
+        );
         let readings = recode(&LvPath::sibling(&stored), Some(&stored));
         assert!(readings
             .iter()

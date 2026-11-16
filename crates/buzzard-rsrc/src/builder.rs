@@ -7,6 +7,7 @@ use crate::header::{file_type, RsrcHeader, FORMAT_VERSION, HEADER_SIZE};
 
 const INFO_HEADER_SIZE: usize = 20;
 
+#[derive(Debug)]
 struct Entry {
     ty: FourCc,
     id: i32,
@@ -17,6 +18,9 @@ struct Entry {
 /// A link given as raw bytes: `(name, path kind, path components)`.
 pub type ByteLink<'a> = (&'a [u8], PathKind, &'a [&'a [u8]]);
 
+/// Collects resources and lays them out as an RSRC file with
+/// [`build`](Self::build).
+#[derive(Debug)]
 pub struct RsrcBuilder {
     file_type: FourCc,
     entries: Vec<Entry>,
@@ -29,6 +33,7 @@ impl Default for RsrcBuilder {
 }
 
 impl RsrcBuilder {
+    /// Start an empty file of the given type, e.g. [`file_type::CONTROL`].
     pub fn new(file_type: FourCc) -> Self {
         Self {
             file_type,
@@ -36,6 +41,9 @@ impl RsrcBuilder {
         }
     }
 
+    /// Add a resource. Resources of one type are stored together, in the
+    /// order they were added.
+    #[must_use]
     pub fn resource(
         mut self,
         ty: &[u8; 4],
@@ -53,6 +61,7 @@ impl RsrcBuilder {
     }
 
     /// Add `vers` and `LVSR` blocks for a packed version and flag words.
+    #[must_use]
     pub fn save_record(self, version: u32, words: &[u32]) -> Self {
         let mut lvsr = version.to_be_bytes().to_vec();
         for w in words {
@@ -65,6 +74,12 @@ impl RsrcBuilder {
     }
 
     /// Add an `LIvi` block linking to the given `(name, path)` pairs as subVIs.
+    ///
+    /// # Panics
+    ///
+    /// If a name or path component is longer than 255 bytes, or a path has
+    /// more than 65,535 components.
+    #[must_use]
     pub fn links(self, links: &[(&str, LvPath)]) -> Self {
         let encoded: Vec<(&[u8], Vec<u8>)> = links
             .iter()
@@ -77,6 +92,12 @@ impl RsrcBuilder {
     /// raw bytes: `(name, kind, components)`. Old link forms store text in
     /// the code page of the machine that saved the file, which a `&str`
     /// cannot express.
+    ///
+    /// # Panics
+    ///
+    /// If a name or path component is longer than 255 bytes, or a path has
+    /// more than 65,535 components.
+    #[must_use]
     pub fn links_bytes(self, links: &[ByteLink<'_>]) -> Self {
         let encoded: Vec<(&[u8], Vec<u8>)> = links
             .iter()
@@ -88,7 +109,7 @@ impl RsrcBuilder {
     fn encoded_links(self, links: &[(&[u8], Vec<u8>)]) -> Self {
         let mut data = vec![0, 1];
         data.extend_from_slice(b"LVIN");
-        data.extend_from_slice(&(links.len() as u32).to_be_bytes());
+        data.extend_from_slice(&u32_field(links.len()).to_be_bytes());
         data.extend_from_slice(&[0, 2]);
         for (name, path) in links {
             while data.len() % 4 != 0 {
@@ -96,8 +117,7 @@ impl RsrcBuilder {
             }
             data.extend_from_slice(b"VIVI");
             data.extend_from_slice(&1u32.to_be_bytes());
-            data.push(name.len() as u8);
-            data.extend_from_slice(name);
+            push_pstr(&mut data, name);
             if data.len() % 2 != 0 {
                 data.push(0);
             }
@@ -107,6 +127,12 @@ impl RsrcBuilder {
         self.resource(b"LIvi", 0, None, data)
     }
 
+    /// Lay out the header, data section and directory.
+    ///
+    /// # Panics
+    ///
+    /// If no resource was added, a resource name is longer than 255 bytes,
+    /// or the file would not fit the 32-bit offsets of the format.
     pub fn build(self) -> Vec<u8> {
         // Group entries by type, preserving first-seen order.
         let mut types: Vec<(FourCc, Vec<&Entry>)> = Vec::new();
@@ -124,18 +150,17 @@ impl RsrcBuilder {
         let mut data = Vec::new();
         let mut names = Vec::new();
         let mut lists = Vec::new();
-        let mut type_table = ((types.len() - 1) as u32).to_be_bytes().to_vec();
+        let mut type_table = u32_field(types.len() - 1).to_be_bytes().to_vec();
         let lists_start = 4 + types.len() * 12;
         for (ty, list) in &types {
             type_table.extend_from_slice(ty.as_bytes());
-            type_table.extend_from_slice(&((list.len() - 1) as u32).to_be_bytes());
-            type_table.extend_from_slice(&((lists_start + lists.len()) as u32).to_be_bytes());
+            type_table.extend_from_slice(&u32_field(list.len() - 1).to_be_bytes());
+            type_table.extend_from_slice(&u32_field(lists_start + lists.len()).to_be_bytes());
             for entry in list {
                 let name_offset = match &entry.name {
                     Some(name) => {
-                        let at = names.len() as u32;
-                        names.push(name.len() as u8);
-                        names.extend_from_slice(name.as_bytes());
+                        let at = u32_field(names.len());
+                        push_pstr(&mut names, name.as_bytes());
                         at
                     }
                     None => u32::MAX,
@@ -143,10 +168,10 @@ impl RsrcBuilder {
                 lists.extend_from_slice(&entry.id.to_be_bytes());
                 lists.extend_from_slice(&name_offset.to_be_bytes());
                 lists.extend_from_slice(&[0; 4]);
-                lists.extend_from_slice(&(data.len() as u32).to_be_bytes());
+                lists.extend_from_slice(&u32_field(data.len()).to_be_bytes());
                 lists.extend_from_slice(&[0; 4]);
 
-                data.extend_from_slice(&(entry.data.len() as u32).to_be_bytes());
+                data.extend_from_slice(&u32_field(entry.data.len()).to_be_bytes());
                 data.extend_from_slice(&entry.data);
                 while data.len() % 4 != 0 {
                     data.push(0);
@@ -160,19 +185,19 @@ impl RsrcBuilder {
             format_version: FORMAT_VERSION,
             file_type: self.file_type,
             creator: FourCc::new(b"LBVW"),
-            info_offset: (HEADER_SIZE + data.len()) as u32,
-            info_size: (names_offset + names.len()) as u32,
-            data_offset: HEADER_SIZE as u32,
-            data_size: data.len() as u32,
+            info_offset: u32_field(HEADER_SIZE + data.len()),
+            info_size: u32_field(names_offset + names.len()),
+            data_offset: u32_field(HEADER_SIZE),
+            data_size: u32_field(data.len()),
         };
 
         let mut out = header.to_bytes().to_vec();
         out.extend(data);
         out.extend_from_slice(&header.to_bytes());
         out.extend_from_slice(&[0; 8]);
-        out.extend_from_slice(&(HEADER_SIZE as u32).to_be_bytes());
-        out.extend_from_slice(&(types_offset as u32).to_be_bytes());
-        out.extend_from_slice(&(names_offset as u32).to_be_bytes());
+        out.extend_from_slice(&u32_field(HEADER_SIZE).to_be_bytes());
+        out.extend_from_slice(&u32_field(types_offset).to_be_bytes());
+        out.extend_from_slice(&u32_field(names_offset).to_be_bytes());
         out.extend(type_table);
         out.extend(lists);
         out.extend(names);
@@ -180,13 +205,35 @@ impl RsrcBuilder {
     }
 }
 
+/// A length or offset narrowed to a 32-bit field of the format.
+fn u32_field(value: usize) -> u32 {
+    u32::try_from(value)
+        .expect("RSRC lengths and offsets are 32-bit, so a file must stay under 4 GiB")
+}
+
+/// Append `text` as a Pascal string with a one-byte length prefix.
+fn push_pstr(out: &mut Vec<u8>, text: &[u8]) {
+    out.push(u8::try_from(text.len()).expect("a Pascal string holds at most 255 bytes"));
+    out.extend_from_slice(text);
+}
+
 /// Encode a path in the `PTH0` form.
+///
+/// # Panics
+///
+/// If the path has more than 65,535 components or a component is longer
+/// than 255 bytes.
 pub fn encode_pth0(path: &LvPath) -> Vec<u8> {
-    let components: Vec<&[u8]> = path.components.iter().map(|c| c.as_bytes()).collect();
+    let components: Vec<&[u8]> = path.components.iter().map(String::as_bytes).collect();
     encode_pth0_bytes(path.kind, &components)
 }
 
 /// Encode a path in the `PTH0` form from raw component bytes.
+///
+/// # Panics
+///
+/// If there are more than 65,535 components or a component is longer than
+/// 255 bytes.
 pub fn encode_pth0_bytes(kind: PathKind, components: &[&[u8]]) -> Vec<u8> {
     let kind: u16 = match kind {
         PathKind::Absolute => 0,
@@ -195,13 +242,14 @@ pub fn encode_pth0_bytes(kind: PathKind, components: &[&[u8]]) -> Vec<u8> {
         PathKind::Unc => 3,
     };
     let mut body = kind.to_be_bytes().to_vec();
-    body.extend_from_slice(&(components.len() as u16).to_be_bytes());
+    let count =
+        u16::try_from(components.len()).expect("a `PTH0` path holds at most 65,535 components");
+    body.extend_from_slice(&count.to_be_bytes());
     for component in components {
-        body.push(component.len() as u8);
-        body.extend_from_slice(component);
+        push_pstr(&mut body, component);
     }
     let mut out = b"PTH0".to_vec();
-    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    out.extend_from_slice(&u32_field(body.len()).to_be_bytes());
     out.extend(body);
     out
 }
@@ -215,6 +263,8 @@ impl LvPath {
         }
     }
 
+    /// Absolute path from its components, e.g. `["C", "x", "a.vi"]` for
+    /// `C:/x/a.vi`.
     pub fn absolute(components: &[&str]) -> Self {
         Self {
             kind: PathKind::Absolute,

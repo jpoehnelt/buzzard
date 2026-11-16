@@ -15,7 +15,10 @@ use crate::project::{is_project_file, ProjectFile};
 /// results of the dataflow checks. The diagram itself is not retained.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Analysis {
+    /// Version, flags, links and other facts decoded from the file.
     pub metadata: ViMetadata,
+    /// Sorted findings of the dataflow checks; empty when the file has no
+    /// block diagram that could be decoded.
     pub dataflow: Vec<Finding>,
 }
 
@@ -33,8 +36,10 @@ impl From<Inspection> for Analysis {
     }
 }
 
+/// What is known about one file of the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileState {
+    /// A parsed binary resource file, such as a `.vi` or `.ctl`.
     Parsed(Box<Analysis>),
     /// A parsed `.lvproj`, `.lvlib` or `.lvclass` file.
     Project(Box<ProjectFile>),
@@ -63,6 +68,7 @@ impl FileState {
         }
     }
 
+    /// The metadata of a parsed binary file; `None` for anything else.
     pub fn metadata(&self) -> Option<&ViMetadata> {
         match self {
             FileState::Parsed(analysis) => Some(&analysis.metadata),
@@ -70,6 +76,7 @@ impl FileState {
         }
     }
 
+    /// The parsed project, library or class; `None` for anything else.
     pub fn project(&self) -> Option<&ProjectFile> {
         match self {
             FileState::Project(project) => Some(project),
@@ -117,6 +124,7 @@ impl Workspace {
         Self { files, keys, roots }
     }
 
+    /// Every file and its state, in path order.
     pub fn files(&self) -> &BTreeMap<PathBuf, FileState> {
         &self.files
     }
@@ -130,6 +138,7 @@ impl Workspace {
         self.keys.get(&identity(&path)).cloned()
     }
 
+    /// The state of one file, whatever the spelling of its path.
     pub fn get(&self, path: &Path) -> Option<&FileState> {
         self.files.get(&self.key(path)?)
     }
@@ -145,6 +154,7 @@ impl Workspace {
         self.files.insert(key, state);
     }
 
+    /// Drop a file, returning its last state.
     pub fn remove(&mut self, path: &Path) -> Option<FileState> {
         let key = self.key(path)?;
         self.keys.remove(&identity(&key));
@@ -226,7 +236,12 @@ fn discover_from(base: Option<&Path>, roots: &[PathBuf]) -> Vec<PathBuf> {
             e.depth() == 0 || !e.file_name().to_str().is_some_and(|n| n.starts_with('.'))
         });
         for entry in entries.flatten() {
-            if entry.file_type().is_file() && is_analyzable(entry.path()) {
+            #[expect(
+                clippy::filetype_is_file,
+                reason = "only regular files are wanted: links are not followed, and reading a FIFO could block"
+            )]
+            let regular = entry.file_type().is_file();
+            if regular && is_analyzable(entry.path()) {
                 add(order, entry.path());
             }
         }

@@ -30,15 +30,23 @@ pub struct Server {
 impl Server {
     /// `base` is the directory that relative paths in tool arguments are
     /// resolved against, and that reported paths are made relative to.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "public API: taking `&Path` instead would break callers"
+    )]
     pub fn new(base: PathBuf) -> Self {
         Self {
-            state: State::new(base),
+            state: State::new(&base),
         }
     }
 
     /// Read messages from `reader` until end of input, writing one line to
     /// `writer` per response. Only an I/O error on either side ends the
     /// loop early; malformed messages are answered and skipped.
+    ///
+    /// # Errors
+    ///
+    /// The first error from reading `reader` or writing to `writer`.
     pub fn serve<R: BufRead, W: Write>(&mut self, mut reader: R, mut writer: W) -> io::Result<()> {
         let mut line = Vec::new();
         loop {
@@ -76,7 +84,7 @@ impl Server {
             // Batches were part of the 2025-03-26 revision only; answering
             // them costs nothing and keeps such clients working.
             Value::Array(batch) if batch.is_empty() => Some(error(
-                Value::Null,
+                &Value::Null,
                 INVALID_REQUEST,
                 "Invalid Request: empty batch",
             )),
@@ -95,7 +103,7 @@ impl Server {
     fn handle_message(&mut self, message: Value) -> Option<Value> {
         let Value::Object(mut message) = message else {
             return Some(error(
-                Value::Null,
+                &Value::Null,
                 INVALID_REQUEST,
                 "Invalid Request: message is not a JSON object",
             ));
@@ -105,7 +113,7 @@ impl Server {
             Some(id @ (Value::String(_) | Value::Number(_) | Value::Null)) => Some(id),
             Some(_) => {
                 return Some(error(
-                    Value::Null,
+                    &Value::Null,
                     INVALID_REQUEST,
                     "Invalid Request: id must be a string or a number",
                 ))
@@ -117,7 +125,7 @@ impl Server {
             None if message.contains_key("result") || message.contains_key("error") => return None,
             _ => {
                 return Some(error(
-                    id.unwrap_or(Value::Null),
+                    &id.unwrap_or(Value::Null),
                     INVALID_REQUEST,
                     "Invalid Request: method must be a string",
                 ))
@@ -128,7 +136,7 @@ impl Server {
         let params = message.remove("params").unwrap_or(Value::Null);
         Some(match self.dispatch(&method, params) {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err((code, message)) => error(id, code, &message),
+            Err((code, message)) => error(&id, code, &message),
         })
     }
 
@@ -167,6 +175,10 @@ impl Server {
         // tool call must not be able to take the session down if one does.
         let state = &mut self.state;
         let outcome = catch_unwind(AssertUnwindSafe(|| tools::call(state, &name, &arguments)));
+        #[expect(
+            clippy::print_stderr,
+            reason = "stdout carries the protocol, so stderr is the server's only log"
+        )]
         let outcome = outcome.unwrap_or_else(|_| {
             self.state.forget();
             eprintln!("buzzard mcp: internal error in {name}");
@@ -211,12 +223,12 @@ fn initialize(params: &Value) -> Value {
     })
 }
 
-fn error(id: Value, code: i64, message: &str) -> Value {
+fn error(id: &Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
 fn parse_error(reason: &str) -> String {
-    error(Value::Null, PARSE_ERROR, &format!("Parse error: {reason}")).to_string()
+    error(&Value::Null, PARSE_ERROR, &format!("Parse error: {reason}")).to_string()
 }
 
 enum Line {
@@ -291,7 +303,8 @@ mod tests {
                 Some(b"last without newline".to_vec()),
             ]
         );
-        assert!(lines(b"").is_empty());
+        let empty = lines(b"");
+        assert!(empty.is_empty(), "expected nothing, got {empty:?}");
     }
 
     #[test]

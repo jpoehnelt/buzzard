@@ -26,21 +26,35 @@ const RESOURCE_ENTRY_SIZE: usize = 20;
 /// One resource (a "section" of a block type) borrowed from the file bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resource<'a> {
+    /// Block type, e.g. `LVSR` or `BDHb`.
     pub ty: FourCc,
+    /// Resource id, which tells apart several resources of one type.
     pub id: i32,
+    /// Name from the name table, if the entry has one.
     pub name: Option<String>,
+    /// Payload, without its `u32` size prefix.
     pub data: &'a [u8],
 }
 
 /// A parsed RSRC container. Resource payloads borrow from the input buffer.
 #[derive(Debug, Clone)]
 pub struct RsrcFile<'a> {
+    /// The header at offset 0, which parsing checks against its copy in the
+    /// info section.
     pub header: RsrcHeader,
     resources: Vec<Resource<'a>>,
 }
 
 impl<'a> RsrcFile<'a> {
     /// Parse the container directory. Payloads are not copied or interpreted.
+    ///
+    /// # Errors
+    ///
+    /// Any error of [`RsrcHeader::parse`] or [`RsrcHeader::validate`];
+    /// [`RsrcError::HeaderMismatch`] if the copy of the header in the info
+    /// section differs; and [`RsrcError::OutOfBounds`] if a directory list,
+    /// name or payload lies outside `bytes` or there are more directory
+    /// entries than the info section has room for.
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let header = RsrcHeader::parse(bytes)?;
         header.validate(bytes.len())?;
@@ -84,7 +98,7 @@ impl<'a> RsrcFile<'a> {
                 ));
             }
             for _ in 0..entry_count {
-                let id = e.u32()? as i32;
+                let id = e.u32()?.cast_signed();
                 let name_offset = e.u32()?;
                 e.u32()?;
                 let data_offset = e.u32()?;
@@ -179,6 +193,10 @@ mod tests {
     use super::*;
     use crate::builder::RsrcBuilder;
 
+    fn u32_of(n: usize) -> u32 {
+        u32::try_from(n).expect("test offsets and counts fit in a u32")
+    }
+
     /// Many type entries that all point at one entry list must not multiply
     /// into more resources than the directory has room for.
     #[test]
@@ -189,13 +207,13 @@ mod tests {
         let lists_at = 4 + TYPES * TYPE_ENTRY_SIZE;
         let mut info = vec![0u8; header_len];
         info.extend_from_slice(&[0; 12]);
-        info.extend_from_slice(&((header_len + 20) as u32).to_be_bytes());
+        info.extend_from_slice(&u32_of(header_len + 20).to_be_bytes());
         info.extend_from_slice(&0u32.to_be_bytes());
-        info.extend_from_slice(&((TYPES - 1) as u32).to_be_bytes());
+        info.extend_from_slice(&u32_of(TYPES - 1).to_be_bytes());
         for _ in 0..TYPES {
             info.extend_from_slice(b"AAAA");
-            info.extend_from_slice(&((ENTRIES - 1) as u32).to_be_bytes());
-            info.extend_from_slice(&(lists_at as u32).to_be_bytes());
+            info.extend_from_slice(&u32_of(ENTRIES - 1).to_be_bytes());
+            info.extend_from_slice(&u32_of(lists_at).to_be_bytes());
         }
         for _ in 0..ENTRIES {
             info.extend_from_slice(&0u32.to_be_bytes());
@@ -207,10 +225,10 @@ mod tests {
             format_version: crate::header::FORMAT_VERSION,
             file_type: crate::header::file_type::VI,
             creator: FourCc::new(b"LBVW"),
-            info_offset: (header_len + data.len()) as u32,
-            info_size: info.len() as u32,
-            data_offset: header_len as u32,
-            data_size: data.len() as u32,
+            info_offset: u32_of(header_len + data.len()),
+            info_size: u32_of(info.len()),
+            data_offset: u32_of(header_len),
+            data_size: u32_of(data.len()),
         };
         info[..header_len].copy_from_slice(&header.to_bytes());
         let mut bytes = header.to_bytes().to_vec();
@@ -232,7 +250,7 @@ mod tests {
     fn accepts_a_full_directory() {
         let mut builder = RsrcBuilder::default();
         for i in 0..300 {
-            builder = builder.resource(b"DATA", i, None, vec![i as u8]);
+            builder = builder.resource(b"DATA", i, None, vec![i.to_le_bytes()[0]]);
         }
         let bytes = builder.build();
         assert_eq!(RsrcFile::parse(&bytes).unwrap().resources().len(), 300);

@@ -10,12 +10,21 @@ use buzzard_rsrc::{BlockDiagram, DataType, Direction, Node, RefKind, Terminal};
 /// What a dataflow check found in one file.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Finding {
-    /// An error cluster output that is wired to nothing. `places` counts
-    /// how many nodes with the same description have the problem.
-    UnwiredError { node: String, places: usize },
+    /// An error cluster output that is wired to nothing.
+    UnwiredError {
+        /// The node, as worded by [`describe`].
+        node: String,
+        /// How many nodes with the same description have the problem.
+        places: usize,
+    },
     /// A reference that is created and then never reaches anything that
     /// could close it.
-    UnclosedReference { node: String, kind: RefKind },
+    UnclosedReference {
+        /// The node that creates the reference, as worded by [`describe`].
+        node: String,
+        /// What the reference refers to.
+        kind: RefKind,
+    },
 }
 
 /// Node classes that behave like a call: inputs in, outputs out, no nested
@@ -321,18 +330,18 @@ mod tests {
 
     /// Build a diagram and mark terminals as wired according to the wires.
     fn diagram(mut nodes: Vec<Node>, wires: &[(i32, &[i32])]) -> BlockDiagram {
-        let wired: HashSet<i32> = wires
+        let connected: HashSet<i32> = wires
             .iter()
             .flat_map(|(source, sinks)| std::iter::once(*source).chain(sinks.iter().copied()))
             .collect();
         for terminal in nodes.iter_mut().flat_map(|n| &mut n.terminals) {
-            terminal.wired = wired.contains(&terminal.uid);
+            terminal.wired = connected.contains(&terminal.uid);
         }
         let wires = wires
             .iter()
-            .enumerate()
-            .map(|(i, (source, sinks))| Wire {
-                uid: 900 + i as i32,
+            .zip(900..)
+            .map(|((source, sinks), uid)| Wire {
+                uid,
                 source: *source,
                 sinks: sinks.to_vec(),
             })

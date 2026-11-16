@@ -15,13 +15,15 @@ fn pylavi(name: &str) -> PathBuf {
 
 fn revisions(stem: &str) -> (Inspection, Inspection) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diff");
-    let load = |side: &str| Inspection::from_path(&dir.join(format!("{stem}.{side}.vi"))).unwrap();
+    let load = |side: &str| {
+        Inspection::from_path(&dir.join(format!("{stem}.{side}.vi"))).expect("read the revision")
+    };
     (load("old"), load("new"))
 }
 
 fn text(old: &str, new: &str) -> String {
-    let old = Inspection::from_path(&pylavi(old)).unwrap();
-    let new = Inspection::from_path(&pylavi(new)).unwrap();
+    let old = Inspection::from_path(&pylavi(old)).expect("read the old fixture");
+    let new = Inspection::from_path(&pylavi(new)).expect("read the new fixture");
     to_text(&diff(Some(&old), Some(&new), DiffOptions::default()))
 }
 
@@ -152,7 +154,11 @@ fn consecutive_revisions_of_a_vi_tree() {
     );
     let ignoring = diff(Some(&old), Some(&new), DiffOptions { ignore_moves: true });
     assert_eq!(ignoring.summary.moves_ignored, 2);
-    assert!(ignoring.nodes.moved.is_empty());
+    assert!(
+        ignoring.nodes.moved.is_empty(),
+        "expected nothing, got {:?}",
+        ignoring.nodes.moved
+    );
     assert_eq!(ignoring.nodes.added, result.nodes.added);
     assert_eq!(ignoring.wires, result.wires);
 }
@@ -182,8 +188,8 @@ fn every_fixture() -> Vec<PathBuf> {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/diff"),
     ];
     while let Some(dir) = dirs.pop() {
-        for entry in fs::read_dir(dir).unwrap() {
-            let path = entry.unwrap().path();
+        for entry in fs::read_dir(dir).expect("list the fixture dir") {
+            let path = entry.expect("read a fixture dir entry").path();
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().is_some_and(|e| e == "vi") {

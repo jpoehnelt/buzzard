@@ -15,11 +15,11 @@ fn run(args: &[&str], dir: &std::path::Path) -> (i32, String, String) {
         .args(args)
         .current_dir(dir)
         .output()
-        .unwrap();
+        .expect("run the buzzard binary");
     (
-        status.code().unwrap(),
-        String::from_utf8(stdout).unwrap(),
-        String::from_utf8(stderr).unwrap(),
+        status.code().expect("buzzard exits with a status code"),
+        String::from_utf8(stdout).expect("stdout is UTF-8"),
+        String::from_utf8(stderr).expect("stderr is UTF-8"),
     )
 }
 
@@ -224,16 +224,19 @@ fn run_with_full_stdout(args: &[&str], dir: &std::path::Path) -> (i32, String) {
     let full = std::fs::File::options()
         .write(true)
         .open("/dev/full")
-        .unwrap();
+        .expect("open /dev/full");
     let output = Command::new(BIN)
         .args(args)
         .current_dir(dir)
         .stdout(full)
         .output()
-        .unwrap();
+        .expect("run the buzzard binary");
     (
-        output.status.code().unwrap(),
-        String::from_utf8(output.stderr).unwrap(),
+        output
+            .status
+            .code()
+            .expect("buzzard exits with a status code"),
+        String::from_utf8(output.stderr).expect("stderr is UTF-8"),
     )
 }
 

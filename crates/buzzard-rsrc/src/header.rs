@@ -28,6 +28,7 @@ pub mod file_type {
     pub const LIBRARY: FourCc = FourCc::new(b"LVAR");
 }
 
+/// The header found at offset 0 and again at the start of the info section.
 #[derive(BinRead, BinWrite, Debug, Clone, PartialEq, Eq)]
 #[brw(big, magic = b"RSRC\r\n")]
 pub struct RsrcHeader {
@@ -43,14 +44,27 @@ pub struct RsrcHeader {
     pub creator: FourCc,
     /// Offset of the info section (second header + resource directory).
     pub info_offset: u32,
+    /// Size of the info section in bytes.
     pub info_size: u32,
     /// Offset of the data section holding the resource payloads.
     pub data_offset: u32,
+    /// Size of the data section in bytes.
     pub data_size: u32,
 }
 
 impl RsrcHeader {
     /// Parse a header from the first [`HEADER_SIZE`] bytes of `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// [`RsrcError::TooSmall`] if `bytes` is shorter than [`HEADER_SIZE`],
+    /// [`RsrcError::BadSignature`] if it does not start with `RSRC\r\n`, and
+    /// [`RsrcError::UnsupportedVersion`] if the format version is not
+    /// [`FORMAT_VERSION`].
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the `expect` runs after the length and signature checks, so the fixed-size read cannot fail"
+    )]
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < HEADER_SIZE {
             return Err(RsrcError::TooSmall(bytes.len()));
@@ -67,12 +81,20 @@ impl RsrcHeader {
     }
 
     /// Check that both sections lie within a file of `file_len` bytes.
+    ///
+    /// # Errors
+    ///
+    /// [`RsrcError::OutOfBounds`] if either section ends past `file_len`.
     pub fn validate(&self, file_len: usize) -> Result<()> {
         check_range("info section", self.info_offset, self.info_size, file_len)?;
         check_range("data section", self.data_offset, self.data_size, file_len)
     }
 
     /// Serialize the header to its 32-byte on-disk form.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "writing a fixed-size header into a `Vec` cannot fail and always yields `HEADER_SIZE` bytes"
+    )]
     pub fn to_bytes(&self) -> [u8; HEADER_SIZE] {
         let mut cursor = Cursor::new(Vec::with_capacity(HEADER_SIZE));
         self.write(&mut cursor)

@@ -1,5 +1,6 @@
 //! End-to-end rule tests over synthetic workspaces written to a temp dir.
 
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -20,7 +21,7 @@ impl TempDir {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("buzzard-lint-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(&dir).expect("create the temp dir");
         Self(dir)
     }
 
@@ -58,7 +59,7 @@ impl TempDir {
     fn edges(&self, graph: &DependencyGraph) -> Vec<String> {
         let rel = |p: &Path| {
             p.strip_prefix(&self.0)
-                .unwrap()
+                .expect("graph paths are under the temp dir")
                 .to_string_lossy()
                 .replace('\\', "/")
         };
@@ -72,18 +73,23 @@ impl TempDir {
     /// This directory spelled relative to the current directory.
     #[cfg(unix)]
     fn relative_spelling(&self) -> PathBuf {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = std::env::current_dir().expect("read the current dir");
         let mut out = PathBuf::new();
         for _ in cwd.components().skip(1) {
             out.push("..");
         }
-        out.join(self.0.strip_prefix("/").unwrap())
+        out.join(
+            self.0
+                .strip_prefix("/")
+                .expect("the temp dir is an absolute path"),
+        )
     }
 
     fn write(&self, rel: &str, bytes: Vec<u8>) {
         let path = self.0.join(rel);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, bytes).unwrap();
+        let parent = path.parent().expect("a joined path has a parent");
+        fs::create_dir_all(parent).expect("create the parent dir");
+        fs::write(path, bytes).expect("write the file");
     }
 
     fn check(&self) -> Vec<(String, &'static str, String)> {
@@ -93,7 +99,7 @@ impl TempDir {
                 let rel = d
                     .path
                     .strip_prefix(&self.0)
-                    .unwrap()
+                    .expect("diagnostics are for files under the temp dir")
                     .to_string_lossy()
                     .replace('\\', "/");
                 (rel, d.code, d.message)
@@ -390,7 +396,7 @@ fn graph_answers_callers_and_callees() {
     );
     assert_eq!(names(graph.callees(&dir.0.join("main.vi"))), ["util.vi"]);
     assert_eq!((graph.file_count(), graph.edge_count()), (4, 3));
-    assert!(graph.cycles().is_empty());
+    assert_none(&graph.cycles());
 }
 
 #[test]
@@ -402,7 +408,7 @@ fn output_is_deterministic_and_ignores_apply() {
         dir.vi(&format!("d{}/f{i}.vi", i % 4), version, &words, &[]);
     }
     let first = dir.diagnostics();
-    assert!(!first.is_empty());
+    assert!(!first.is_empty(), "the workspace is built to have problems");
     for _ in 0..5 {
         assert_eq!(dir.diagnostics(), first);
     }
@@ -464,7 +470,7 @@ fn sarif_output_is_well_formed() {
     let results = run["results"].as_array().unwrap();
     assert_eq!(results.len(), 3);
     for result in results {
-        let index = result["ruleIndex"].as_u64().unwrap() as usize;
+        let index = usize::try_from(result["ruleIndex"].as_u64().unwrap()).unwrap();
         assert_eq!(
             run["tool"]["driver"]["rules"][index]["id"],
             result["ruleId"]
@@ -472,7 +478,7 @@ fn sarif_output_is_well_formed() {
         let uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
             .as_str()
             .unwrap();
-        assert!(uri.ends_with(".vi") && !uri.contains('\\'));
+        assert!(Path::new(uri).extension().is_some_and(|e| e == "vi") && !uri.contains('\\'));
     }
     let cycle = results.iter().find(|r| r["ruleId"] == "BZ005").unwrap();
     assert_eq!(cycle["level"], "error");
@@ -490,11 +496,12 @@ fn project_xml(root: &str, members: &[&str], extra: &str) -> Vec<u8> {
             Some("lvlib") => "Library",
             _ => "VI",
         };
-        xml.push_str(&format!(
-            "\t<Item Name=\"{member}\" Type=\"{item_type}\" URL=\"../{member}\"/>\n"
-        ));
+        let _ = writeln!(
+            xml,
+            "\t<Item Name=\"{member}\" Type=\"{item_type}\" URL=\"../{member}\"/>"
+        );
     }
-    xml.push_str(&format!("</{root}>\n"));
+    let _ = writeln!(xml, "</{root}>");
     xml.into_bytes()
 }
 
@@ -508,17 +515,28 @@ fn parent_property(components: &[&str]) -> String {
             ..LvPath::sibling("x")
         }
     };
-    let name = *components.last().unwrap();
+    let name = *components.last().expect("a parent link has components");
     let text = encode_parent_link(V23, &[name], &link)
         .replace('&', "&amp;")
         .replace('<', "&lt;");
     format!("\t<Property Name=\"NI.LVClass.ParentClassLinkInfo\" Type=\"Bin\">{text}</Property>\n")
 }
 
-fn file_names(paths: Vec<&Path>) -> Vec<String> {
+/// Fail with the unexpected items, which `assert!(v.is_empty())` would hide.
+#[track_caller]
+fn assert_none<T: std::fmt::Debug>(items: &[T]) {
+    assert!(items.is_empty(), "expected nothing, got {items:?}");
+}
+
+fn file_names(paths: &[&Path]) -> Vec<String> {
     paths
         .iter()
-        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .map(|p| {
+            p.file_name()
+                .expect("workspace paths name files")
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect()
 }
 
@@ -610,8 +628,9 @@ fn bz006_missing_member() {
     assert_eq!(rule.name, "missing-member");
 }
 
-#[test]
-fn graph_answers_membership_and_inheritance() {
+/// A class hierarchy rooted at `Base`, with a library and a project that
+/// list some of its files.
+fn class_hierarchy() -> TempDir {
     let dir = TempDir::new("graph-project");
     dir.vi("Base/Init.vi", V23, &CLEAN, &[]);
     dir.vi("Base/Run.vi", V23, &CLEAN, &["Init.vi"]);
@@ -658,6 +677,12 @@ fn graph_answers_membership_and_inheritance() {
         </Item>
     </Project>"#;
     dir.write("App.lvproj", project.as_bytes().to_vec());
+    dir
+}
+
+#[test]
+fn graph_answers_membership_and_inheritance() {
+    let dir = class_hierarchy();
     assert_eq!(dir.check(), []);
 
     let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
@@ -665,24 +690,24 @@ fn graph_answers_membership_and_inheritance() {
     let at = |rel: &str| dir.0.join(rel);
 
     assert_eq!(
-        file_names(graph.members(&at("Base/Base.lvclass"))),
+        file_names(&graph.members(&at("Base/Base.lvclass"))),
         ["Init.vi", "Run.vi"]
     );
     assert_eq!(
-        file_names(graph.members(&at("App.lvproj"))),
+        file_names(&graph.members(&at("App.lvproj"))),
         ["Alpha.lvclass", "Kit.lvlib", "Zeta.lvclass"]
     );
     assert_eq!(
-        file_names(graph.owners(&at("Base/Init.vi"))),
+        file_names(&graph.owners(&at("Base/Init.vi"))),
         ["Base.lvclass", "Kit.lvlib"]
     );
     assert_eq!(
-        file_names(graph.owners(&at("Base/Base.lvclass"))),
+        file_names(&graph.owners(&at("Base/Base.lvclass"))),
         ["Kit.lvlib"]
     );
-    assert!(graph.owners(&at("App.lvproj")).is_empty());
-    assert!(graph.members(&at("Base/Init.vi")).is_empty());
-    assert!(graph.members(&at("missing.lvlib")).is_empty());
+    assert_none(&graph.owners(&at("App.lvproj")));
+    assert_none(&graph.members(&at("Base/Init.vi")));
+    assert_none(&graph.members(&at("missing.lvlib")));
 
     assert_eq!(
         graph.parent_class(&at("Zeta/Zeta.lvclass")),
@@ -699,20 +724,20 @@ fn graph_answers_membership_and_inheritance() {
     assert_eq!(graph.parent_class(&at("Base/Base.lvclass")), None);
     assert_eq!(graph.parent_class(&at("Base/Kit.lvlib")), None);
     assert_eq!(
-        file_names(graph.child_classes(&at("Base/Base.lvclass"))),
+        file_names(&graph.child_classes(&at("Base/Base.lvclass"))),
         ["Alpha.lvclass", "Installed.lvclass", "Zeta.lvclass"]
     );
     assert_eq!(
-        file_names(graph.child_classes(&at("Alpha/Alpha.lvclass"))),
+        file_names(&graph.child_classes(&at("Alpha/Alpha.lvclass"))),
         ["Leaf.lvclass"]
     );
 
     // Callers and callees keep meaning "uses": neither membership nor
     // inheritance shows up there.
-    assert_eq!(file_names(graph.callers(&at("Base/Init.vi"))), ["Run.vi"]);
-    assert!(graph.callers(&at("Base/Base.lvclass")).is_empty());
-    assert!(graph.callees(&at("Zeta/Zeta.lvclass")).is_empty());
-    assert!(graph.callees(&at("App.lvproj")).is_empty());
+    assert_eq!(file_names(&graph.callers(&at("Base/Init.vi"))), ["Run.vi"]);
+    assert_none(&graph.callers(&at("Base/Base.lvclass")));
+    assert_none(&graph.callees(&at("Zeta/Zeta.lvclass")));
+    assert_none(&graph.callees(&at("App.lvproj")));
 
     let count = |kind| graph.edges().iter().filter(|e| e.2 == kind).count();
     assert_eq!(
@@ -743,7 +768,7 @@ fn bz005_membership_is_not_a_cycle_but_inheritance_is() {
     let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
     let graph = DependencyGraph::build(&workspace);
     assert_eq!(
-        file_names(graph.callers(&dir.0.join("Owner/Owner.lvclass"))),
+        file_names(&graph.callers(&dir.0.join("Owner/Owner.lvclass"))),
         ["Method.vi"]
     );
 
@@ -781,7 +806,7 @@ fn project_files_are_scanned_deterministically() {
         };
         dir.write(
             &format!("{folder}/C{i}.lvclass"),
-            project_xml("LVClass", &members[..1 + i % 2], &parent),
+            project_xml("LVClass", &members[..=i % 2], &parent),
         );
     }
     let first = dir.diagnostics();
@@ -825,7 +850,7 @@ fn real_project_fixtures_scan_without_parse_errors() {
     let graph = DependencyGraph::build(&workspace);
     let found = lint(&workspace, &graph, &LintConfig::default());
     // The members were not copied along with the three files.
-    assert!(!found.is_empty());
+    assert!(!found.is_empty(), "the fixture members are missing on disk");
     assert!(found.iter().all(|d| d.code == "BZ006"), "{found:#?}");
 }
 
@@ -848,8 +873,8 @@ fn symbolic_links_never_bind_to_a_workspace_file_of_the_same_name() {
     dir.linked("other.vi", &[("Open.vi", not_a_path)]);
 
     let graph = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
-    assert!(graph.cycles().is_empty());
+    assert_none(&dir.edges(&graph));
+    assert_none(&graph.cycles());
     assert_eq!(dir.check(), []);
 }
 
@@ -868,7 +893,7 @@ fn stale_links_fall_back_to_a_unique_name_but_never_to_the_file_itself() {
     dir.linked("c.vi", &[("c.vi", own)]);
     let gone = LvPath {
         kind: PathKind::Relative,
-        components: vec!["".into(), "elsewhere".into(), "d.vi".into()],
+        components: vec![String::new(), "elsewhere".into(), "d.vi".into()],
     };
     dir.linked("d.vi", &[("d.vi", gone)]);
 
@@ -877,7 +902,7 @@ fn stale_links_fall_back_to_a_unique_name_but_never_to_the_file_itself() {
         dir.edges(&graph),
         ["a.vi -> lib/util.vi", "b.vi -> lib/util.vi"]
     );
-    assert!(graph.cycles().is_empty());
+    assert_none(&graph.cycles());
     assert!(!dir.check().iter().any(|(_, code, _)| *code == "BZ005"));
 }
 
@@ -999,7 +1024,7 @@ fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
     // A directory component that differs in case.
     let nested = LvPath {
         kind: PathKind::Relative,
-        components: vec!["".into(), "Lib".into(), "Deep.vi".into()],
+        components: vec![String::new(), "Lib".into(), "Deep.vi".into()],
     };
     dir.linked("b.vi", &[("Deep.vi", nested)]);
     dir.linked("lib/deep.vi", &[]);
@@ -1008,8 +1033,8 @@ fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
     dir.linked("c.vi", &[("DEEP.VI", stale)]);
 
     let sensitive = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&sensitive), [] as [&str; 0]);
-    assert!(sensitive.cycles().is_empty());
+    assert_none(&dir.edges(&sensitive));
+    assert_none(&sensitive.cycles());
 
     let insensitive = dir.graph(CaseSensitivity::Insensitive);
     assert_eq!(
@@ -1047,7 +1072,7 @@ fn case_insensitive_lookup_prefers_exact_and_refuses_ambiguity() {
     }
 }
 
-/// `テスト.vi` as Japanese LabVIEW stores it: Shift-JIS bytes.
+/// `テスト.vi` as the editor stores it on a Japanese system: Shift-JIS bytes.
 const SJIS_NAME: &[u8] = b"\x83\x65\x83\x58\x83\x67.vi";
 
 fn byte_links(links: &[buzzard_rsrc::builder::ByteLink<'_>]) -> Vec<u8> {
@@ -1100,7 +1125,7 @@ fn links_stored_in_a_legacy_code_page_resolve() {
         ]
     );
     let callers = graph.callers(&dir.0.join("テスト.vi"));
-    assert_eq!(file_names(callers), ["main.vi", "stale.vi"]);
+    assert_eq!(file_names(&callers), ["main.vi", "stale.vi"]);
 }
 
 #[test]
@@ -1118,7 +1143,7 @@ fn code_page_recovery_needs_a_single_candidate() {
     // With a file for each reading there is no telling which one is meant.
     dir.linked("Дг.vi", &[]);
     let graph = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
+    assert_none(&dir.edges(&graph));
 
     // A name that is right as stored is taken as stored, whatever else
     // its bytes could mean.
@@ -1132,5 +1157,5 @@ fn code_page_recovery_needs_a_single_candidate() {
     dir.linked("テスト.vi", &[]);
     dir.linked("main.vi", &[("missing.vi", LvPath::sibling("missing.vi"))]);
     let graph = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
+    assert_none(&dir.edges(&graph));
 }

@@ -38,11 +38,15 @@ const MAX_NAME_PARTS: u32 = 32;
 
 const PARENT_LINK_PROPERTY: &str = "NI.LVClass.ParentClassLinkInfo";
 
+/// Which of the three project-level file types a file is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectKind {
+    /// A `.lvproj` project.
     Project,
+    /// A `.lvlib` library.
     Library,
+    /// A `.lvclass` class.
     Class,
 }
 
@@ -61,6 +65,7 @@ impl ProjectKind {
         }
     }
 
+    /// Name shown in summaries, e.g. `Library`.
     pub fn label(self) -> &'static str {
         match self {
             ProjectKind::Project => "Project",
@@ -78,6 +83,7 @@ pub fn is_project_file(path: &Path) -> bool {
 /// One `Item` element that has a `URL` attribute.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct Member {
+    /// The `Name` attribute, e.g. `Run.vi`.
     pub name: String,
     /// The `Type` attribute, e.g. `VI`, `LVClass`, `Library`, `Document`.
     pub item_type: String,
@@ -106,8 +112,11 @@ pub struct ParentClass {
     pub path: Option<PathBuf>,
 }
 
+/// A parsed `.lvproj`, `.lvlib` or `.lvclass` file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectFile {
+    /// Which kind of file this is, from its extension rather than its root
+    /// element.
     pub kind: ProjectKind,
     /// File name, e.g. `Motor.lvclass`.
     pub name: String,
@@ -116,11 +125,18 @@ pub struct ProjectFile {
     pub lv_version: Option<String>,
     /// Every item with a URL, in document order.
     pub members: Vec<Member>,
+    /// The parent named by `NI.LVClass.ParentClassLinkInfo`. `None` when
+    /// the file names no parent or the stored value cannot be decoded.
     pub parent_class: Option<ParentClass>,
 }
 
 impl ProjectFile {
     /// Read and parse one file. The kind comes from the extension.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason as text when the file cannot be read, is larger
+    /// than [`MAX_FILE_BYTES`], or does not parse (see [`ProjectFile::parse`]).
     pub fn from_path(path: &Path) -> Result<Self, String> {
         let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
         if size > MAX_FILE_BYTES {
@@ -134,18 +150,28 @@ impl ProjectFile {
 
     /// Parse file contents that may not be valid UTF-8. Older editor
     /// versions wrote the system code page; those bytes map through Latin-1.
+    ///
+    /// # Errors
+    ///
+    /// As for [`ProjectFile::parse`].
     pub fn parse_bytes(path: &Path, bytes: &[u8]) -> Result<Self, String> {
-        match std::str::from_utf8(bytes) {
-            Ok(text) => Self::parse(path, text),
-            Err(_) => {
-                let text: String = bytes.iter().map(|&b| b as char).collect();
-                Self::parse(path, &text)
-            }
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            Self::parse(path, text)
+        } else {
+            let text: String = bytes.iter().map(|&b| b as char).collect();
+            Self::parse(path, &text)
         }
     }
 
     /// Parse XML text. `path` is where the file lives; member URLs and the
     /// parent class link are resolved against it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason as text when `path` does not have one of the three
+    /// extensions; when the text is not well-formed XML, has a DTD, or has
+    /// more than [`MAX_NODES`] nodes; or when the root element is not
+    /// `Project`, `Library` or `LVClass`.
     pub fn parse(path: &Path, text: &str) -> Result<Self, String> {
         let kind = ProjectKind::from_path(path)
             .ok_or_else(|| "not a .lvproj, .lvlib or .lvclass file".to_owned())?;
@@ -201,7 +227,7 @@ fn format_version(raw: &str) -> String {
 
 fn node_text(node: Node<'_, '_>) -> String {
     node.children()
-        .filter(|n| n.is_text())
+        .filter(Node::is_text)
         .filter_map(|n| n.text())
         .collect()
 }
@@ -297,6 +323,10 @@ pub fn decode_bin(text: &str) -> Option<Vec<u8>> {
         bits += 6;
         if bits >= 8 {
             bits -= 8;
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "`acc` is below `1 << (bits + 8)` here, so the shifted value fits in a byte"
+            )]
             out.push((acc >> bits) as u8);
             acc &= (1 << bits) - 1;
         }
@@ -387,34 +417,44 @@ pub fn encode_bin(bytes: &[u8]) -> String {
 
 /// Append a Pascal string, truncated to the 255 bytes its length can hold.
 fn push_pstr(out: &mut Vec<u8>, text: &str) {
-    let bytes = &text.as_bytes()[..text.len().min(255)];
-    out.push(bytes.len() as u8);
-    out.extend_from_slice(bytes);
+    let len = u8::try_from(text.len()).unwrap_or(u8::MAX);
+    out.push(len);
+    out.extend_from_slice(&text.as_bytes()[..usize::from(len)]);
 }
 
 /// Build the text of a `ParentClassLinkInfo` property. Used to build
 /// fixtures; the output has the layout [`parse_parent_link`] reads.
+///
+/// # Panics
+///
+/// If a count or length does not fit its field: more than `u32::MAX` name
+/// parts, more than `u16::MAX` path components, or 4 GiB or more of data.
 pub fn encode_parent_link(version: u32, qualified_name: &[&str], link: &LvPath) -> String {
-    let mut data = (qualified_name.len() as u32).to_be_bytes().to_vec();
+    let part_count = u32::try_from(qualified_name.len()).expect("name part count fits in a u32");
+    let mut data = part_count.to_be_bytes().to_vec();
     for part in qualified_name {
         push_pstr(&mut data, part);
     }
     if data.len() % 2 == 1 {
         data.push(0);
     }
+    let component_count =
+        u16::try_from(link.components.len()).expect("path component count fits in a u16");
     let mut body = Vec::new();
     body.extend_from_slice(&u16::from(link.kind == buzzard_rsrc::PathKind::Relative).to_be_bytes());
-    body.extend_from_slice(&(link.components.len() as u16).to_be_bytes());
+    body.extend_from_slice(&component_count.to_be_bytes());
     for component in &link.components {
         push_pstr(&mut body, component);
     }
+    let body_len = u32::try_from(body.len()).expect("path length fits in a u32");
     data.extend_from_slice(b"PTH0");
-    data.extend_from_slice(&(body.len() as u32).to_be_bytes());
+    data.extend_from_slice(&body_len.to_be_bytes());
     data.extend(body);
 
+    let data_len = u32::try_from(data.len()).expect("array length fits in a u32");
     let mut out = version.to_be_bytes().to_vec();
     out.extend_from_slice(&PARENT_LINK_TYPES);
-    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(&data_len.to_be_bytes());
     out.extend(data);
     out.extend_from_slice(&[0; 4]);
     encode_bin(&out)

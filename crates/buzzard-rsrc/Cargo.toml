@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords = ["rsrc", "parser", "binary-format", "resource-fork"]
+categories = ["parser-implementations", "encoding"]
 
 [dependencies]
 binrw.workspace = true
@@ -15,3 +18,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,6 @@
+# A panic is how a test fails, so tests may unwrap and print freely.
+allow-unwrap-in-tests = true
+allow-print-in-tests = true
+# Product and protocol names that clippy::doc_markdown would otherwise want in
+# backticks. ".." keeps clippy's default list.
+doc-valid-idents = ["ActiveX", "DataSocket", "IrDA", "LabVIEW", "LVKit", ".."]

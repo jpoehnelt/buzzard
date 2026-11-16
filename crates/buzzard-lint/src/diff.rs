@@ -65,6 +65,7 @@ use crate::dataflow::{describe, function_name};
 use crate::render::label;
 use crate::Inspection;
 
+/// What [`diff`] leaves out of the report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DiffOptions {
     /// Leave out nodes that only changed position or size.
@@ -75,88 +76,133 @@ pub struct DiffOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchKind {
+    /// Same object id and same class.
     Uid,
+    /// Same class, linked name, function id, terminal types and nesting
+    /// path, for a node whose id did not match.
     Signature,
 }
 
+/// How many entries each list of a [`ViDiff`] holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Summary {
+    /// Settings that differ.
     pub settings_changed: usize,
+    /// Dependencies only in the new revision.
     pub dependencies_added: usize,
+    /// Dependencies only in the old revision.
     pub dependencies_removed: usize,
+    /// Nodes only in the new revision.
     pub nodes_added: usize,
+    /// Nodes only in the old revision.
     pub nodes_removed: usize,
+    /// Matched nodes that changed in more than position or size.
     pub nodes_changed: usize,
+    /// Matched nodes reported as moved or resized.
     pub nodes_moved: usize,
     /// Moved nodes left out because of [`DiffOptions::ignore_moves`].
     pub moves_ignored: usize,
+    /// Connections only in the new revision.
     pub wires_added: usize,
+    /// Connections only in the old revision.
     pub wires_removed: usize,
+    /// Connections that moved to another terminal of the same nodes.
     pub wires_changed: usize,
 }
 
 /// One setting of the file that differs, e.g. `automatic error handling`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SettingChange {
+    /// Name of the setting, e.g. `reentrancy`.
     pub setting: String,
+    /// Value in the old revision, e.g. `on`, `off` or `unknown`.
     pub old: String,
+    /// Value in the new revision.
     pub new: String,
 }
 
+/// A linked file. Two links are the same dependency when their paths and
+/// their names are equal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Dependency {
+    /// Where the linked file was when the link was saved.
     pub path: String,
     /// Qualified name of the linked item, parts joined with `:`.
     pub name: String,
 }
 
+/// Dependencies that only one revision has, sorted by path, then name.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct DependencyChanges {
+    /// Only in the new revision.
     pub added: Vec<Dependency>,
+    /// Only in the old revision.
     pub removed: Vec<Dependency>,
 }
 
 /// A node as it is named in the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NodeRef {
+    /// Object id in the revision the node is from.
     pub uid: i32,
+    /// Object class, e.g. `prim` or `iUse`.
     pub class: String,
+    /// What the node is, e.g. ``subVI `Close.vi` `` or `for loop`.
     pub description: String,
     /// Enclosing structures, outermost first; empty at the top level.
     pub location: Vec<String>,
 }
 
+/// A node of both revisions that changed in more than position or size.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NodeChange {
     /// The node in the new revision.
     pub node: NodeRef,
+    /// Object id of the node in the old revision.
     pub old_uid: i32,
+    /// How the two were paired.
     pub matched_by: MatchKind,
+    /// One phrase per difference, e.g. `frames 2 -> 3`.
     pub details: Vec<String>,
 }
 
+/// A node of both revisions whose position or size changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NodeMove {
     /// The node in the new revision.
     pub node: NodeRef,
+    /// Object id of the node in the old revision.
     pub old_uid: i32,
+    /// How the two were paired.
     pub matched_by: MatchKind,
+    /// Bounds in the old revision.
     pub from: Option<Rect>,
+    /// Bounds in the new revision.
     pub to: Option<Rect>,
 }
 
+/// Block diagram nodes that differ, each list sorted by [`NodeRef::text`].
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct NodeChanges {
+    /// Nodes only in the new revision.
     pub added: Vec<NodeRef>,
+    /// Nodes only in the old revision.
     pub removed: Vec<NodeRef>,
+    /// Matched nodes that changed in more than position or size.
     pub changed: Vec<NodeChange>,
+    /// Matched nodes that moved or were resized; empty with
+    /// [`DiffOptions::ignore_moves`].
     pub moved: Vec<NodeMove>,
 }
 
+/// One end of a connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WireEnd {
+    /// Object id of the terminal.
     pub terminal: i32,
-    /// `None` when no node in the diagram owns the terminal.
+    /// The node that owns the terminal, described with its id, e.g.
+    /// ``subVI `Close.vi` #40``. `None` when no node in the diagram owns
+    /// the terminal.
     pub node: Option<String>,
 }
 
@@ -165,7 +211,9 @@ pub struct WireEnd {
 pub struct WireRef {
     /// `None` when the type of the data is not known.
     pub data_type: Option<String>,
+    /// The source end.
     pub from: WireEnd,
+    /// The sink end.
     pub to: WireEnd,
     /// Enclosing structures of the wire, outermost first.
     pub location: Vec<String>,
@@ -177,27 +225,41 @@ pub struct WireRef {
 pub struct WireChange {
     /// The connection in the new revision.
     pub wire: WireRef,
+    /// Source terminal id in the old revision.
     pub old_from_terminal: i32,
+    /// Sink terminal id in the old revision.
     pub old_to_terminal: i32,
 }
 
+/// Wire connections that differ, each list sorted by [`WireRef::text`].
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct WireChanges {
+    /// Connections only in the new revision.
     pub added: Vec<WireRef>,
+    /// Connections only in the old revision.
     pub removed: Vec<WireRef>,
+    /// Connections that moved to another terminal of the same nodes.
     pub changed: Vec<WireChange>,
 }
 
+/// Everything that differs between two revisions of a file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct ViDiff {
+    /// Whether nothing differs. Moves left out by
+    /// [`DiffOptions::ignore_moves`] do not count.
     pub identical: bool,
+    /// How many entries each list holds.
     pub summary: Summary,
     /// Things the reader must know to interpret the rest, e.g. that one
     /// side does not exist.
     pub notes: Vec<String>,
+    /// Settings that differ, always in the same order.
     pub settings: Vec<SettingChange>,
+    /// Links added and removed.
     pub dependencies: DependencyChanges,
+    /// Block diagram nodes added, removed, changed and moved.
     pub nodes: NodeChanges,
+    /// Block diagram connections added, removed and re-attached.
     pub wires: WireChanges,
 }
 
@@ -273,6 +335,7 @@ fn or_none(value: Option<String>) -> String {
 }
 
 fn settings(old: &ViMetadata, new: &ViMetadata) -> Vec<SettingChange> {
+    type Flag = fn(&ViFlags) -> Option<bool>;
     let mut out = Vec::new();
     let mut push = |setting: &str, old: String, new: String| {
         if old != new {
@@ -305,7 +368,6 @@ fn settings(old: &ViMetadata, new: &ViMetadata) -> Vec<SettingChange> {
     );
 
     let flag = |meta: &ViMetadata, get: Flag| on_off(meta.flags.as_ref().and_then(get));
-    type Flag = fn(&ViFlags) -> Option<bool>;
     let flags: [(&str, Flag); 10] = [
         ("compiled code separated", |f| f.separate_compiled_code),
         ("automatic error handling", |f| f.auto_error_handling),
@@ -540,27 +602,27 @@ struct Signature<'a> {
     primitive: Option<u32>,
     terminal_types: Vec<Option<DataType>>,
     /// Interned nesting path, comparable between the two revisions.
-    path: u32,
+    path: usize,
 }
 
 /// Gives equal nesting paths (structure classes and frame indices from the
 /// top level down) the same number on both sides.
 #[derive(Default)]
 struct Paths<'a> {
-    ids: HashMap<(u32, &'a str, usize), u32>,
+    ids: HashMap<(usize, &'a str, usize), usize>,
 }
 
 impl<'a> Paths<'a> {
     /// Path number of every diagram of `flat`. The top level is 0.
-    fn of(&mut self, flat: &Flat<'a>) -> Vec<u32> {
-        let mut out: Vec<u32> = Vec::with_capacity(flat.diagrams.len());
+    fn of(&mut self, flat: &Flat<'a>) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::with_capacity(flat.diagrams.len());
         for diagram in &flat.diagrams {
             let id = match diagram.parent {
                 None => 0,
                 Some((parent, frame)) => {
                     let owner = &flat.nodes[parent];
                     let key = (out[owner.diagram], owner.node.class.as_str(), frame);
-                    let next = self.ids.len() as u32 + 1;
+                    let next = self.ids.len() + 1;
                     *self.ids.entry(key).or_insert(next)
                 }
             };
@@ -580,7 +642,7 @@ fn position(node: &Node) -> (i16, i16, i16, i16, i32) {
     (b.top, b.left, b.bottom, b.right, node.uid)
 }
 
-fn signature<'a>(flat: &FlatNode<'a>, path: u32) -> Signature<'a> {
+fn signature<'a>(flat: &FlatNode<'a>, path: usize) -> Signature<'a> {
     let mut terminal_types: Vec<_> = flat.node.terminals.iter().map(|t| t.data_type).collect();
     terminal_types.sort();
     Signature {
@@ -648,9 +710,9 @@ fn match_nodes<'a>(old: &Flat<'a>, new: &Flat<'a>) -> Vec<(usize, usize, MatchKi
 /// Pair the terminals of two matched nodes: by id, then by data type and
 /// data object class in list order. Yields `(old uid, new uid)`.
 fn match_terminals(old: &Node, new: &Node, mut matched: impl FnMut(i32, i32)) {
+    type Key<'a> = (Option<DataType>, Option<&'a str>);
     let new_uids: HashSet<i32> = new.terminals.iter().map(|t| t.uid).collect();
     let old_uids: HashSet<i32> = old.terminals.iter().map(|t| t.uid).collect();
-    type Key<'a> = (Option<DataType>, Option<&'a str>);
     let mut waiting: HashMap<Key<'_>, Vec<i32>> = HashMap::new();
     for terminal in new.terminals.iter().rev() {
         if !old_uids.contains(&terminal.uid) {
@@ -792,57 +854,7 @@ fn diagrams(
     for &(o, n, matched_by) in &pairs {
         let (old_flat, new_flat) = (&old.nodes[o], &new.nodes[n]);
         let (old_node, new_node) = (old_flat.node, new_flat.node);
-        let mut details = Vec::new();
-        if old_node.name != new_node.name {
-            details.push(format!(
-                "name {} -> {}",
-                quoted(old_node.name.as_deref()),
-                quoted(new_node.name.as_deref())
-            ));
-        }
-        if old_node.primitive != new_node.primitive {
-            // The id stays in the text: two ids can share a name.
-            let id = |p: Option<u32>| match p {
-                None => "none".to_owned(),
-                Some(p) => match buzzard_rsrc::primitive_name(p) {
-                    Some(function) => format!("{p} ({})", function.name),
-                    None => p.to_string(),
-                },
-            };
-            details.push(format!(
-                "function id {} -> {}",
-                id(old_node.primitive),
-                id(new_node.primitive)
-            ));
-        }
-        let delta = terminal_delta(old_node, new_node);
-        if old_node.terminals.len() != new_node.terminals.len() {
-            let mut text = format!(
-                "terminals {} -> {}",
-                old_node.terminals.len(),
-                new_node.terminals.len()
-            );
-            if !delta.is_empty() {
-                let _ = write!(text, " ({delta})");
-            }
-            details.push(text);
-        } else if !delta.is_empty() {
-            details.push(format!("terminal types changed ({delta})"));
-        }
-        if old_node.diagrams.len() != new_node.diagrams.len() {
-            details.push(format!(
-                "frames {} -> {}",
-                old_node.diagrams.len(),
-                new_node.diagrams.len()
-            ));
-        }
-        if same_diagram.get(&old_flat.diagram) != Some(&new_flat.diagram) {
-            details.push(format!(
-                "enclosing structure {} -> {}",
-                place(&old.location(old_flat.diagram)),
-                place(&new.location(new_flat.diagram))
-            ));
-        }
+        let details = node_details(&old, old_flat, &new, new_flat, &same_diagram);
         if !details.is_empty() {
             out.nodes.changed.push(NodeChange {
                 node: new.node_ref(n),
@@ -877,8 +889,109 @@ fn diagrams(
             out.nodes.added.push(new.node_ref(index));
         }
     }
+    wires(
+        &old,
+        &new,
+        &pairs,
+        &terminals,
+        &new_terminals,
+        &mut out.wires,
+    );
 
-    // Wires, as connections between matched terminals.
+    out.nodes.added.sort_by_cached_key(|n| (n.text(), n.uid));
+    out.nodes.removed.sort_by_cached_key(|n| (n.text(), n.uid));
+    out.nodes
+        .changed
+        .sort_by_cached_key(|c| (c.node.text(), c.node.uid, c.old_uid));
+    out.nodes
+        .moved
+        .sort_by_cached_key(|m| (m.node.text(), m.node.uid, m.old_uid));
+    let wire_key = |w: &WireRef| (w.text(), w.from.terminal, w.to.terminal);
+    out.wires.added.sort_by_cached_key(wire_key);
+    out.wires.removed.sort_by_cached_key(wire_key);
+    out.wires.changed.sort_by_cached_key(|c| {
+        let (text, from, to) = wire_key(&c.wire);
+        (text, from, to, c.old_from_terminal, c.old_to_terminal)
+    });
+    moves_ignored
+}
+
+/// What changed about a matched node apart from its bounds, one phrase per
+/// difference. `same_diagram` maps old diagram indices to new ones.
+fn node_details(
+    old: &Flat<'_>,
+    old_flat: &FlatNode<'_>,
+    new: &Flat<'_>,
+    new_flat: &FlatNode<'_>,
+    same_diagram: &HashMap<usize, usize>,
+) -> Vec<String> {
+    let (old_node, new_node) = (old_flat.node, new_flat.node);
+    let mut details = Vec::new();
+    if old_node.name != new_node.name {
+        details.push(format!(
+            "name {} -> {}",
+            quoted(old_node.name.as_deref()),
+            quoted(new_node.name.as_deref())
+        ));
+    }
+    if old_node.primitive != new_node.primitive {
+        // The id stays in the text: two ids can share a name.
+        let id = |p: Option<u32>| match p {
+            None => "none".to_owned(),
+            Some(p) => match buzzard_rsrc::primitive_name(p) {
+                Some(function) => format!("{p} ({})", function.name),
+                None => p.to_string(),
+            },
+        };
+        details.push(format!(
+            "function id {} -> {}",
+            id(old_node.primitive),
+            id(new_node.primitive)
+        ));
+    }
+    let delta = terminal_delta(old_node, new_node);
+    if old_node.terminals.len() != new_node.terminals.len() {
+        let mut text = format!(
+            "terminals {} -> {}",
+            old_node.terminals.len(),
+            new_node.terminals.len()
+        );
+        if !delta.is_empty() {
+            let _ = write!(text, " ({delta})");
+        }
+        details.push(text);
+    } else if !delta.is_empty() {
+        details.push(format!("terminal types changed ({delta})"));
+    }
+    if old_node.diagrams.len() != new_node.diagrams.len() {
+        details.push(format!(
+            "frames {} -> {}",
+            old_node.diagrams.len(),
+            new_node.diagrams.len()
+        ));
+    }
+    if same_diagram.get(&old_flat.diagram) != Some(&new_flat.diagram) {
+        details.push(format!(
+            "enclosing structure {} -> {}",
+            place(&old.location(old_flat.diagram)),
+            place(&new.location(new_flat.diagram))
+        ));
+    }
+    details
+}
+
+/// Compare the wires of the two diagrams as connections between matched
+/// terminals and fill `out`. `terminals` maps old terminal ids to new ones
+/// and `new_terminals` holds the new ids that were matched.
+fn wires(
+    old: &Flat<'_>,
+    new: &Flat<'_>,
+    pairs: &[(usize, usize, MatchKind)],
+    terminals: &HashMap<i32, i32>,
+    new_terminals: &HashSet<i32>,
+    out: &mut WireChanges,
+) {
+    type Between = (usize, usize, Option<String>);
     let old_end = |uid: i32| match terminals.get(&uid) {
         Some(&twin) => End::Both(twin),
         // A terminal no node owns on either side is taken to be the same.
@@ -910,7 +1023,6 @@ fn diagrams(
     // terminal, between the same two nodes and carrying the same type, are
     // one connection that changed terminals.
     let twin: HashMap<usize, usize> = pairs.iter().map(|&(o, n, _)| (o, n)).collect();
-    type Between = (usize, usize, Option<String>);
     let mut rewired: BTreeMap<Between, (Vec<Edge>, Vec<Edge>)> = BTreeMap::new();
     let mut removed: Vec<Edge> = Vec::new();
     for (key, &edge) in &old_edges {
@@ -942,13 +1054,13 @@ fn diagrams(
         };
         match waiting {
             Some(group) => group.1.push(edge),
-            None => out.wires.added.push(new.wire_ref(edge)),
+            None => out.added.push(new.wire_ref(edge)),
         }
     }
     for (_, (olds, news)) in rewired {
         let common = olds.len().min(news.len());
         for (before, after) in olds.iter().zip(&news) {
-            out.wires.changed.push(WireChange {
+            out.changed.push(WireChange {
                 wire: new.wire_ref(*after),
                 old_from_terminal: before.0,
                 old_to_terminal: before.1,
@@ -956,29 +1068,12 @@ fn diagrams(
         }
         removed.extend(&olds[common..]);
         for &edge in &news[common..] {
-            out.wires.added.push(new.wire_ref(edge));
+            out.added.push(new.wire_ref(edge));
         }
     }
     for edge in removed {
-        out.wires.removed.push(old.wire_ref(edge));
+        out.removed.push(old.wire_ref(edge));
     }
-
-    out.nodes.added.sort_by_cached_key(|n| (n.text(), n.uid));
-    out.nodes.removed.sort_by_cached_key(|n| (n.text(), n.uid));
-    out.nodes
-        .changed
-        .sort_by_cached_key(|c| (c.node.text(), c.node.uid, c.old_uid));
-    out.nodes
-        .moved
-        .sort_by_cached_key(|m| (m.node.text(), m.node.uid, m.old_uid));
-    let wire_key = |w: &WireRef| (w.text(), w.from.terminal, w.to.terminal);
-    out.wires.added.sort_by_cached_key(wire_key);
-    out.wires.removed.sort_by_cached_key(wire_key);
-    out.wires.changed.sort_by_cached_key(|c| {
-        let (text, from, to) = wire_key(&c.wire);
-        (text, from, to, c.old_from_terminal, c.old_to_terminal)
-    });
-    moves_ignored
 }
 
 // --------------------------------------------------------------- rendering
@@ -1019,6 +1114,8 @@ impl WireRef {
 }
 
 impl Dependency {
+    /// ``dependency `path` ``, or ``dependency `name` at `path` `` when the
+    /// path does not end in the item name.
     pub fn text(&self) -> String {
         // The name is only worth showing when the path does not end in it.
         let item = self.name.rsplit(':').next().unwrap_or("");

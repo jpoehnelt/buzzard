@@ -14,6 +14,7 @@ edition = "2021"
 rust-version = "1.91"
 license = "MIT"
 repository = "https://github.com/jpoehnelt/buzzard"
+readme = "README.md"
 
 [workspace.dependencies]
 buzzard-rsrc = { path = "crates/buzzard-rsrc", version = "0.1.0" }
@@ -51,6 +52,82 @@ roxmltree = "0.21"
 
 # Recovering link names stored in legacy code pages
 encoding_rs = "0.8"
+
+# Lint policy for every crate; each one opts in with `[lints] workspace = true`.
+# Lints are warnings here so work in progress still builds; CI runs clippy and
+# rustdoc with `-D warnings`. An exception in code uses
+# `#[expect(lint, reason = "...")]`, which fails once it is no longer needed.
+[workspace.lints.rust]
+# The parser must stay safe on hostile input; nothing here needs `unsafe`.
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+meta_variable_misuse = "warn"
+redundant_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.rustdoc]
+missing_crate_level_docs = "warn"
+unescaped_backticks = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Would put `#[must_use]` on nearly every getter and constructor.
+must_use_candidate = "allow"
+# Duplicates come from third-party crates; cargo-deny reports them instead.
+multiple_crate_versions = "allow"
+
+# Selected `restriction` lints.
+# Output must not depend on hash order (see "Deterministic" in the README).
+iter_over_hash_type = "warn"
+# Panics: an `expect` must state the invariant it relies on. Tests may
+# unwrap (see clippy.toml).
+unwrap_used = "warn"
+get_unwrap = "warn"
+# Leftovers and debugging aids.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+# Only the binary and examples may print; libraries return data.
+print_stdout = "warn"
+print_stderr = "warn"
+exit = "warn"
+# Exceptions must use `#[expect]` and say why.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+# Clarity and small inefficiencies.
+clone_on_ref_ptr = "warn"
+empty_drop = "warn"
+empty_structs_with_brackets = "warn"
+filetype_is_file = "warn"
+fn_to_numeric_cast_any = "warn"
+format_push_string = "warn"
+infinite_loop = "warn"
+lossy_float_literal = "warn"
+map_with_unused_argument_over_ranges = "warn"
+mem_forget = "warn"
+mixed_read_write_in_expression = "warn"
+mutex_atomic = "warn"
+needless_raw_strings = "warn"
+path_buf_push_overwrite = "warn"
+rc_buffer = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+str_to_string = "warn"
+string_lit_chars_any = "warn"
+try_err = "warn"
+unnecessary_self_imports = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+verbose_file_reads = "warn"
 
 # The conformance suite corrupts real files tens of thousands of times;
 # optimizing the parser and its dependencies keeps `cargo test` quick.

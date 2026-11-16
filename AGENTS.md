@@ -25,16 +25,17 @@ CI is `.github/workflows/ci.yml`. It runs every job on every pull request, merge
 | CI job | Local command |
 | --- | --- |
 | `fmt` | `cargo fmt --all --check` |
-| `lint` | `cargo clippy --workspace --all-targets --locked -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked` |
+| `lint` | `cargo +1.100.0 clippy --workspace --all-targets --locked -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo +1.100.0 doc --workspace --no-deps --locked`. The toolchain is pinned in the `lint` job, not stable. |
 | `test` | `cargo test --workspace --locked`, on Ubuntu, macOS, and Windows |
 | `msrv` | `cargo +1.91 check --workspace --all-targets --locked`, using the `rust-version` in `Cargo.toml` |
+| `deny` | `cargo deny check`, configured in `deny.toml`: RustSec advisories, licenses, wildcard versions and sources |
 | `ci` | None. It fails when any job above failed or was cancelled, and it is the job meant for branch protection. |
 
 CI uses no secrets, so pull requests from forks run every job.
 
 To run one integration test file, use `cargo test -p <crate> --test <file>`, for example `cargo test -p buzzard-lint --test rules`. To run unit tests by name, use `cargo test -p <crate> --lib <name>`.
 
-Lints are clippy and rustdoc, both with `-D warnings`. There is no custom lint config. To suppress one lint, put `#[allow(<lint>)]` on the item.
+Lints are clippy and rustdoc, both with `-D warnings`. The lint policy is `[workspace.lints]` in the root `Cargo.toml`, which every crate inherits with `[lints] workspace = true`; `clippy.toml` lets tests unwrap and print. To suppress one lint, put `#[expect(<lint>, reason = "...")]` on the smallest item that needs it. A bare `#[allow]` fails the `lint` job.
 
 ## Tests
 

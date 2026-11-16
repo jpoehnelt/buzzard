@@ -10,12 +10,17 @@ use crate::reader::{decode_text, Reader};
 /// Longest flattened path accepted. Real paths are a few hundred bytes.
 pub const MAX_PATH_BYTES: usize = 64 * 1024;
 
+/// How a path is anchored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PathKind {
+    /// From a file system root or a symbolic root such as `<vilib>`.
     Absolute,
+    /// Relative to the file that holds the path.
     Relative,
+    /// The "not a path" value, displayed as `<Not A Path>`.
     NotAPath,
+    /// A network (UNC) path, displayed with a leading `//`.
     Unc,
 }
 
@@ -26,12 +31,20 @@ pub enum PathKind {
 /// absolute even though they are location-independent.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct LvPath {
+    /// How the path is anchored.
     pub kind: PathKind,
+    /// Path components in order; an empty one means the parent directory.
     pub components: Vec<String>,
 }
 
 impl LvPath {
     /// Parse a path at the start of `data`, returning it and its byte length.
+    ///
+    /// # Errors
+    ///
+    /// If `data` is truncated, the signature is not `PTH0`, `PTH1` or `PTH2`,
+    /// the declared size is over [`MAX_PATH_BYTES`], the path type is
+    /// unknown, or the components do not match the declared size or count.
     pub fn parse(data: &[u8]) -> Result<(Self, usize)> {
         let mut r = Reader::new(data, "path");
         let format = r.fourcc()?;
@@ -95,6 +108,7 @@ impl LvPath {
         Ok((Self { kind, components }, total))
     }
 
+    /// Whether the path has no components. Link scanning skips such paths.
     pub fn is_empty(&self) -> bool {
         self.components.is_empty()
     }
@@ -155,13 +169,15 @@ mod tests {
 
     fn pth0(kind: u16, components: &[&str]) -> Vec<u8> {
         let mut body = kind.to_be_bytes().to_vec();
-        body.extend_from_slice(&(components.len() as u16).to_be_bytes());
+        let count = u16::try_from(components.len()).expect("test component count fits in a u16");
+        body.extend_from_slice(&count.to_be_bytes());
         for c in components {
-            body.push(c.len() as u8);
+            body.push(u8::try_from(c.len()).expect("test component length fits in a u8"));
             body.extend_from_slice(c.as_bytes());
         }
         let mut out = b"PTH0".to_vec();
-        out.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        let size = u32::try_from(body.len()).expect("test path size fits in a u32");
+        out.extend_from_slice(&size.to_be_bytes());
         out.extend(body);
         out
     }
@@ -205,11 +221,13 @@ mod tests {
     fn parses_wide_pth1() {
         let mut body = b"rel ".to_vec();
         for c in ["", "a.vi"] {
-            body.extend_from_slice(&(c.len() as u16).to_be_bytes());
+            let len = u16::try_from(c.len()).expect("test component length fits in a u16");
+            body.extend_from_slice(&len.to_be_bytes());
             body.extend_from_slice(c.as_bytes());
         }
         let mut bytes = b"PTH1".to_vec();
-        bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        let size = u32::try_from(body.len()).expect("test path size fits in a u32");
+        bytes.extend_from_slice(&size.to_be_bytes());
         bytes.extend(body);
         let (path, len) = LvPath::parse(&bytes).unwrap();
         assert_eq!(len, bytes.len());

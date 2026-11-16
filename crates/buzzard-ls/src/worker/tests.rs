@@ -78,7 +78,7 @@ impl Fixture {
         fs::create_dir_all(dir.join("ws")).unwrap();
         let dir = dir.canonicalize().unwrap();
         let inspector = Arc::new(TestInspector::default());
-        let state = Arc::new(State::new(inspector.clone()));
+        let state = Arc::new(State::new(Arc::<TestInspector>::clone(&inspector)));
         state.set_roots(vec![dir.join("ws")]);
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -299,7 +299,7 @@ fn file_replaced_by_a_symlink_is_dropped() {
     assert_eq!(f.files(), ["b.vi"]);
 }
 
-/// A watcher may report resolved paths (FSEvents does); the file keeps the
+/// A watcher may report resolved paths (`FSEvents` does); the file keeps the
 /// name it has under the root as the client spelled it.
 #[cfg(unix)]
 #[test]
@@ -411,7 +411,7 @@ fn readers_are_not_blocked_by_a_running_batch() {
     let (open_gate, gate) = std_mpsc::channel();
     *f.inspector.gate.lock().unwrap() = Some(gate);
     f.vi("a.vi", &CLEAN);
-    let state = f.state.clone();
+    let state = Arc::clone(&f.state);
     let runtime = f.runtime.handle().clone();
     let batch = Batch::from([(path.clone(), 0)]);
     let worker = std::thread::spawn(move || state.process(&runtime, batch));
@@ -422,7 +422,7 @@ fn readers_are_not_blocked_by_a_running_batch() {
     // The batch is now stuck inside the inspector. A reader on another
     // thread must still get an answer, and it is the previous state.
     let (answered, answer) = std_mpsc::channel();
-    let state = f.state.clone();
+    let state = Arc::clone(&f.state);
     let asked = path.clone();
     std::thread::spawn(move || {
         let view = state.view();
@@ -473,9 +473,12 @@ fn publishing_is_ordered_and_scan_waits_for_roots() {
         delay: Duration::from_millis(3),
     });
     let (jobs, queue) = mpsc::unbounded_channel();
-    let worker = f
-        .runtime
-        .spawn(run(state.clone(), recorder.clone(), queue, jobs.clone()));
+    let worker = f.runtime.spawn(run(
+        Arc::clone(&state),
+        Arc::clone(&recorder),
+        queue,
+        jobs.clone(),
+    ));
     jobs.send(Job::Scan).unwrap();
     jobs.send(Job::Roots(vec![f.root()])).unwrap();
 

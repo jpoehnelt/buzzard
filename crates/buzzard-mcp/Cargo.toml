@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords = ["mcp", "static-analysis", "ai-agents", "lint"]
+categories = ["development-tools"]
 
 [dependencies]
 buzzard-lint.workspace = true
@@ -14,5 +17,5 @@ buzzard-rsrc.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 
-[dev-dependencies]
-buzzard-rsrc.workspace = true
+[lints]
+workspace = true

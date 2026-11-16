@@ -12,14 +12,21 @@ use crate::graph::DependencyGraph;
 use crate::project::ProjectFile;
 use crate::workspace::{Analysis, FileState, Workspace};
 
+/// One lint rule, as listed in [`RULES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rule {
+    /// Stable identifier, e.g. `BZ001`, used in output and with `--ignore`.
     pub code: &'static str,
+    /// Short kebab-case name, e.g. `missing-member`.
     pub name: &'static str,
+    /// One or two sentences on what the rule reports.
     pub summary: &'static str,
+    /// Default severity of its findings.
     pub severity: Severity,
 }
 
+/// Every rule, in code order. SARIF output refers to a rule by its index
+/// here.
 pub const RULES: &[Rule] = &[
     Rule {
         code: "BZ000",
@@ -83,13 +90,15 @@ pub const RULES: &[Rule] = &[
     },
 ];
 
+/// The rule with this code, if there is one.
 pub fn rule(code: &str) -> Option<&'static Rule> {
     RULES.iter().find(|r| r.code == code)
 }
 
+/// Settings for [`lint`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LintConfig {
-    /// Longest allowed path, in characters (Windows MAX_PATH is 260).
+    /// Longest allowed path, in characters (Windows `MAX_PATH` is 260).
     pub max_path_length: usize,
     /// Rule codes to skip.
     pub ignore: BTreeSet<String>,
@@ -106,6 +115,10 @@ impl Default for LintConfig {
 
 /// Run every enabled rule. The result is sorted by path, then code, then
 /// message, and is identical across runs.
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "the `expect`s look up rule codes that are all in `RULES`"
+)]
 pub fn lint(
     workspace: &Workspace,
     graph: &DependencyGraph,
@@ -129,7 +142,7 @@ pub fn lint(
             };
             match state {
                 FileState::Failed(reason) => {
-                    emit("BZ000", format!("cannot analyze file: {reason}"))
+                    emit("BZ000", format!("cannot analyze file: {reason}"));
                 }
                 FileState::Parsed(analysis) => {
                     let meta = &analysis.metadata;

@@ -7,6 +7,7 @@ const EMPTY_PASSWORD_MD5: [u8; 16] = [
     0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e,
 ];
 
+/// The password part of a `BDPW` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bdpw {
     /// MD5 of the password; the remaining hashes in the block are salted
@@ -15,15 +16,22 @@ pub struct Bdpw {
 }
 
 impl Bdpw {
+    /// Read the password hash at the start of a `BDPW` block.
+    ///
+    /// # Errors
+    ///
+    /// If the block is shorter than 16 bytes.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let hash = data
-            .get(..16)
+            .first_chunk::<16>()
             .ok_or_else(|| malformed("BDPW", format!("{} bytes, need at least 16", data.len())))?;
         Ok(Self {
-            password_md5: hash.try_into().expect("slice is 16 bytes"),
+            password_md5: *hash,
         })
     }
 
+    /// Whether a password is set, i.e. the hash is not that of the empty
+    /// string.
     pub fn has_password(&self) -> bool {
         self.password_md5 != EMPTY_PASSWORD_MD5
     }
