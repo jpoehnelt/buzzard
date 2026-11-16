@@ -934,7 +934,9 @@ JKISoftware/JKI-State-Machine-Objects,
 (BSD 3-Clause) and
 [LabVIEW-Open-Source/LV-MQTT-Broker](https://github.com/LabVIEW-Open-Source/LV-MQTT-Broker)
 (Zero-Clause BSD), with their licence texts next to them. The names of heap
-tags and object classes are generated from pylabview.
+tags and object classes (`crates/buzzard-rsrc/src/blocks/heap/tables.rs`)
+are generated from pylabview; `NOTICE` has its copyright lines and the MIT
+licence text.
 
 The table of built-in function names
 (`crates/buzzard-rsrc/src/blocks/heap/primitives.rs`) is generated from

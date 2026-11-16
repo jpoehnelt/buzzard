@@ -19,7 +19,7 @@ The workspace has six crates. Each crate depends only on crates listed above it.
 
 `README.md` holds the durable docs: usage, rules, language server features, design goals, and current limitations. `RELEASING.md` holds the steps for publishing the crates to crates.io. The repo has no design records, ADRs, changelog, or changesets.
 
-Each crate has its own `README.md`, `LICENSE` and `NOTICE`, because `cargo package` takes files from the crate's directory only. The `include` list in each `Cargo.toml` keeps a package to `src`, `examples` and those three files; tests and fixtures are not packaged. Its patterns start with `/`, because a pattern without one matches at any depth. The `LICENSE` files are copies of the root one, and only `crates/buzzard-rsrc/NOTICE` carries the LVKit section of the root `NOTICE`. The code examples in the crate READMEs are compiled as doctests (`ReadmeDoctests` at the end of each `src/lib.rs`).
+Each crate has its own `README.md`, `LICENSE` and `NOTICE`, because `cargo package` takes files from the crate's directory only. The `include` list in each `Cargo.toml` keeps a package to `src`, `examples` and those three files; tests and fixtures are not packaged. Its patterns start with `/`, because a pattern without one matches at any depth. The `LICENSE` files are copies of the root one, and only `crates/buzzard-rsrc/NOTICE` carries the LVKit and pylabview sections of the root `NOTICE` (the two generated tables in `src/blocks/heap`); `crates/buzzard-cli/tests/packaging.rs` holds them to that. The code examples in the crate READMEs are compiled as doctests (`ReadmeDoctests` at the end of each `src/lib.rs`).
 
 ## Checks
 

@@ -17,8 +17,12 @@ const CRATES: [&str; 6] = [
     "buzzard-cli",
 ];
 
-/// The one crate whose source holds third-party data (the LVKit table).
-const WITH_LVKIT: &str = "buzzard-rsrc";
+/// The one crate whose source holds third-party data: the LVKit table
+/// (Apache-2.0) and the pylabview tables (MIT).
+const WITH_THIRD_PARTY: &str = "buzzard-rsrc";
+
+/// The sentence every copy of the MIT licence has.
+const MIT_PERMISSION: &str = "Permission is hereby granted, free of charge";
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -67,6 +71,26 @@ fn every_notice_covers_what_its_package_holds_and_no_more() {
     let lvkit = notice_section(&root_notice, "Built-in function names, from LVKit");
     assert!(lvkit.contains("Apache-2.0, section 4(d)"));
     assert!(!lvkit.contains("Zenodo"));
+    assert!(!lvkit.contains(MIT_PERMISSION));
+    let pylabview = notice_section(
+        &root_notice,
+        "Names of heap tags and object classes, from pylabview",
+    );
+    // MIT asks for the copyright lines and the permission notice, whole.
+    for required in [
+        "Copyright (C) 2013 Jessica Creighton",
+        "Copyright (C) 2019-2020 Mefistotelis",
+        MIT_PERMISSION,
+        "copies or substantial portions of the Software.",
+        "THE SOFTWARE IS PROVIDED \"AS IS\"",
+        "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n    SOFTWARE.",
+    ] {
+        assert!(
+            pylabview.contains(required),
+            "the pylabview section of the root NOTICE holds `{required}`"
+        );
+    }
+    assert!(!pylabview.contains("Zenodo"));
 
     for name in CRATES {
         let notice = read(&format!("crates/{name}/NOTICE"));
@@ -83,16 +107,22 @@ fn every_notice_covers_what_its_package_holds_and_no_more() {
             !notice.contains("Zenodo"),
             "crates/{name}/NOTICE names a fixture the package does not hold"
         );
-        if name == WITH_LVKIT {
+        if name == WITH_THIRD_PARTY {
             assert!(
                 notice.contains(&lvkit),
                 "crates/{name}/NOTICE holds the LVKit section of the root NOTICE word for word"
             );
-        } else {
             assert!(
-                !notice.contains("LVKit"),
-                "crates/{name}/NOTICE names LVKit, whose data is in {WITH_LVKIT} only"
+                notice.contains(&pylabview),
+                "crates/{name}/NOTICE holds the pylabview section of the root NOTICE word for word"
             );
+        } else {
+            for other in ["LVKit", "pylabview", MIT_PERMISSION] {
+                assert!(
+                    !notice.contains(other),
+                    "crates/{name}/NOTICE has `{other}`, whose data is in {WITH_THIRD_PARTY} only"
+                );
+            }
         }
     }
 }
@@ -131,13 +161,50 @@ fn every_package_is_its_source_and_its_documents() {
     }
 }
 
-/// The data in `primitives.rs` is why `buzzard-rsrc` has the longer notice;
-/// if the table moves, the notices move with it.
+/// The data in `primitives.rs` and `tables.rs` is why `buzzard-rsrc` has
+/// the longer notice; if a table moves, the notices move with it.
 #[test]
-fn the_lvkit_table_is_where_the_notice_says() {
-    let table = read(&format!(
-        "crates/{WITH_LVKIT}/src/blocks/heap/primitives.rs"
-    ));
-    assert!(table.contains("LVKit"));
-    assert!(read(&format!("crates/{WITH_LVKIT}/NOTICE")).contains("src/blocks/heap/primitives.rs"));
+fn the_third_party_tables_are_where_the_notice_says() {
+    let notice = read(&format!("crates/{WITH_THIRD_PARTY}/NOTICE"));
+    for (file, origin) in [("primitives.rs", "LVKit"), ("tables.rs", "pylabview")] {
+        let path = format!("src/blocks/heap/{file}");
+        let table = read(&format!("crates/{WITH_THIRD_PARTY}/{path}"));
+        assert!(table.contains(origin), "{path} names {origin}");
+        assert!(notice.contains(&path), "the NOTICE names {path}");
+    }
+}
+
+/// A source file that says it comes from another project is one the
+/// notices must cover. This is the list of those files; a new one fails
+/// here until it is added, with its section in the NOTICE of its crate.
+#[test]
+fn no_other_packaged_source_claims_a_third_party_origin() {
+    let known = [
+        "crates/buzzard-rsrc/src/blocks/heap/primitives.rs",
+        "crates/buzzard-rsrc/src/blocks/heap/tables.rs",
+    ];
+    let mut found = Vec::new();
+    let mut pending: Vec<PathBuf> = CRATES
+        .iter()
+        .flat_map(|name| ["src", "examples"].map(|dir| root().join("crates").join(name).join(dir)))
+        .filter(|dir| dir.is_dir())
+        .collect();
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let text = fs::read_to_string(&path).unwrap();
+                if text.lines().any(|line| {
+                    line.starts_with("//! Generated ") || line.starts_with("//! Source: ")
+                }) {
+                    let relative = path.strip_prefix(root()).unwrap();
+                    found.push(relative.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+    }
+    found.sort();
+    assert_eq!(found, known);
 }

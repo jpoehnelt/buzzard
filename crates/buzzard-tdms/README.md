@@ -26,8 +26,16 @@ patch release does not. `build::FileBuilder` writes synthetic files for
 tests and benchmarks; it is public so that programs built on this crate can
 test against it, and it is not a general TDMS writer.
 
-From the command line, through the `buzzard` binary
-(`cargo install buzzard-cli`):
+The published package holds the source, the benchmark example and this
+file. The other paths this document names (`tests/...`, `tools/...`,
+`deny.toml`) and the test commands are those of the
+[repository](https://github.com/jpoehnelt/buzzard), where `tests/` is
+`crates/buzzard-tdms/tests/`.
+
+From the command line, through the `buzzard` binary, which is built from
+the `buzzard-cli` crate of the same
+[repository](https://github.com/jpoehnelt/buzzard) (its README says how to
+install it):
 
 ```sh
 buzzard tdms info hotfire-0042.tdms                 # or --format json

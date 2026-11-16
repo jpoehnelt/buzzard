@@ -9,10 +9,11 @@ National Instruments Corporation. LabVIEW, NI, and National Instruments are
 trademarks of National Instruments Corporation, used only to identify the
 file format that buzzard reads.
 
-One generated file of this package contains data taken from a third-party
-project under the same licence. The section below is the one in the NOTICE
-of the buzzard repository, unchanged, so its paths are those of the
-repository: in this package the file is src/blocks/heap/primitives.rs, and
+Two generated files of this package contain data taken from third-party
+projects, one under the same licence and one under the MIT licence. The two
+sections below are those in the NOTICE of the buzzard repository, unchanged,
+so their paths are those of the repository: in this package the files are
+src/blocks/heap/primitives.rs and src/blocks/heap/tables.rs, and
 tools/gen_primitives.py is not included.
 
 
@@ -79,3 +80,46 @@ about LVKit, and the paragraph above qualifies the fourth and fifth):
     (https://github.com/mefistotelis/pylabview).
 
     See PROVENANCE.md for detail.
+
+
+Names of heap tags and object classes, from pylabview
+=====================================================
+
+File:     crates/buzzard-rsrc/src/blocks/heap/tables.rs
+Source:   pylabview, https://github.com/mefistotelis/pylabview
+          pylabview/LVheap.py
+          (the commit was not recorded when the tables were generated)
+Licence:  MIT (full text below)
+          Copyright (C) 2013 Jessica Creighton <jcreigh@femtobit.org>
+          Copyright (C) 2019-2020 Mefistotelis <mefistotelis@gmail.com>
+
+What was taken: the member names and integer values of the enumerations of
+heap field tags and heap object classes in that file, 615 and 373 entries.
+Nothing else was copied: no code, no comments and no documentation.
+
+Changes made: the entries were rewritten as two Rust tables sorted by id.
+
+The licence of pylabview reads as follows:
+
+    MIT License
+
+    Copyright (C) 2013 Jessica Creighton <jcreigh@femtobit.org>
+    Copyright (C) 2019-2020 Mefistotelis <mefistotelis@gmail.com>
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.

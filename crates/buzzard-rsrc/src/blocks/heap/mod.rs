@@ -202,8 +202,8 @@ pub struct PrimitiveName {
 /// Name of the built-in function with the given resource id (the
 /// `primResID` of a `prim` object), if the vendored table has it.
 ///
-/// The table comes from LVKit (Apache-2.0); see `NOTICE` at the repository
-/// root for its origin and limits.
+/// The table comes from LVKit (Apache-2.0); see the crate's `NOTICE` for its
+/// origin and limits.
 pub fn primitive_name(id: u32) -> Option<PrimitiveName> {
     let table = primitives::PRIMITIVES;
     let index = table.binary_search_by_key(&id, |(k, _, _)| *k).ok()?;

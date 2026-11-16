@@ -60,17 +60,31 @@ jobs:
         run: |
           set -euo pipefail
           case "$CRATE_SET" in
-            tdms) cargo publish --dry-run --locked -p buzzard-tdms ;;
-            all) cargo publish --dry-run --locked --workspace ;;
+            tdms) selection=(-p buzzard-tdms) ;;
+            all) selection=(--workspace) ;;
             *) echo "::error::unknown crate set '$CRATE_SET'"; exit 1 ;;
           esac
+          cargo publish --dry-run --locked "${selection[@]}"
+          # `cargo publish --dry-run` leaves no .crate file in
+          # target/package; `cargo package` does. The build was verified
+          # above, so this only writes the files for the table.
+          rm -rf target/package
+          cargo package --no-verify --locked "${selection[@]}"
+          shopt -s nullglob
+          files=(target/package/*.crate)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::cargo package left no .crate file in target/package"
+            exit 1
+          fi
           {
             echo "### Dry run: nothing was uploaded"
             echo
-            echo "| Package | Bytes |"
-            echo "| --- | --- |"
-            for file in target/package/*.crate; do
-              echo "| $(basename "$file") | $(stat -c %s "$file") |"
+            echo "| Package | Bytes | Files |"
+            echo "| --- | --- | --- |"
+            for file in "${files[@]}"; do
+              bytes=$(stat -c %s "$file")
+              count=$(tar -tzf "$file" | wc -l)
+              echo "| $(basename "$file") | $bytes | $count |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -134,9 +148,25 @@ jobs:
               --write-out '%{http_code}' \
               "https://index.crates.io/${name:0:2}/${name:2:2}/${name}")
             case "$status" in
-              200) jq --exit-status --arg v "$version" 'select(.vers == $v)' index.json > /dev/null ;;
+              200) ;;
               404) return 1 ;;
               *) echo "::error::the crates.io index answered $status for $name"; exit 1 ;;
+            esac
+            # jq answers 0 for a match and 4 for none. Anything else (a
+            # body that is not JSON, a missing jq) is not an answer, and
+            # the release stops instead of taking it for "not published".
+            # The `|| status=$?` keeps a 4 from ending the script when the
+            # function is called outside an `if`.
+            if [ ! -s index.json ]; then
+              echo "::error::the crates.io index answered 200 with no content for $name"
+              exit 1
+            fi
+            status=0
+            jq --exit-status --arg v "$version" 'select(.vers == $v)' index.json > /dev/null || status=$?
+            case "$status" in
+              0) return 0 ;;
+              4) return 1 ;;
+              *) echo "::error::the crates.io index entry of $name could not be read (jq status $status)"; exit 1 ;;
             esac
           }
 
@@ -151,8 +181,10 @@ jobs:
             fi
             # The `package` job of the checks built this crate from its
             # packaged files, so the upload does not build it again: the
-            # token would not outlive six builds. cargo waits until the
-            # index lists the new version before it returns.
+            # token would not outlive six builds. cargo waits up to a
+            # minute for the index to list the new version. If the index
+            # takes longer, the next crate fails to resolve it: run the
+            # workflow again, and the uploaded versions are skipped.
             cargo publish --locked --no-verify -p "$name"
             echo "- $name $version: published" >> "$GITHUB_STEP_SUMMARY"
           done

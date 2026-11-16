@@ -32,9 +32,9 @@ fn main() -> Result<(), buzzard_rsrc::RsrcError> {
 `BlockDiagram::from_rsrc` decodes the block diagram.
 
 This crate is the parser of [buzzard](https://github.com/jpoehnelt/buzzard),
-a static analyzer and language server for these files; install the tool with
-`cargo install buzzard-cli`. The repository's README lists what the parser
-does not read yet.
+a static analyzer and language server for these files; the tool is the
+`buzzard` binary of the `buzzard-cli` crate, and the repository's README says
+how to install it. That README also lists what the parser does not read yet.
 
 ## Stability
 
@@ -46,7 +46,10 @@ against it, and it covers only what buzzard's own tests need.
 
 ## Licence
 
-Apache-2.0. See `LICENSE` and `NOTICE` in this package.
+Apache-2.0. See `LICENSE` and `NOTICE` in this package. Two generated tables
+hold names taken from other projects: built-in function names from LVKit
+(Apache-2.0) and heap tag and class names from pylabview (MIT). `NOTICE` has
+their copyright lines, what was taken, and the MIT licence text.
 
 LabVIEW and National Instruments are trademarks of National Instruments
 Corporation. buzzard is an independent project and is not affiliated with,

@@ -3,6 +3,7 @@
 //! Generated from the enums in `pylabview/LVheap.py`
 //! (<https://github.com/mefistotelis/pylabview>, MIT licence,
 //! Copyright (C) 2013 Jessica Creighton, Copyright (C) 2019-2020 Mefistotelis).
+//! The crate's `NOTICE` has the licence text and what was taken.
 //! Each table is sorted by id for binary search. Do not edit by hand.
 
 pub(super) const FIELD_TAGS: &[(i32, &str)] = &[
