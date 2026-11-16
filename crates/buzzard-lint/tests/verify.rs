@@ -2717,7 +2717,9 @@ fn a_damaged_field_tag_in_a_real_file_proves_nothing() {
 }
 
 /// Every `step`-th byte of the heap is damaged. Set
-/// `BUZZARD_HEAP_DAMAGE_STEP=1` to try every byte, which takes minutes.
+/// `BUZZARD_HEAP_DAMAGE_STEP` to a smaller step for a denser run: with
+/// `cargo test --release`, 29 takes about five minutes on four cores and
+/// 1, which tries every byte, takes hours.
 fn damage_step(default: usize) -> usize {
     match std::env::var("BUZZARD_HEAP_DAMAGE_STEP") {
         Ok(step) => step.parse().expect("BUZZARD_HEAP_DAMAGE_STEP is a number"),
