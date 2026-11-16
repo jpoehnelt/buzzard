@@ -14,6 +14,7 @@ pub mod render;
 pub mod rules;
 pub mod sarif;
 pub mod summary;
+pub mod verify;
 pub mod workspace;
 
 pub use diagnostic::{Diagnostic, Severity};
