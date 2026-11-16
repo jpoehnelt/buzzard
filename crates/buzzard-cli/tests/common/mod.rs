@@ -19,7 +19,9 @@ impl TempDir {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         // Editors and the server exchange canonical paths.
-        Self(dir.canonicalize().unwrap())
+        let canonical = dir.canonicalize().unwrap();
+        let text = canonical.to_string_lossy();
+        Self(PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text)))
     }
 
     pub fn vi(&self, name: &str, words: &[u32], calls: &[&str]) {
@@ -40,4 +42,14 @@ impl Drop for TempDir {
 
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../buzzard-rsrc/tests/fixtures/pylavi")
+}
+
+/// `file://` URI for a path, in the form the server reports.
+pub fn file_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
 }

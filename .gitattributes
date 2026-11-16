@@ -1,0 +1,6 @@
+# Binary conformance fixtures must never be line-ending converted.
+*.vi binary
+*.ctl binary
+*.llb binary
+# Golden snapshots are compared byte for byte.
+crates/buzzard-rsrc/tests/snapshots/** text eol=lf

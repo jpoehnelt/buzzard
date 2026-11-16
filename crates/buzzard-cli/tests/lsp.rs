@@ -138,12 +138,12 @@ fn full_editor_session() {
     dir.vi("main.vi", &CLEAN, &["util.vi"]);
     dir.vi("util.vi", &INLINE_CODE, &[]);
     std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
-    let uri = |name: &str| format!("file://{}/{name}", dir.0.display());
+    let uri = |name: &str| file_uri(&dir.0.join(name));
 
     let mut session = Session::start();
     let init = session.request(
         "initialize",
-        json!({ "processId": null, "rootUri": format!("file://{}", dir.0.display()), "capabilities": {} }),
+        json!({ "processId": null, "rootUri": file_uri(&dir.0), "capabilities": {} }),
     );
     assert_eq!(init["serverInfo"]["name"], "buzzard");
     assert_eq!(init["capabilities"]["hoverProvider"], true);
