@@ -16,6 +16,8 @@ ignore = []
 # Permissive licenses compatible with distributing an MIT binary.
 allow = [
     "Apache-2.0",
+    # encoding_rs: its encoding tables come from WHATWG under BSD-3-Clause.
+    "BSD-3-Clause",
     "CC0-1.0",
     "ISC",
     "MIT",
