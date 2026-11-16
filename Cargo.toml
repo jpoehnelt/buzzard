@@ -5,6 +5,7 @@ members = [
     "crates/buzzard-lint",
     "crates/buzzard-ls",
     "crates/buzzard-mcp",
+    "crates/buzzard-tdms",
     "crates/buzzard-cli",
 ]
 
@@ -21,6 +22,7 @@ buzzard-rsrc = { path = "crates/buzzard-rsrc", version = "0.1.0" }
 buzzard-lint = { path = "crates/buzzard-lint", version = "0.1.0" }
 buzzard-ls = { path = "crates/buzzard-ls", version = "0.1.0" }
 buzzard-mcp = { path = "crates/buzzard-mcp", version = "0.1.0" }
+buzzard-tdms = { path = "crates/buzzard-tdms", version = "0.1.0" }
 
 # Binary parsing & decompression
 binrw = "0.15"
@@ -52,6 +54,15 @@ roxmltree = "0.21"
 
 # Recovering link names stored in legacy code pages
 encoding_rs = "0.8"
+
+# TDMS reader: safe casts between byte buffers and sample slices
+bytemuck = { version = "1.25", features = ["derive"] }
+# Parquet export, behind the `parquet` feature of buzzard-tdms
+parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
+arrow-array = { version = "60", default-features = false }
+arrow-schema = { version = "60", default-features = false }
+# Property-based tests
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 # Lint policy for every crate; each one opts in with `[lints] workspace = true`.
 # Lints are warnings here so work in progress still builds; CI runs clippy and
@@ -132,6 +143,10 @@ verbose_file_reads = "warn"
 # The conformance suite corrupts real files tens of thousands of times;
 # optimizing the parser and its dependencies keeps `cargo test` quick.
 [profile.dev.package.buzzard-rsrc]
+opt-level = 2
+
+# The TDMS tests damage generated files hundreds of thousands of times.
+[profile.dev.package.buzzard-tdms]
 opt-level = 2
 
 [profile.dev.package."*"]

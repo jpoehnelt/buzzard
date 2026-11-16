@@ -6,3 +6,6 @@
 crates/buzzard-rsrc/tests/snapshots/** text eol=lf
 # Project file fixtures are kept byte for byte as published upstream.
 crates/buzzard-lint/tests/fixtures/project/** -text
+# TDMS fixtures are byte-exact copies of published measurement files.
+*.tdms binary
+*.tdms_index binary

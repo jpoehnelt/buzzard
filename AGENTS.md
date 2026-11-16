@@ -4,7 +4,7 @@ Humans: see [README.md](README.md). This file lists the repo facts that the skil
 
 ## Layout
 
-The workspace has five crates. Each crate depends only on crates listed above it.
+The workspace has six crates. Each crate depends only on crates listed above it.
 
 | Crate | Owns |
 | --- | --- |
@@ -12,7 +12,8 @@ The workspace has five crates. Each crate depends only on crates listed above it
 | `crates/buzzard-lint` | Lint rules, dataflow checks, the project XML parser, the dependency graph, SARIF, diagram rendering, the semantic diff, the state machine extraction, model and report (`src/verify`), and the `ViInspector` backend trait |
 | `crates/buzzard-ls` | The language server: engine, ordered update worker, file watching, and fuzzy symbol search |
 | `crates/buzzard-mcp` | The Model Context Protocol server and its tools |
-| `crates/buzzard-cli` | The `buzzard` binary with the `check`, `inspect`, `diff`, `verify`, `lsp`, and `mcp` subcommands |
+| `crates/buzzard-tdms` | The reader for TDMS measurement files: the segment index (`src/index.rs`), the value reads (`src/read.rs`), the public file, group and channel types (`src/file.rs`), scaling, the Parquet and CSV export (`src/export`, Parquet behind the `parquet` feature), and `build::FileBuilder` for synthetic test files. It depends on no other crate of the workspace. Its `README.md` lists what is supported |
+| `crates/buzzard-cli` | The `buzzard` binary with the `check`, `inspect`, `diff`, `verify`, `tdms`, `lsp`, and `mcp` subcommands. Each subcommand is one function in `src/main.rs`; `diff` and `tdms` have a module each (`diff_cmd.rs`, `tdms_cmd.rs`) |
 
 `editors/vscode` is a TypeScript VS Code extension over `buzzard lsp`. It is outside the Cargo workspace and has its own `npm` scripts (`lint`, `compile`, `test`, `package`).
 
@@ -29,6 +30,7 @@ CI is `.github/workflows/ci.yml`. It runs every job on every pull request, merge
 | `test` | `cargo test --workspace --locked`, on Ubuntu, macOS, and Windows |
 | `msrv` | `cargo +1.91 check --workspace --all-targets --locked`, using the `rust-version` in `Cargo.toml` |
 | `deny` | `cargo deny check`, configured in `deny.toml`: RustSec advisories, licenses, wildcard versions and sources |
+| `tdms-oracle` | `BUZZARD_TDMS_ORACLE=<python with npTDMS and pytest> BUZZARD_TDMS_ORACLE_STRICT=1 cargo test -p buzzard-tdms --test oracle`, on Ubuntu. Without the first variable the test passes without comparing anything |
 | `ci` | None. It fails when any job above failed or was cancelled, and it is the job meant for branch protection. |
 
 CI uses no secrets, so pull requests from forks run every job.
@@ -45,12 +47,20 @@ Lints are clippy and rustdoc, both with `-D warnings`. The lint policy is `[work
 - Fixture files are byte-exact copies of upstream files (`.gitattributes`). Do not edit them. A new fixture records its source and licence, as `crates/buzzard-lint/tests/fixtures/project/README.md` does.
 - `crates/buzzard-lint/tests/verify.rs` tests the state machine extraction on the real files in `tests/fixtures/verify` and on diagrams built by `tests/verify/build.rs`. Real classic enumeration machines have no licence and are not in the repo; `real_machines_outside_the_repository` and `damage_to_the_real_machines_proves_nothing_new` check them when `BUZZARD_FSM_SAMPLES` points at clones (run with `-- --ignored`).
 
-Four invariants have tests that enforce them:
+- The TDMS tests write their files at test time with `buzzard_tdms::build::FileBuilder`, which keeps its own model of what each channel holds; the helpers are in `crates/buzzard-tdms/tests/common/mod.rs`. `tests/generated.rs` is the conformance cross product, `tests/property.rs` the property-based tests (proptest), `tests/hostile.rs` the damaged and hostile input, `tests/export.rs` the exports, `tests/real.rs` the one real file in `tests/fixtures` (and, with `-- --ignored`, every file of a directory named by `BUZZARD_TDMS_SAMPLES`).
+- `crates/buzzard-tdms/tests/oracle.rs` compares the reader with npTDMS, run as a separate program through `tests/oracle/dump.py`. Every disagreement is an entry in `KNOWN_DIFFERENCES` in that file with its reason; a disagreement that is not listed fails, and so does an entry that no longer occurs. Do not loosen the comparison to make a difference go away: fix the reader, or add an entry and repeat it in the table in `crates/buzzard-tdms/README.md`.
+- npTDMS is LGPL-3.0. Do not read, copy or port its source, its tests or its fixtures into this repository. Use it only through `dump.py`, as a program.
+
+Seven invariants have tests that enforce them:
 
 - Output is byte-identical across runs, for example `check_output_is_byte_identical_across_runs` in `crates/buzzard-cli/tests/cli.rs` and `parsing_is_deterministic` in `crates/buzzard-rsrc/tests/conformance.rs`.
 - Truncated or corrupted input returns an error and never panics, for example `hostile_input_never_panics` and `hostile_state_machine_fields_never_panic` in `crates/buzzard-rsrc/tests/conformance.rs`.
 - A finding labelled `PROVEN` is never false: when anything about a diagram was lost or is not understood, the result is unknown, never a default. The diagram decoder records everything it skips or cannot trust as a `Loss` on the `Diagram` (`crates/buzzard-rsrc/src/diagram.rs`), including a field it cannot name (`Loss::Field`) and a heap whose byte stream is irregular (`Loss::Stream`, from `Heap::irregular`), and a diagram with a loss is not searched for classic state machines. `a_damaged_heap_never_adds_a_proven_finding` in `crates/buzzard-lint/tests/verify.rs` changes single bytes of the inflated heap of each fixture and checks both that no proven finding is added and that nothing is gone from a decoded diagram without a recorded loss; `BUZZARD_HEAP_DAMAGE_STEP` sets how many bytes it skips between two it changes (499 by default; 1 tries every byte and takes hours, so use `--release`). Its one exception is damage that leaves the structure of the diagram as it was and changes only a value (the test's `skeleton` function defines which fields are values): that is a complete diagram of another program, and proofs about it are printed and counted, not failed. `a_damaged_field_tag_in_a_real_file_proves_nothing` pins the case where a hidden field once read as a default. `every_loss_of_the_decoder_is_recorded` in `crates/buzzard-rsrc/tests/conformance.rs` covers each kind of loss. A decoder change that skips something new records a loss for it, and a decoder change that reads an absent field as a default first makes sure the field cannot be hiding.
 - The state machine model over-approximates the diagram: anything the extraction cannot follow becomes `Successors::Unknown`, `Stop::Maybe` or an unknown initial state, never a guess. `an_unknowable_next_state_is_unknown_and_claims_nothing` and its neighbours in `crates/buzzard-lint/tests/verify.rs` enforce it. A change that makes the extraction follow something new documents the assumption in `crates/buzzard-lint/src/verify/extract.rs` and adds the case to those tests.
+
+- The TDMS reader agrees with an independent statement of each file's contents: the generator's model (`every_shape_of_the_cross_product_reads_back` in `crates/buzzard-tdms/tests/generated.rs`, `random_segment_sequences_read_back` in `tests/property.rs`) and npTDMS (`the_reader_agrees_with_nptdms` in `tests/oracle.rs`). A change to how segments, metadata or raw data are interpreted keeps all three green; a new format feature gets a case in the generator first.
+- The TDMS reader never panics, never hangs and never allocates more than a file accounts for. Sizes in a file are untrusted: arithmetic on them is checked, nothing is allocated from a declared count, and a channel is never longer than the bytes the file has for it. `a_file_cut_at_any_byte_gives_a_prefix_of_every_channel`, `any_single_damaged_byte_is_survived`, `seeded_random_damage_is_survived` and the directed cases in `crates/buzzard-tdms/tests/hostile.rs` enforce it; `a_file_cannot_make_the_index_grow_without_paying_for_it` and `a_million_empty_segments_cost_no_memory` bound the index. The crate has no `unsafe` code and does not memory-map; reads go through the `ReadAt` trait (`src/io.rs`).
+- A truncated or unfinished TDMS file gives a prefix of every channel and an `Anomaly`, never invented values. Anything else that contradicts the format is an `Error` with a byte offset. A new way of recovering data adds an `Anomaly` variant and a row to the table in the crate's README.
 
 ## Contracts
 
@@ -62,13 +72,19 @@ These are the surfaces that users and other tools depend on. Check them when you
 - `buzzard mcp` serves the tools listed in `README.md` over stdio; `NAMES` in `crates/buzzard-mcp/src/tools.rs` is the list. Agents depend on the tool names and their argument schemas. `buzzard_verify` takes `paths[]` and `format?` (`text`, `json`, `dot`) and returns what `buzzard verify` prints; unlike the CLI, findings do not make it an error result.
 - `check` exits 0 when it finds no problems and 1 when it finds any, unless `--exit-zero` is set. A file it cannot parse is a `BZ000` problem, not an error. It exits 2 for an unknown `--ignore` code or a path that does not exist. `inspect` exits 2 when it cannot read the file. CI pipelines gate on these statuses.
 - The language server implements the standard methods listed in `README.md`, plus the custom requests `buzzard/inspect` and `buzzard/exportAst` in `crates/buzzard-ls/src/server.rs`. Editor clients depend on their JSON shape.
-- Input formats are binary RSRC files (the extensions in `RSRC_EXTENSIONS` in `crates/buzzard-rsrc/src/lib.rs`) and project XML files (`.lvproj`, `.lvlib`, `.lvclass`), saved by the LabVIEW IDE.
+- `buzzard tdms info <file>` prints `--format text` or `json` and exits 0, or 2 when the file cannot be opened; anomalies such as a truncated last segment are part of the report and do not change the status. The JSON is the `InfoJson` struct in `crates/buzzard-cli/src/tdms_cmd.rs`: `file`, `size`, `segments`, `versions`, `index` (`data_file`, `index_file` or `index_file_rejected`), `anomalies` (each with `kind` from `Anomaly::kind` and `message`), `properties`, and `groups` with their `channels` (`name`, `path`, `type`, `length`, optional `unit`, `waveform`, `scalers`, `scaling`, and `properties`). Type names are those of `DataType::name`. Tools that read the report depend on these names.
+- `buzzard tdms export <file> --out <path> [--channels ...] [--format parquet|csv] [--compression snappy|none] [--raw] [--threads N]` exits 0, or 2 on any error (unreadable file, unknown channel or group name, a write failure), and leaves no output file behind on an error. Columns are named `group/channel` (`.re` and `.im` for complex channels) with a leading `time_s` when the channels share their waveform timing. The Parquet key-value metadata keys (`tdms.file.*`, `tdms.group.*`, `tdms.channel.*`, `buzzard.channel.*`, `buzzard.time.*`, `buzzard.tdms.version`) are listed in `crates/buzzard-tdms/src/export/parquet.rs`; analytics pipelines depend on the column names and on these keys. The same input and options give the same bytes (`export_writes_parquet_by_default_and_is_deterministic` in `crates/buzzard-cli/tests/tdms.rs`).
+- The public API of `buzzard-tdms` (`TdmsFile`, `Group`, `Channel`, `OpenOptions`, `Error`, `Anomaly`, `export`) is what other programs build on. `Error`, `Anomaly`, `DataType`, `PropertyValue`, `Column` and `Scaling` are `#[non_exhaustive]`.
+- Input formats are binary RSRC files (the extensions in `RSRC_EXTENSIONS` in `crates/buzzard-rsrc/src/lib.rs`) and project XML files (`.lvproj`, `.lvlib`, `.lvclass`), saved by the LabVIEW IDE, and TDMS measurement files (`.tdms`, with an optional `.tdms_index` file beside them) written by data-acquisition software.
 
 ## Running and measuring
 
 - Run the CLI with `cargo run -p buzzard-cli -- check <path>` or `cargo run -p buzzard-cli -- inspect <file>`. Run the language server over stdio with `cargo run -p buzzard-cli -- lsp`. There are no ports, services, seed data, or credentials, so instances in separate worktrees do not collide.
 - The fixtures under `crates/buzzard-rsrc/tests/fixtures` and `crates/buzzard-lint/tests/fixtures/project` are real inputs to run against.
 - `README.md` claims that a release build checks 1,300 real files from three open-source projects in about 0.2 s on four cores. That corpus is not in the repo; the README names the three projects. Time `target/release/buzzard check <dir>` after `cargo build --release`. To check that the parser accepts every file in a directory, run `cargo run --release --example corpus -- <dir>`.
+
+- `buzzard tdms info <file>` and `buzzard tdms export <file> --out <path>` run against `crates/buzzard-tdms/tests/fixtures/zenodo-7758683/waveforms-point21.tdms`, the one real TDMS file in the repo.
+- The crate's `README.md` gives the TDMS reader's speed on generated files of about 400 MB. To measure it again, run `tools/tdms-bench.sh [SIZE_MB] [DIR]`; it builds the `tdms_bench` example in release mode, writes each file under `target/tdms-bench` by default, and deletes it afterwards. Update the table in the README when a change moves the numbers.
 
 ## Commits and pull requests
 
