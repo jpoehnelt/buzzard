@@ -288,3 +288,23 @@ fn check_reports_the_state_machine_rules() {
         .count();
     assert_eq!(found, 3);
 }
+
+/// Run over a large body of real files: no panic, and the same bytes on
+/// every run. `BUZZARD_CORPUS=<dir> cargo test -p buzzard-cli --test verify
+/// -- --ignored`.
+#[test]
+#[ignore = "needs BUZZARD_CORPUS to point at a directory of real files"]
+fn corpus_run_is_deterministic() {
+    let corpus =
+        PathBuf::from(std::env::var_os("BUZZARD_CORPUS").expect("BUZZARD_CORPUS is not set"));
+    for format in ["text", "json", "dot"] {
+        let first = run(&["verify", ".", "--format", format], &corpus);
+        assert!(first.0 == 0 || first.0 == 1, "{}", first.2);
+        assert_eq!(first.2, "");
+        assert_eq!(
+            run(&["verify", ".", "--format", format], &corpus),
+            first,
+            "{format}"
+        );
+    }
+}

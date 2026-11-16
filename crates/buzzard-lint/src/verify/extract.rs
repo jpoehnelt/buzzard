@@ -519,10 +519,11 @@ impl<'a> Index<'a> {
             let mut initial = BTreeSet::new();
             for atom in first? {
                 for target in resolver.resolve(&atom, None)? {
-                    initial.insert(match target {
-                        Target::Frame(frame) => names[frame].clone(),
-                        Target::Unmatched(_) => names[selector.default_frame? as usize].clone(),
-                    });
+                    let frame = match target {
+                        Target::Frame(frame) => frame,
+                        Target::Unmatched(_) => selector.default_frame? as usize,
+                    };
+                    initial.insert(names.get(frame)?.clone());
                 }
             }
             Some(initial)

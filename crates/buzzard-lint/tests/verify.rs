@@ -1674,20 +1674,13 @@ fn lint_reports_the_findings_under_three_rules() {
         ]
     );
     // A trap state among states that can stop is a warning.
-    let trap = base().next(1, select(base().item("Exit"), base().item("Init")));
-    let trap = Spec {
-        items: vec!["Init", "Run", "Exit", "Stuck"],
-        ..trap
-    };
-    let mut trap = trap;
-    trap.frames.push(build::Frame {
-        matches: vec![one(3)],
-        next: Expr::Current,
-        stop: boolean(false),
-    });
-    let stuck = trap.item("Stuck");
+    let trap = Spec::enumeration(&["Init", "Run", "Exit", "Stuck"])
+        .starts_in("Init")
+        .goes(1, "Exit")
+        .stop(2, boolean(true));
+    let either = select(trap.item("Stuck"), trap.item("Run"));
     assert_eq!(
-        lint_diagram(trap.next(0, select(stuck, base().item("Run"))).build()),
+        lint_diagram(trap.next(0, either).build()),
         [line(
             "warning",
             "BZ202",
@@ -1738,4 +1731,23 @@ fn issues_say_how_much_they_claim() {
     assert_eq!(codes, ["BZ201", "BZ201", "BZ202"]);
     assert_eq!(Confidence::Proven.as_str(), "PROVEN");
     assert_eq!(Confidence::Heuristic.as_str(), "HEURISTIC");
+}
+
+#[test]
+fn a_selector_table_that_contradicts_itself_is_tolerated() {
+    // A default frame that does not exist, as no decoder would give it.
+    let mut diagram = Spec::strings(&["Init", "Run"])
+        .default(1)
+        .starts(text("Nowhere"))
+        .next(0, text("Zzz"))
+        .build();
+    with_node(&mut diagram, CASE, |case| {
+        case.selector.as_mut().unwrap().default_frame = Some(99);
+    });
+    let found = only(&diagram);
+    assert_eq!(found.initial, None);
+    assert_eq!(found.default, None);
+    assert_eq!(found.states[0].unmatched, names(&["Zzz"]));
+    let _ = found.check();
+    let _ = verify(&diagram).issues();
 }
