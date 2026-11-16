@@ -11,6 +11,11 @@
 //!
 //! followed by an optional attribute list and the content bytes.
 
+// On the declaration because the module is generated.
+#[expect(
+    clippy::doc_markdown,
+    reason = "LVKit and LabVIEW are product names, not code"
+)]
 mod primitives;
 mod tables;
 
@@ -200,6 +205,7 @@ pub struct PrimitiveName {
 ///
 /// The table comes from LVKit (Apache-2.0); see `NOTICE` at the repository
 /// root for its origin and limits.
+#[expect(clippy::doc_markdown, reason = "LVKit is a product name, not code")]
 pub fn primitive_name(id: u32) -> Option<PrimitiveName> {
     let table = primitives::PRIMITIVES;
     let index = table.binary_search_by_key(&id, |(k, _, _)| *k).ok()?;

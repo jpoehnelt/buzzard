@@ -59,7 +59,7 @@ impl TempDir {
     fn edges(&self, graph: &DependencyGraph) -> Vec<String> {
         let rel = |p: &Path| {
             p.strip_prefix(&self.0)
-                .unwrap()
+                .expect("graph paths are under the temp dir")
                 .to_string_lossy()
                 .replace('\\', "/")
         };
@@ -73,12 +73,16 @@ impl TempDir {
     /// This directory spelled relative to the current directory.
     #[cfg(unix)]
     fn relative_spelling(&self) -> PathBuf {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = std::env::current_dir().expect("read the current dir");
         let mut out = PathBuf::new();
         for _ in cwd.components().skip(1) {
             out.push("..");
         }
-        out.join(self.0.strip_prefix("/").unwrap())
+        out.join(
+            self.0
+                .strip_prefix("/")
+                .expect("the temp dir is an absolute path"),
+        )
     }
 
     fn write(&self, rel: &str, bytes: Vec<u8>) {
@@ -869,8 +873,8 @@ fn symbolic_links_never_bind_to_a_workspace_file_of_the_same_name() {
     dir.linked("other.vi", &[("Open.vi", not_a_path)]);
 
     let graph = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
-    assert!(graph.cycles().is_empty());
+    assert_none(&dir.edges(&graph));
+    assert_none(&graph.cycles());
     assert_eq!(dir.check(), []);
 }
 
@@ -889,7 +893,7 @@ fn stale_links_fall_back_to_a_unique_name_but_never_to_the_file_itself() {
     dir.linked("c.vi", &[("c.vi", own)]);
     let gone = LvPath {
         kind: PathKind::Relative,
-        components: vec!["".into(), "elsewhere".into(), "d.vi".into()],
+        components: vec![String::new(), "elsewhere".into(), "d.vi".into()],
     };
     dir.linked("d.vi", &[("d.vi", gone)]);
 
@@ -898,7 +902,7 @@ fn stale_links_fall_back_to_a_unique_name_but_never_to_the_file_itself() {
         dir.edges(&graph),
         ["a.vi -> lib/util.vi", "b.vi -> lib/util.vi"]
     );
-    assert!(graph.cycles().is_empty());
+    assert_none(&graph.cycles());
     assert!(!dir.check().iter().any(|(_, code, _)| *code == "BZ005"));
 }
 
@@ -1020,7 +1024,7 @@ fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
     // A directory component that differs in case.
     let nested = LvPath {
         kind: PathKind::Relative,
-        components: vec!["".into(), "Lib".into(), "Deep.vi".into()],
+        components: vec![String::new(), "Lib".into(), "Deep.vi".into()],
     };
     dir.linked("b.vi", &[("Deep.vi", nested)]);
     dir.linked("lib/deep.vi", &[]);
@@ -1029,8 +1033,8 @@ fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
     dir.linked("c.vi", &[("DEEP.VI", stale)]);
 
     let sensitive = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&sensitive), [] as [&str; 0]);
-    assert!(sensitive.cycles().is_empty());
+    assert_none(&dir.edges(&sensitive));
+    assert_none(&sensitive.cycles());
 
     let insensitive = dir.graph(CaseSensitivity::Insensitive);
     assert_eq!(
@@ -1068,7 +1072,7 @@ fn case_insensitive_lookup_prefers_exact_and_refuses_ambiguity() {
     }
 }
 
-/// `テスト.vi` as Japanese LabVIEW stores it: Shift-JIS bytes.
+/// `テスト.vi` as the editor stores it on a Japanese system: Shift-JIS bytes.
 const SJIS_NAME: &[u8] = b"\x83\x65\x83\x58\x83\x67.vi";
 
 fn byte_links(links: &[buzzard_rsrc::builder::ByteLink<'_>]) -> Vec<u8> {
@@ -1139,7 +1143,7 @@ fn code_page_recovery_needs_a_single_candidate() {
     // With a file for each reading there is no telling which one is meant.
     dir.linked("Дг.vi", &[]);
     let graph = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
+    assert_none(&dir.edges(&graph));
 
     // A name that is right as stored is taken as stored, whatever else
     // its bytes could mean.
@@ -1153,5 +1157,5 @@ fn code_page_recovery_needs_a_single_candidate() {
     dir.linked("テスト.vi", &[]);
     dir.linked("main.vi", &[("missing.vi", LvPath::sibling("missing.vi"))]);
     let graph = dir.graph(CaseSensitivity::Sensitive);
-    assert_eq!(dir.edges(&graph), [] as [&str; 0]);
+    assert_none(&dir.edges(&graph));
 }

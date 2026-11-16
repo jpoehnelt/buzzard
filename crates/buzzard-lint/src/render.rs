@@ -129,7 +129,7 @@ fn is_structure(node: &Node) -> bool {
 fn anchor(node: &Node, terminal: &Terminal, origin: Point) -> Option<Point> {
     let b = terminal.bounds?;
     let (left, right) = (i32::from(b.left), i32::from(b.right));
-    let middle = (i32::from(b.top) + i32::from(b.bottom)) / 2;
+    let middle = i32::midpoint(i32::from(b.top), i32::from(b.bottom));
     if node.class == "sRN" {
         // A front-panel terminal is its own box: leave from the right, enter
         // on the left.
@@ -141,15 +141,16 @@ fn anchor(node: &Node, terminal: &Terminal, origin: Point) -> Option<Point> {
         return Some((origin.0 + x, origin.1 + middle));
     }
     let base = node.bounds?;
-    let x = (left + right) / 2;
+    let x = i32::midpoint(left, right);
     Some((
         origin.0 + i32::from(base.left) + x,
         origin.1 + i32::from(base.top) + middle,
     ))
 }
 
-/// Render the diagram as a standalone SVG document.
-pub fn to_svg(diagram: &BlockDiagram) -> String {
+/// Draw the top-level diagram and every frame that needs a panel of its
+/// own, each with its title (empty for the top level).
+fn draw_panels(diagram: &BlockDiagram) -> Vec<(String, Canvas)> {
     let mut queue: Vec<Panel<'_>> = vec![Panel {
         title: String::new(),
         diagram: &diagram.root,
@@ -165,7 +166,7 @@ pub fn to_svg(diagram: &BlockDiagram) -> String {
             canvas.cover(w, h);
             let _ = writeln!(
                 canvas.body,
-                r##"<rect x="0" y="0" width="{w}" height="{h}" class="structure"/>"##
+                r#"<rect x="0" y="0" width="{w}" height="{h}" class="structure"/>"#
             );
         }
         // Explicit stack: a structure's first frame is drawn inside it.
@@ -223,20 +224,24 @@ pub fn to_svg(diagram: &BlockDiagram) -> String {
         panels.push((std::mem::take(&mut queue[next].title), canvas));
         next += 1;
     }
+    panels
+}
 
-    // Stack the panels vertically.
+/// Render the diagram as a standalone SVG document.
+pub fn to_svg(diagram: &BlockDiagram) -> String {
     const MARGIN: i32 = 24;
     const HEADER: i32 = 22;
+    // Stack the panels vertically.
     let mut out = String::new();
     let mut y = MARGIN;
     let mut width = 320;
     let mut placed = String::new();
-    for (title, canvas) in &panels {
+    for (title, canvas) in &draw_panels(diagram) {
         let (w, h) = (canvas.max.0 - canvas.min.0, canvas.max.1 - canvas.min.1);
         if !title.is_empty() {
             let _ = writeln!(
                 placed,
-                r##"<text x="{MARGIN}" y="{}" class="panel">{}</text>"##,
+                r#"<text x="{MARGIN}" y="{}" class="panel">{}</text>"#,
                 y + 12,
                 escape(title)
             );
@@ -244,7 +249,7 @@ pub fn to_svg(diagram: &BlockDiagram) -> String {
         }
         let _ = writeln!(
             placed,
-            r##"<g transform="translate({},{})">"##,
+            r#"<g transform="translate({},{})">"#,
             MARGIN - canvas.min.0,
             y - canvas.min.1
         );
@@ -255,7 +260,7 @@ pub fn to_svg(diagram: &BlockDiagram) -> String {
     }
     let _ = writeln!(
         out,
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {y}" width="{}" height="{}" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">"##,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {y}" width="{}" height="{}" font-family="DejaVu Sans, Helvetica, Arial, sans-serif">"#,
         width * 3 / 2,
         y * 3 / 2
     );
@@ -272,7 +277,7 @@ pub fn to_svg(diagram: &BlockDiagram) -> String {
          .panel{font-size:11px;font-weight:bold;fill:#111827}\n\
          </style>\n",
     );
-    let _ = writeln!(out, r##"<rect class="bg" width="{width}" height="{y}"/>"##);
+    let _ = writeln!(out, r#"<rect class="bg" width="{width}" height="{y}"/>"#);
     out.push_str(&placed);
     out.push_str("</svg>\n");
     out
@@ -306,7 +311,7 @@ fn draw_node(
                 // The inner side of a tunnel: a small square on the border.
                 let _ = writeln!(
                     canvas.body,
-                    r##"<rect x="{x}" y="{y}" width="{}" height="{}" class="tunnel" fill="{}"><title>tunnel #{} ({text})</title></rect>"##,
+                    r#"<rect x="{x}" y="{y}" width="{}" height="{}" class="tunnel" fill="{}"><title>tunnel #{} ({text})</title></rect>"#,
                     b.width(),
                     b.height(),
                     colour(terminal.data_type),
@@ -321,7 +326,7 @@ fn draw_node(
             };
             let _ = writeln!(
                 canvas.body,
-                r##"<g><title>{kind} terminal #{} ({text})</title><rect x="{x}" y="{y}" width="{}" height="{}" rx="2" class="panelterm" stroke="{}"/><text x="{x}" y="{}" class="name">{}</text></g>"##,
+                r#"<g><title>{kind} terminal #{} ({text})</title><rect x="{x}" y="{y}" width="{}" height="{}" rx="2" class="panelterm" stroke="{}"/><text x="{x}" y="{}" class="name">{}</text></g>"#,
                 terminal.uid,
                 b.width(),
                 b.height(),
@@ -346,7 +351,7 @@ fn draw_node(
     };
     let _ = writeln!(
         canvas.body,
-        r##"<g><title>{} #{}</title><rect x="{x}" y="{y}" width="{}" height="{}" rx="{}" class="{class}"/><text x="{x}" y="{}" class="name">{}</text></g>"##,
+        r#"<g><title>{} #{}</title><rect x="{x}" y="{y}" width="{}" height="{}" rx="{}" class="{class}"/><text x="{x}" y="{}" class="name">{}</text></g>"#,
         escape(&describe(node)),
         node.uid,
         b.width(),
@@ -377,10 +382,10 @@ fn draw_wires(diagram: &Diagram, anchors: &HashMap<i32, Point>, canvas: &mut Can
             let Some(&(x2, y2)) = anchors.get(sink) else {
                 continue;
             };
-            let middle = (x1 + x2) / 2;
+            let middle = i32::midpoint(x1, x2);
             let _ = writeln!(
                 canvas.body,
-                r##"<path class="wire" stroke="{}" d="M{x1},{y1} H{middle} V{y2} H{x2}"><title>wire #{} ({})</title></path>"##,
+                r#"<path class="wire" stroke="{}" d="M{x1},{y1} H{middle} V{y2} H{x2}"><title>wire #{} ({})</title></path>"#,
                 colour(data_type),
                 wire.uid,
                 type_label(data_type),
@@ -692,7 +697,8 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(index, (id, _))| {
-                let top = index as i16 * 40;
+                let top = i16::try_from(index * 40)
+                    .expect("every box of the table fits in i16 coordinates");
                 Node {
                     bounds: Some(Rect {
                         top,
@@ -700,7 +706,10 @@ mod tests {
                         bottom: top + 32,
                         right: 32,
                     }),
-                    ..function(index as i32 + 10, *id)
+                    ..function(
+                        i32::try_from(index + 10).expect("every index of the table fits in a uid"),
+                        *id,
+                    )
                 }
             })
             .collect();

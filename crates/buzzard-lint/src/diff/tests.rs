@@ -75,7 +75,10 @@ fn node(uid: i32, class: &str, terminals: Vec<Terminal>) -> Node {
         class: class.to_owned(),
         name: None,
         primitive: None,
-        bounds: Some(rect(uid as i16, 0)),
+        bounds: Some(rect(
+            i16::try_from(uid).expect("test node ids fit in a coordinate"),
+            0,
+        )),
         terminals,
         diagrams: Vec::new(),
     }
@@ -110,7 +113,7 @@ fn frame(uid: i32, nodes: Vec<Node>, wires: &[(i32, &[i32])]) -> Diagram {
             .iter()
             .enumerate()
             .map(|(i, (source, sinks))| Wire {
-                uid: uid * 1000 + i as i32,
+                uid: uid * 1000 + i32::try_from(i).expect("a test diagram has few wires"),
                 source: *source,
                 sinks: sinks.to_vec(),
             })

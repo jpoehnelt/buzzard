@@ -19,19 +19,27 @@ pub enum Successors {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Stop {
+    /// The loop always runs another iteration.
     Never,
+    /// The loop always stops.
     Always,
     /// Depends on data, or could not be read.
     Maybe,
 }
 
+/// One state: a case of the case structure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct State {
+    /// Name of the state: the value that selects its case.
     pub name: String,
+    /// Which states it may hand over to.
     pub successors: Successors,
+    /// Whether the loop stops after an iteration in this state.
     pub stop: Stop,
 }
 
+/// The abstract model of one state machine: a while loop around a case
+/// structure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Machine {
     /// Where the machine is on the diagram, e.g. `while loop #12`.
@@ -45,26 +53,39 @@ pub struct Machine {
     pub default: Option<String>,
 }
 
+/// One result of [`Machine::check`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Finding {
     /// Proven: no execution reaches this state.
-    Unreachable { state: String },
+    Unreachable {
+        /// Name of the state.
+        state: String,
+    },
     /// Proven: once in this state the loop can never stop.
-    CannotTerminate { state: String },
+    CannotTerminate {
+        /// Name of the state.
+        state: String,
+    },
     /// A state hands over to a name that has no case; the default state
     /// runs instead. Usually a misspelled or deleted state.
     UndefinedTarget {
+        /// The state that writes the name.
         from: String,
+        /// The name without a case.
         target: String,
+        /// The default state, or `None` when there is none and the name
+        /// selects nothing.
         handled_by: Option<String>,
     },
     /// Proven: the loop never stops from any starting state.
     NeverTerminates,
 }
 
+/// What [`Machine::check`] found out about a machine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Report {
+    /// The machine that was checked.
     pub machine: Machine,
     /// States the model can reach, in state order. `None` when the initial
     /// state is unknown, in which case nothing is claimed about
@@ -72,6 +93,8 @@ pub struct Report {
     pub reachable: Option<Vec<String>>,
     /// Resolved transitions `(from, to)`, sorted, for display and export.
     pub transitions: Vec<(String, String)>,
+    /// Proven unreachable or non-terminating states and undefined targets,
+    /// sorted.
     pub findings: Vec<Finding>,
     /// True when every successor and every stop condition was read exactly,
     /// so the model is the program's state graph and not only a bound on it.

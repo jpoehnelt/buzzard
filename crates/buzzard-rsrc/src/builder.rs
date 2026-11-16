@@ -224,7 +224,7 @@ fn push_pstr(out: &mut Vec<u8>, text: &[u8]) {
 /// If the path has more than 65,535 components or a component is longer
 /// than 255 bytes.
 pub fn encode_pth0(path: &LvPath) -> Vec<u8> {
-    let components: Vec<&[u8]> = path.components.iter().map(|c| c.as_bytes()).collect();
+    let components: Vec<&[u8]> = path.components.iter().map(String::as_bytes).collect();
     encode_pth0_bytes(path.kind, &components)
 }
 
