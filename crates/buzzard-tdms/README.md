@@ -215,9 +215,11 @@ Megabytes per second are file bytes over wall time.
 | read one channel (1.4 MB out of 418 MB of rows) | 72 ms | 19 ms |
 | export to Parquet, Snappy | 520 MB/s | 970 MB/s |
 
-For comparison, npTDMS 1.14 on the same machine reads files of the last
-two shapes at 470 to 750 MB/s and 170 MB/s, and takes 1.9 s for one
-channel of the interleaved file.
+For comparison: npTDMS 1.14, which uses one thread, was measured before
+this crate was written, on a machine of the same kind and on 384 MB files
+of the last two shapes. It read them at 470 to 750 MB/s and at 170 MB/s,
+and took 1.9 s for one channel of the interleaved file. The two sets of
+numbers were not taken in the same run.
 
 **The cost of not mapping.** The benchmark reads each file a second time
 from a copy in memory, which is what a mapped backend would do: the same
