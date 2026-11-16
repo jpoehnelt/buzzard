@@ -105,12 +105,26 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
 
+  # Advisories, licenses, duplicate crates and sources; see deny.toml. Needs
+  # no compilation, only Cargo.lock and the RustSec database.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features --locked
+
   # The one check to require in branch protection. It fails if any job above
   # failed or was cancelled, and the list of jobs can change without touching
   # the repository settings.
   ci:
     if: always()
-    needs: [fmt, lint, test, msrv]
+    needs: [fmt, lint, test, msrv, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

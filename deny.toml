@@ -1,0 +1,36 @@
+# cargo-deny checks the dependency tree in CI: `cargo deny check`.
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+# Fail on any RustSec advisory, including unmaintained and unsound crates,
+# anywhere in the tree. Ignoring one needs an entry here with a reason.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive licenses compatible with distributing an MIT binary.
+allow = [
+    "Apache-2.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+[bans]
+# Duplicate versions come from third-party crates and cannot always be
+# avoided; report them without failing.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

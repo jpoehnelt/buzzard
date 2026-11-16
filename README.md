@@ -103,6 +103,43 @@ edited as text buffers.
 cargo test --workspace
 ```
 
+### Lints and checks
+
+CI runs these, and fails on any warning:
+
+```bash
+cargo fmt --all --check
+```
+
+```bash
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+```bash
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+```
+
+```bash
+cargo deny check
+```
+
+The lint policy lives in `[workspace.lints]` in the root `Cargo.toml`, and
+every crate inherits it. It forbids `unsafe`, requires docs on public items,
+enables clippy's `pedantic` and `cargo` groups, and adds a few `restriction`
+lints:
+
+- no `unwrap()` outside tests;
+- no printing from library crates;
+- no iterating hash maps, so output stays deterministic;
+- no bare `#[allow]`.
+
+When a lint has to be silenced, use `#[expect(lint, reason = "...")]` on the
+smallest item that needs it. `deny.toml` configures [cargo-deny], which checks
+for RustSec advisories, licenses outside the allow-list, wildcard versions and
+crates from unknown sources.
+
+[cargo-deny]: https://github.com/EmbarkStudios/cargo-deny
+
 ### Conformance fixtures
 
 `crates/buzzard-rsrc/tests/fixtures` holds real binaries saved by several
