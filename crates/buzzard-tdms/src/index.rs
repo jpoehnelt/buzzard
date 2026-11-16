@@ -33,6 +33,9 @@ const INDEX_DAQMX_DIGITAL: u32 = 0x126A;
 
 const ABSENT: u32 = u32::MAX;
 
+/// How many anomalies of one file are kept.
+pub(crate) const MAX_ANOMALIES: usize = 1024;
+
 /// Where the values of one channel (or one scaler) sit inside a chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Loc {
@@ -437,6 +440,10 @@ struct Builder {
     layout_chunks: Vec<u64>,
     layout_entries: u64,
     max_layout_entries: u64,
+    /// Entries visited while building layouts, stored or not.
+    layout_work: u64,
+    /// Bytes of metadata parsed so far.
+    meta_bytes: u64,
     /// The layout of the current list, and the flags it was built for.
     current: Option<(u32, u32)>,
     blocks: Vec<Block>,
@@ -459,11 +466,21 @@ impl Builder {
             layout_chunks: Vec::new(),
             layout_entries: 0,
             max_layout_entries: options.max_layout_entries,
+            layout_work: 0,
+            meta_bytes: 0,
             current: None,
             blocks: Vec::new(),
             anomalies: Vec::new(),
             versions: Vec::new(),
             segments: 0,
+        }
+    }
+
+    /// Records an anomaly. A damaged file can have one in every segment,
+    /// so only the first [`MAX_ANOMALIES`] are kept.
+    fn note(&mut self, anomaly: Anomaly) {
+        if self.anomalies.len() < MAX_ANOMALIES {
+            self.anomalies.push(anomaly);
         }
     }
 
@@ -667,7 +684,7 @@ impl Builder {
                 }
             }
             if lossy {
-                self.anomalies.push(Anomaly::InvalidUtf8 {
+                self.note(Anomaly::InvalidUtf8 {
                     segment: seg.number,
                     offset: at,
                 });
@@ -681,7 +698,9 @@ impl Builder {
             return Ok(id);
         }
         self.layout_entries += layout.entries.len() as u64;
-        if self.layout_entries > self.max_layout_entries {
+        // A layout that the file spells out in its metadata is paid for by
+        // those bytes; only layouts beyond that count against the limit.
+        if self.layout_entries > self.max_layout_entries.max(self.meta_bytes / 32) {
             return Err(Error::IndexTooLarge {
                 limit: self.max_layout_entries,
             });
@@ -708,6 +727,19 @@ impl Builder {
             offset: seg.pos,
             segment: seg.number,
         };
+        // The same budget for time: a file cannot make the reader walk a
+        // long object list again and again with a few bytes per segment.
+        self.layout_work = self.layout_work.saturating_add(self.list.len() as u64);
+        if self.layout_work
+            > self
+                .max_layout_entries
+                .saturating_mul(16)
+                .saturating_add(self.meta_bytes)
+        {
+            return Err(Error::IndexTooLarge {
+                limit: self.max_layout_entries,
+            });
+        }
         let data: Vec<Indexed<'_>> = self
             .list
             .iter()
@@ -783,7 +815,7 @@ impl Builder {
         let version = seg.lead.version;
         if !self.versions.contains(&version) {
             if version != 4712 && version != 4713 {
-                self.anomalies.push(Anomaly::UnknownVersion {
+                self.note(Anomaly::UnknownVersion {
                     segment: seg.number,
                     version,
                 });
@@ -794,6 +826,7 @@ impl Builder {
             }
         }
         if let Some(meta) = seg.meta {
+            self.meta_bytes = self.meta_bytes.saturating_add(meta.len() as u64);
             if seg.lead.toc & TOC_NEW_OBJ_LIST != 0 {
                 for &(id, _) in &self.list {
                     self.list_at[id as usize] = ABSENT;
@@ -809,7 +842,7 @@ impl Builder {
             return Ok(());
         }
         if seg.lead.toc & TOC_RAW == 0 {
-            self.anomalies.push(Anomaly::UnindexedData {
+            self.note(Anomaly::UnindexedData {
                 segment: seg.number,
                 offset: data_start,
                 bytes: available,
@@ -819,7 +852,7 @@ impl Builder {
         let id = self.layout(seg)?;
         let layout = Arc::clone(&self.layouts[id as usize]);
         if layout.chunk_size == 0 {
-            self.anomalies.push(Anomaly::UnindexedData {
+            self.note(Anomaly::UnindexedData {
                 segment: seg.number,
                 offset: data_start,
                 bytes: available,
@@ -839,7 +872,7 @@ impl Builder {
                 let id = self.intern(partial)?;
                 self.add_block(id, offset, 1);
             }
-            self.anomalies.push(Anomaly::PartialChunk {
+            self.note(Anomaly::PartialChunk {
                 segment: seg.number,
                 offset,
                 bytes: rest,
@@ -1181,7 +1214,7 @@ fn walk_data(data: &dyn ReadAt, options: &OpenOptions, source: IndexSource) -> R
             });
         }
         if left < LEAD_IN {
-            builder.anomalies.push(Anomaly::TruncatedLeadIn {
+            builder.note(Anomaly::TruncatedLeadIn {
                 offset: pos,
                 bytes: left,
             });
@@ -1190,13 +1223,13 @@ fn walk_data(data: &dyn ReadAt, options: &OpenOptions, source: IndexSource) -> R
         let lead = parse_lead(head);
         let room = left - LEAD_IN;
         let (len, incomplete) = if lead.next == u64::MAX {
-            builder.anomalies.push(Anomaly::UnfinishedSegment {
+            builder.note(Anomaly::UnfinishedSegment {
                 segment: number,
                 offset: pos,
             });
             (room, true)
         } else if lead.next > room {
-            builder.anomalies.push(Anomaly::TruncatedSegment {
+            builder.note(Anomaly::TruncatedSegment {
                 segment: number,
                 offset: pos,
                 missing: lead.next - room,
@@ -1207,7 +1240,7 @@ fn walk_data(data: &dyn ReadAt, options: &OpenOptions, source: IndexSource) -> R
         };
         if lead.raw > len {
             if incomplete {
-                builder.anomalies.push(Anomaly::TruncatedMetadata {
+                builder.note(Anomaly::TruncatedMetadata {
                     segment: number,
                     offset: pos,
                 });

@@ -145,6 +145,10 @@ verbose_file_reads = "warn"
 [profile.dev.package.buzzard-rsrc]
 opt-level = 2
 
+# The TDMS tests damage generated files hundreds of thousands of times.
+[profile.dev.package.buzzard-tdms]
+opt-level = 2
+
 [profile.dev.package."*"]
 opt-level = 2
 

@@ -58,11 +58,14 @@ impl OpenOptions {
         self
     }
 
-    /// The largest number of channel positions the index may hold over all
-    /// distinct chunk layouts (16,777,216 by default, about 1 GiB). Only a
-    /// file that changes which channels it writes, again and again in ways
-    /// it never repeats, comes near it; opening such a file fails with
-    /// [`Error::IndexTooLarge`] and does not exhaust memory.
+    /// A limit on the index, in channel positions summed over all distinct
+    /// chunk layouts (16,777,216 by default, under 1 GiB of memory).
+    ///
+    /// Layouts that a file spells out in its metadata never count against
+    /// it: their cost is in proportion to the file. The limit stops a file
+    /// that makes the reader derive ever new layouts of many channels from
+    /// a few bytes per segment; opening such a file fails with
+    /// [`Error::IndexTooLarge`] after bounded time and memory.
     #[must_use]
     pub fn max_layout_entries(mut self, limit: u64) -> Self {
         self.max_layout_entries = limit;
@@ -232,6 +235,7 @@ impl TdmsFile {
     }
 
     /// What is wrong with the file, when it could be opened all the same.
+    /// At most 1024 anomalies are kept.
     pub fn anomalies(&self) -> &[Anomaly] {
         &self.index.anomalies
     }

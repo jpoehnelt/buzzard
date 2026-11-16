@@ -21,6 +21,8 @@
     reason = "generated test values are cut down from a hash on purpose"
 )]
 
+use std::collections::HashMap;
+
 use crate::types::{Column, Complex32, Complex64, DataType, PropertyValue, Timestamp};
 
 /// The values of one channel: an alias of [`Column`].
@@ -697,6 +699,9 @@ impl FileBuilder {
     )]
     pub fn build(&self) -> Built {
         let mut models: Vec<Model> = Vec::new();
+        let mut model_of: HashMap<&str, usize> = HashMap::new();
+        // Position of each model in `list`, when it is there.
+        let mut listed: Vec<Option<usize>> = Vec::new();
         // The current object list: index into `models`, and whether the
         // object has data.
         let mut list: Vec<(usize, bool)> = Vec::new();
@@ -718,26 +723,25 @@ impl FileBuilder {
             if segment.metadata {
                 if new_list {
                     list.clear();
+                    listed.fill(None);
                 }
                 meta.u32(segment.objects.len() as u32);
                 for object in &segment.objects {
-                    let at = models
-                        .iter()
-                        .position(|m| m.path == object.path)
-                        .unwrap_or_else(|| {
-                            models.push(Model {
-                                path: object.path.clone(),
-                                names: names_of(&object.path),
-                                seed: seed_of(&object.path),
-                                counter: 0,
-                                file_type: None,
-                                remembered: None,
-                                values: None,
-                                scalers: Vec::new(),
-                                props: Vec::new(),
-                            });
-                            models.len() - 1
+                    let at = *model_of.entry(object.path.as_str()).or_insert_with(|| {
+                        models.push(Model {
+                            path: object.path.clone(),
+                            names: names_of(&object.path),
+                            seed: seed_of(&object.path),
+                            counter: 0,
+                            file_type: None,
+                            remembered: None,
+                            values: None,
+                            scalers: Vec::new(),
+                            props: Vec::new(),
                         });
+                        listed.push(None);
+                        models.len() - 1
+                    });
                     let model = &mut models[at];
                     meta.text(&object.path);
                     let has_data = match &object.index {
@@ -858,9 +862,11 @@ impl FileBuilder {
                             None => model.props.push((name.clone(), *dtype, value.clone())),
                         }
                     }
-                    match list.iter_mut().find(|(m, _)| *m == at) {
-                        Some(entry) => entry.1 = has_data,
-                        None => list.push((at, has_data)),
+                    if let Some(position) = listed[at] {
+                        list[position].1 = has_data;
+                    } else {
+                        listed[at] = Some(list.len());
+                        list.push((at, has_data));
                     }
                 }
             }
