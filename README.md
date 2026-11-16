@@ -37,6 +37,20 @@ buzzard inspect Main.vi --format json
 buzzard inspect Motor.lvclass
 ```
 
+`inspect` includes the block diagram: an outline of nodes, terminals and
+wires in Markdown, the full graph in JSON, or a picture:
+
+```bash
+buzzard inspect Main.vi --format svg > Main.svg
+buzzard inspect Main.vi --format mermaid
+buzzard inspect Main.vi --format dot | dot -Tpng -o Main.png
+```
+
+The SVG places nodes, structures and tunnels where the editor drew them.
+Wires are drawn as elbows between their end points, not along their original
+routes, and built-in functions are labelled boxes (`function 1050`) because
+neither their icons nor their names are stored in the file.
+
 Run the language server over stdio:
 
 ```bash
@@ -149,6 +163,19 @@ Set either with `git config --global` to have it in every repository; the
 | `BZ004` | warning | Leftover breakpoints or suspend-when-called, or a password-protected block diagram |
 | `BZ005` | error | Part of a circular dependency (VI calls and class inheritance) |
 | `BZ006` | warning | A project, library or class lists a member whose file does not exist on disk |
+| `BZ101` | warning or info | An error output on the block diagram is not wired |
+| `BZ102` | warning | A reference is created and never reaches anything that could close it |
+
+`BZ101` is a warning when the file has automatic error handling off, because
+the error is then silently discarded, and informational when it is on. Error
+handler subVIs are not reported; ending the chain is their job.
+
+`BZ102` is deliberately conservative. It follows a queue, file, network
+connection or similar reference from the built-in function that creates it,
+through functions that pass it on, and reports only when every path ends at
+an unwired output. A reference that reaches a subVI without coming back out,
+a front-panel terminal, a tunnel or anything else it cannot follow is
+assumed to be handled.
 
 `BZ002` needs one version that more files use than any other. When two
 versions are tied for the lead, nothing is reported.
@@ -197,6 +224,7 @@ accepted as well.
 | `workspace/symbol` | Fuzzy search over VIs, controls, classes, libraries and projects |
 | `textDocument/hover` | Saved version, execution flags, dependency and caller counts; for a project, library or class: kind, version, member count and parent class |
 | `textDocument/references` | Every file in the workspace that uses the target file |
+| `buzzard/exportAst` | Custom request: `{ "uri": ..., "format": "json" or "markdown" }` returns the block diagram of one file, decoded from disk on request |
 | `buzzard/inspect` | Custom request: `{ "uri": ... }` returns metadata, callers, callees and owners as JSON; for a project, library or class: the parsed file, its members, owners, parent and child classes |
 
 ## Use with AI agents (MCP)
@@ -251,8 +279,8 @@ Any other editor with a Language Server Protocol client can run
 ## Design goals
 
 - **Fast.** Files are parsed in parallel without copying resource payloads.
-  A release build checks about 10,800 real VIs in roughly 130 ms on four
-  cores.
+  A release build checks 1,300 real files from three open-source projects,
+  block diagrams included, in about 0.2 s on four cores.
 - **Low latency.** A save re-parses only the files that changed, and only
   diagnostics that differ from the last published set are sent.
 - **Deterministic.** Output is sorted and independent of thread scheduling;
@@ -327,7 +355,6 @@ does not lead to a workspace file:
   counts as two files.
 - Hover text and `BZ003` messages show a name from a non-UTF-8 code page as
   stored, one character per byte, even when its link was followed.
-
 - Dependencies are read from the link-info blocks by locating each stored
   path and the name in front of it, rather than by decoding every link
   record variant. This holds on all fixtures but is a heuristic.
@@ -339,8 +366,16 @@ does not lead to a workspace file:
 - `BZ006` is re-evaluated when a watched `.vi`, `.ctl` or project file
   changes. Deleting a member of another type (a `.dll`, a text file) is only
   noticed at the next such change.
-- The block diagram itself is not decoded yet, so there are no dataflow
-  rules.
+- Built-in functions on the block diagram are known only by a numeric id.
+  Nothing in the file names them, so the dataflow rules reason from terminal
+  types and wiring alone.
+- Constant values, label text, case selector values and wire routes are not
+  decoded.
+- The dataflow rules and the diagram's terminal directions were validated
+  on files saved by versions 13 to 26. Files saved before version 8 use a
+  different heap format and have no decoded diagram.
+- VIs inside `.llb` archives, packed libraries and installer packages are
+  not opened.
 - The dependency graph is rebuilt from in-memory metadata on every change.
   That costs milliseconds at the sizes tested; it is not yet edge-incremental.
 
@@ -354,7 +389,14 @@ pylavi. The project file fixtures under
 `crates/buzzard-lint/tests/fixtures/project` come from
 [JKISoftware/JKI-State-Machine-Objects](https://github.com/JKISoftware/JKI-State-Machine-Objects)
 (BSD 3-Clause) and [ni/grpc-labview](https://github.com/ni/grpc-labview)
-(MIT); their licence texts are kept next to the files.
+(MIT); their licence texts are kept next to the files. The names of heap
+tags and object classes are generated from pylabview.
+
+The conformance suite in this repository uses 34 small files. During
+development the parser, diagram decoder and renderers are also run over
+about 1,300 files from ni/grpc-labview, JKISoftware/JKI-State-Machine and
+LabVIEW-Open-Source/LV-MQTT-Broker with
+`cargo run --release -p buzzard-rsrc --example corpus -- <dir>`.
 
 ## Trademark disclaimer
 
