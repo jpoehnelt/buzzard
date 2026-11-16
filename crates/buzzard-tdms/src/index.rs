@@ -536,14 +536,14 @@ impl Builder {
         }
     }
 
-    fn set_index(&mut self, id: u32, index: RawIndex) {
+    fn set_index(&mut self, id: u32, index: RawIndex, cur: &Cur<'_>) -> Result<()> {
         let object = &mut self.objects[id as usize];
         if object.index.as_ref() != Some(&index) {
             if let RawIndex::Daqmx {
                 scalers, digital, ..
             } = &index
             {
-                object.scalers = scalers
+                let declared: Vec<ScalerInfo> = scalers
                     .iter()
                     .map(|s| ScalerInfo {
                         scale_id: s.scale_id,
@@ -551,11 +551,28 @@ impl Builder {
                         digital: *digital,
                     })
                     .collect();
+                // Where a scaler's values sit may change from one segment
+                // to the next; which scalers a channel has, and their
+                // types, may not, or no single read could cover the
+                // channel. The order in which they are listed is free.
+                let key = |s: &ScalerInfo| (s.scale_id, s.dtype.code(), s.digital);
+                let sorted = |list: &[ScalerInfo]| {
+                    let mut keys: Vec<_> = list.iter().map(key).collect();
+                    keys.sort_unstable();
+                    keys
+                };
+                if matches!(object.index, Some(RawIndex::Daqmx { .. }))
+                    && sorted(&object.scalers) != sorted(&declared)
+                {
+                    return Err(cur.corrupt("a channel changes its scalers"));
+                }
+                object.scalers = declared;
             }
             object.index = Some(index);
             self.current = None;
         }
         self.list_set(id, true);
+        Ok(())
     }
 
     fn daqmx_index(&mut self, id: u32, digital: bool, cur: &mut Cur<'_>) -> Result<()> {
@@ -606,8 +623,8 @@ impl Builder {
                 scalers,
                 widths,
             },
-        );
-        Ok(())
+            cur,
+        )
     }
 
     fn plain_index(&mut self, id: u32, len: u32, cur: &mut Cur<'_>) -> Result<()> {
@@ -630,8 +647,7 @@ impl Builder {
             return Err(cur.corrupt("a plain raw data index has the DAQmx data type"));
         }
         self.set_dtype(id, dtype, cur)?;
-        self.set_index(id, RawIndex::Plain { n, total });
-        Ok(())
+        self.set_index(id, RawIndex::Plain { n, total }, cur)
     }
 
     fn metadata(&mut self, seg: &Segment<'_>, meta: &[u8]) -> Result<()> {
@@ -1111,24 +1127,28 @@ fn partial_layout(full: &Layout, available: u64, incomplete: bool) -> Option<Lay
             }));
         }
         Kind::Daqmx => {
-            // Rows can be counted only when there is a single raw buffer.
-            let width = match &full.entries.first()?.source {
-                Source::Daqmx(scalers) => scalers.first()?.loc.stride,
-                _ => return None,
-            };
-            let first = full.entries.first()?;
-            if width.checked_mul(first.n) != Some(full.chunk_size) {
-                return None;
+            // The raw buffers follow one another, so they are complete in
+            // order until the bytes run out, as the channels of a
+            // contiguous chunk are. A channel has as many values as the
+            // shortest of the buffers its scalers are in has whole rows.
+            for entry in &full.entries {
+                let Source::Daqmx(scalers) = &entry.source else {
+                    return None;
+                };
+                let rows = scalers
+                    .iter()
+                    .map(|s| available.saturating_sub(s.loc.offset - s.loc.col) / s.loc.stride)
+                    .min()
+                    .unwrap_or(0)
+                    .min(entry.n);
+                if rows > 0 {
+                    entries.push(Entry {
+                        obj: entry.obj,
+                        n: rows,
+                        source: entry.source.clone(),
+                    });
+                }
             }
-            let rows = available / width;
-            if rows == 0 {
-                return None;
-            }
-            entries.extend(full.entries.iter().map(|e| Entry {
-                obj: e.obj,
-                n: rows,
-                source: e.source.clone(),
-            }));
         }
         Kind::Contiguous => {
             if full
@@ -1274,19 +1294,58 @@ fn walk_data(data: &dyn ReadAt, options: &OpenOptions, source: IndexSource) -> R
     Ok(builder.finish(source))
 }
 
+/// A segment of the index file to compare with the data file's.
+#[derive(Clone, Copy)]
+struct Check {
+    /// Offset of the segment in the data file.
+    pos: u64,
+    /// Offset of the segment in the index file.
+    at: u64,
+    /// The lead-in after its tag, as the index file has it.
+    lead: [u8; 24],
+    /// Bytes of metadata after the lead-in.
+    meta: u64,
+}
+
+/// Whether `len` bytes at `a_at` of `a` equal those at `b_at` of `b`.
+/// `None` when either cannot be read.
+fn same_bytes(a: &dyn ReadAt, a_at: u64, b: &dyn ReadAt, b_at: u64, len: u64) -> Option<bool> {
+    const STEP: u64 = 1 << 16;
+    let step = usize::try_from(len.min(STEP)).ok()?;
+    let mut one = vec![0u8; step];
+    let mut other = vec![0u8; step];
+    let mut done = 0u64;
+    while done < len {
+        let n = usize::try_from((len - done).min(STEP)).ok()?;
+        a.read_exact_at(a_at.checked_add(done)?, &mut one[..n])
+            .ok()?;
+        b.read_exact_at(b_at.checked_add(done)?, &mut other[..n])
+            .ok()?;
+        if one[..n] != other[..n] {
+            return Some(false);
+        }
+        done += n as u64;
+    }
+    Some(true)
+}
+
 /// Walks the index file, and checks it against the data file. `None` when
 /// the index file cannot be trusted for any reason.
 fn walk_index(data: &dyn ReadAt, index: &dyn ReadAt, options: &OpenOptions) -> Option<Index> {
-    // How many lead-ins of the data file are compared with the index
-    // file's. Each is a read at a far-apart offset, which is what an index
-    // file is there to avoid; a stale index file almost always differs in
-    // total length or in its first or last segment already.
+    // How many segments of the data file are compared with the index
+    // file's: the lead-in and the metadata of each, byte for byte. Each is
+    // a read at a far-apart offset, which is what an index file is there to
+    // avoid; a stale index file almost always differs in total length or
+    // in its first or last segment already. A file of up to 64 segments is
+    // compared in full; of a longer one, evenly spaced segments and the
+    // last. An index file that differs only in a segment that is not
+    // compared is believed.
     const MAX_CHECKS: usize = 64;
     let size = data.size();
     let index_size = index.size();
     let mut window = Window::new(index, 1 << 20);
     let mut builder = Builder::new(options);
-    let mut checks: Vec<(u64, [u8; 24])> = Vec::new();
+    let mut checks: Vec<Check> = Vec::new();
     let mut every = 1u64;
     let mut last = None;
     let (mut pos, mut at, mut number) = (0u64, 0u64, 0u64);
@@ -1307,8 +1366,14 @@ fn walk_index(data: &dyn ReadAt, index: &dyn ReadAt, options: &OpenOptions) -> O
         if lead.raw > index_size - at - LEAD_IN {
             return None;
         }
+        let check = Check {
+            pos,
+            at,
+            lead: rest,
+            meta: lead.raw,
+        };
         if number % every == 0 {
-            checks.push((pos, rest));
+            checks.push(check);
             if checks.len() > MAX_CHECKS {
                 let mut keep = false;
                 checks.retain(|_| {
@@ -1318,7 +1383,7 @@ fn walk_index(data: &dyn ReadAt, index: &dyn ReadAt, options: &OpenOptions) -> O
                 every *= 2;
             }
         }
-        last = Some((pos, rest));
+        last = Some(check);
         let meta = if lead.toc & TOC_META != 0 && lead.raw > 0 {
             Some(
                 window
@@ -1348,9 +1413,18 @@ fn walk_index(data: &dyn ReadAt, index: &dyn ReadAt, options: &OpenOptions) -> O
     }
     checks.extend(last);
     let mut head = [0u8; LEAD_IN_LEN];
-    for (pos, rest) in checks {
-        data.read_exact_at(pos, &mut head).ok()?;
-        if &head[..4] != b"TDSm" || head[4..] != rest {
+    for check in checks {
+        data.read_exact_at(check.pos, &mut head).ok()?;
+        if &head[..4] != b"TDSm" || head[4..] != check.lead {
+            return None;
+        }
+        if !same_bytes(
+            data,
+            check.pos + LEAD_IN,
+            index,
+            check.at + LEAD_IN,
+            check.meta,
+        )? {
             return None;
         }
     }
