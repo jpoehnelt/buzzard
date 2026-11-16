@@ -150,6 +150,18 @@ when anything differs, and `refresh: true` forces a re-parse. A failed tool
 call (missing or unreadable file, bad argument) is returned as a result with
 `isError` set, so the agent can read the reason.
 
+## Editors
+
+[`editors/vscode`](editors/vscode) is a thin VS Code extension over
+`buzzard lsp`. It puts the findings in the Problems panel, adds commands for
+a file summary, a block diagram preview and the callers of a file, and
+offers a read-only viewer for `.vi` and `.ctl` files. It needs the `buzzard`
+executable on `PATH`; see its [README](editors/vscode/README.md) for how to
+build and install it.
+
+Any other editor with a Language Server Protocol client can run
+`buzzard lsp` over stdio.
+
 ## Design goals
 
 - **Fast.** Files are parsed in parallel without copying resource payloads.
