@@ -9,7 +9,7 @@ use buzzard_rsrc::RsrcError;
 use clap::ValueEnum;
 
 #[derive(clap::Args)]
-pub struct Args {
+pub(crate) struct Args {
     /// The old and the new file. A file that does not exist (or
     /// `/dev/null`) counts as empty: everything is added or removed.
     ///
@@ -86,7 +86,7 @@ fn render(result: &ViDiff, format: Format) -> String {
 
 /// Returns the report and the exit status: 0 when the files are the same,
 /// 1 when they differ. An `Err` is a message for stderr and status 2.
-pub fn run(args: &Args) -> Result<(String, u8), String> {
+pub(crate) fn run(args: &Args) -> Result<(String, u8), String> {
     let options = DiffOptions {
         ignore_moves: args.ignore_moves,
     };

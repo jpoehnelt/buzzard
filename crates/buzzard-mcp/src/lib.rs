@@ -15,6 +15,11 @@ pub use protocol::{Server, MAX_LINE_BYTES, SUPPORTED_PROTOCOL_VERSIONS};
 
 /// Serve on standard input and output until the client closes the pipe.
 /// Paths in tool arguments are resolved against the current directory.
+///
+/// # Errors
+///
+/// If the current directory cannot be determined, or reading standard input
+/// or writing standard output fails.
 pub fn run_stdio() -> std::io::Result<()> {
     let base = std::env::current_dir()?;
     let stdin = std::io::stdin().lock();

@@ -86,7 +86,7 @@ impl Engine {
 
     /// The current state, cheap to clone and safe to read from any thread.
     pub fn snapshot(&self) -> Arc<Snapshot> {
-        self.snapshot.clone()
+        Arc::clone(&self.snapshot)
     }
 
     /// Scan every root from scratch and return the diagnostics to publish.

@@ -14,11 +14,14 @@ fn run(args: &[&str]) -> (i32, String, String) {
         status,
         stdout,
         stderr,
-    } = Command::new(BIN).args(args).output().unwrap();
+    } = Command::new(BIN)
+        .args(args)
+        .output()
+        .expect("run the buzzard binary");
     (
-        status.code().unwrap(),
-        String::from_utf8(stdout).unwrap(),
-        String::from_utf8(stderr).unwrap(),
+        status.code().expect("buzzard exits with a status code"),
+        String::from_utf8(stdout).expect("stdout is UTF-8"),
+        String::from_utf8(stderr).expect("stderr is UTF-8"),
     )
 }
 
@@ -333,7 +336,7 @@ fn git(dir: &Path, args: &[&str]) -> (i32, String, String) {
         .output()
         .expect("git must be installed to run this test");
     (
-        output.status.code().unwrap(),
+        output.status.code().expect("git exits with a status code"),
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
@@ -350,8 +353,8 @@ fn git_ok(dir: &Path, args: &[&str]) -> String {
 fn repository(name: &str) -> TempDir {
     let dir = TempDir::new(name);
     git_ok(&dir.0, &["init", "-q"]);
-    fs::write(dir.0.join(".gitattributes"), "*.vi diff=buzzard\n").unwrap();
-    fs::copy(pylavi("add.vi"), dir.0.join("Main.vi")).unwrap();
+    fs::write(dir.0.join(".gitattributes"), "*.vi diff=buzzard\n").expect("write .gitattributes");
+    fs::copy(pylavi("add.vi"), dir.0.join("Main.vi")).expect("copy the fixture");
     git_ok(&dir.0, &["add", "."]);
     git_ok(&dir.0, &["commit", "-q", "-m", "first"]);
     dir

@@ -11,8 +11,9 @@
 //! that is swapped in when a job has finished computing the next one.
 
 use std::collections::BTreeMap;
+use std::num::NonZero;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
 use buzzard_lint::project::is_project_file;
@@ -47,13 +48,13 @@ const PARALLEL_THRESHOLD: usize = 16;
 type Watcher = Debouncer<notify::RecommendedWatcher>;
 
 /// Changed paths and how often each has been read without success so far.
-pub type Batch = BTreeMap<PathBuf, usize>;
+pub(crate) type Batch = BTreeMap<PathBuf, usize>;
 
 /// Modification time and size of a file when it was last read.
 type Signature = Option<(SystemTime, u64)>;
 
 #[derive(Debug)]
-pub enum Job {
+pub(crate) enum Job {
     /// The workspace folders named by `initialize`.
     Roots(Vec<PathBuf>),
     /// The client is ready: read every root, unless that was done already.
@@ -64,12 +65,13 @@ pub enum Job {
     Paths(Vec<PathBuf>),
     /// Files to read again after a failure that looked transient.
     Retry(Batch),
+    /// End the worker, which also stops the file watcher.
     Shutdown,
 }
 
 /// What handling one batch produced.
 #[derive(Debug, Default)]
-pub struct Outcome {
+pub(crate) struct Outcome {
     /// Diagnostics to publish, sorted by path.
     pub updates: Vec<Update>,
     /// Files to read again shortly, with their new attempt count.
@@ -83,7 +85,7 @@ struct Core {
 }
 
 /// The analyzed state: written by the worker, read by request handlers.
-pub struct State {
+pub(crate) struct State {
     core: Mutex<Core>,
     view: RwLock<Arc<Snapshot>>,
     inspector: Arc<dyn ViInspector>,
@@ -107,7 +109,7 @@ fn is_unsettled(signature: &Signature) -> bool {
 }
 
 impl State {
-    pub fn new(inspector: Arc<dyn ViInspector>) -> Self {
+    pub(crate) fn new(inspector: Arc<dyn ViInspector>) -> Self {
         Self {
             core: Mutex::new(Core {
                 engine: Engine::default(),
@@ -122,32 +124,35 @@ impl State {
     /// Only the worker takes this lock; a panic while it was held must not
     /// take the server down with it.
     fn core(&self) -> MutexGuard<'_, Core> {
-        self.core.lock().unwrap_or_else(|p| p.into_inner())
+        self.core.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// The current state. Never waits for a scan: the lock is only held
     /// while a pointer is copied or swapped.
-    pub fn view(&self) -> Arc<Snapshot> {
-        self.view.read().unwrap_or_else(|p| p.into_inner()).clone()
+    pub(crate) fn view(&self) -> Arc<Snapshot> {
+        self.view
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     fn show(&self, snapshot: Arc<Snapshot>) {
-        *self.view.write().unwrap_or_else(|p| p.into_inner()) = snapshot;
+        *self.view.write().unwrap_or_else(PoisonError::into_inner) = snapshot;
     }
 
-    pub fn set_roots(&self, roots: Vec<PathBuf>) {
+    pub(crate) fn set_roots(&self, roots: Vec<PathBuf>) {
         let mut core = self.core();
         core.engine = Engine::new(roots, LintConfig::default());
         core.roots = Roots::default();
         core.signatures.clear();
     }
 
-    pub fn roots(&self) -> Vec<PathBuf> {
+    pub(crate) fn roots(&self) -> Vec<PathBuf> {
         self.core().engine.roots().to_vec()
     }
 
     /// Read every root from scratch. Blocking.
-    pub fn scan(&self) -> Vec<Update> {
+    pub(crate) fn scan(&self) -> Vec<Update> {
         let mut core = self.core();
         core.roots = Roots::new(core.engine.roots());
         let updates = core.engine.scan();
@@ -167,7 +172,7 @@ impl State {
     /// the event said: a directory stands for everything below it, and a
     /// path that discovery would skip (hidden, behind a symbolic link,
     /// outside the roots) is not in the workspace.
-    pub fn process(&self, runtime: &Handle, batch: Batch) -> Outcome {
+    pub(crate) fn process(&self, runtime: &Handle, batch: Batch) -> Outcome {
         let mut core = self.core();
         let before = core.engine.snapshot();
 
@@ -251,7 +256,7 @@ fn read_all(
     inspector: &Arc<dyn ViInspector>,
     files: Vec<(PathBuf, usize)>,
 ) -> Vec<Read> {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads = std::thread::available_parallelism().map_or(1, NonZero::get);
     if files.len() < PARALLEL_THRESHOLD || threads < 2 {
         return files
             .into_iter()
@@ -284,7 +289,7 @@ fn read_all(
 /// Where the worker sends diagnostics. The server publishes them to the
 /// client; tests record them.
 #[tower_lsp::async_trait]
-pub trait Publisher: Send + Sync {
+pub(crate) trait Publisher: Send + Sync {
     async fn publish(&self, updates: Vec<Update>);
 }
 
@@ -339,7 +344,7 @@ impl Pending {
 
 /// Handle jobs one at a time until `Shutdown` arrives or every sender is
 /// gone. `jobs` is used to schedule retries and to feed watcher events.
-pub async fn run(
+pub(crate) async fn run(
     state: Arc<State>,
     publisher: impl Publisher,
     mut queue: UnboundedReceiver<Job>,
@@ -375,7 +380,7 @@ pub async fn run(
                 // Watch before scanning so a save during the scan is seen.
                 watcher = start_watcher(&state.roots(), &jobs);
             }
-            let state = state.clone();
+            let state = Arc::clone(&state);
             let updates = tokio::task::spawn_blocking(move || state.scan()).await;
             publisher.publish(updates.unwrap_or_default()).await;
         }
@@ -383,7 +388,7 @@ pub async fn run(
             continue;
         }
         let outcome = {
-            let state = state.clone();
+            let state = Arc::clone(&state);
             let runtime = Handle::current();
             let batch = pending.paths;
             tokio::task::spawn_blocking(move || state.process(&runtime, batch)).await

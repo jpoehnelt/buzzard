@@ -1,6 +1,6 @@
 //! The `tower-lsp` front end over the analyzed state.
 
-use std::future::Future;
+use std::future::{ready, Future, Ready};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,7 +13,13 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Notify;
 use tower_lsp::jsonrpc::{Error, Request, Response, Result};
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeWatchedFilesParams,
+    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Range,
+    ReferenceParams, ServerCapabilities, ServerInfo, SymbolInformation, SymbolKind, Url,
+    WorkspaceSymbolParams,
+};
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 use tower_service::Service;
 
@@ -38,7 +44,7 @@ fn to_url(path: &Path) -> Option<Url> {
 
 fn to_path(uri: &Url) -> Result<PathBuf> {
     uri.to_file_path()
-        .map_err(|_| Error::invalid_params(format!("not a file URI: {uri}")))
+        .map_err(|()| Error::invalid_params(format!("not a file URI: {uri}")))
 }
 
 fn file_location(path: &Path) -> Option<Location> {
@@ -93,8 +99,19 @@ impl Backend {
     /// `buzzard/inspect`: metadata and graph neighbours of one file as JSON.
     /// A project, library or class answers with `project` instead of
     /// `metadata`.
-    async fn inspect(&self, params: InspectParams) -> Result<Value> {
-        let path = to_path(&params.uri)?;
+    ///
+    /// tower-lsp wants a future, but the answer comes straight from the
+    /// current snapshot, so the future is ready at once.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "tower-lsp passes the deserialized params by value"
+    )]
+    fn inspect(&self, params: InspectParams) -> Ready<Result<Value>> {
+        ready(self.inspect_now(&params.uri))
+    }
+
+    fn inspect_now(&self, uri: &Url) -> Result<Value> {
+        let path = to_path(uri)?;
         let engine = self.state.view();
         let uris =
             |paths: Vec<PathBuf>| -> Vec<Url> { paths.iter().filter_map(|p| to_url(p)).collect() };
@@ -136,7 +153,7 @@ impl Backend {
             }
         };
         // Reading and decoding a file must not stall the other requests.
-        let inspector = self.inspector.clone();
+        let inspector = Arc::clone(&self.inspector);
         let runtime = tokio::runtime::Handle::current();
         let inspection =
             tokio::task::spawn_blocking(move || runtime.block_on(inspector.inspect(&path)))
@@ -175,8 +192,9 @@ impl LanguageServer for Backend {
             .iter()
             .filter_map(|folder| folder.uri.to_file_path().ok())
             .collect();
+        // `rootUri` is superseded by workspace folders; it is the fallback
+        // for clients that send none.
         if roots.is_empty() {
-            #[allow(deprecated)]
             roots.extend(params.root_uri.and_then(|uri| uri.to_file_path().ok()));
         }
         let _ = self.jobs.send(Job::Roots(roots));
@@ -241,7 +259,10 @@ impl LanguageServer for Backend {
         let out = symbols
             .into_iter()
             .filter_map(|symbol| {
-                #[allow(deprecated)]
+                #[expect(
+                    deprecated,
+                    reason = "`SymbolInformation::deprecated` is superseded by `tags`, but a struct literal must still set it"
+                )]
                 Some(SymbolInformation {
                     kind: match symbol.kind {
                         engine::SymbolKind::Vi => SymbolKind::FUNCTION,
@@ -274,11 +295,7 @@ impl Lifecycle {
     /// The process status the protocol asks for after `exit`: 0 if the
     /// client sent `shutdown` first, else 1.
     fn status_after_exit(&self) -> i32 {
-        if self.shutdown.load(Ordering::SeqCst) {
-            0
-        } else {
-            1
-        }
+        i32::from(!self.shutdown.load(Ordering::SeqCst))
     }
 }
 
@@ -309,16 +326,16 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, request: Request) -> Self::Future {
-        let is_exit = request.method() == "exit";
-        let is_shutdown = request.method() == "shutdown";
-        if request.method() == "initialized" {
+    fn call(&mut self, req: Request) -> Self::Future {
+        let is_exit = req.method() == "exit";
+        let is_shutdown = req.method() == "shutdown";
+        if req.method() == "initialized" {
             // The worker waits for the roots and scans once, however often
             // it is asked.
             let _ = self.jobs.send(Job::Scan);
         }
-        let response = self.inner.call(request);
-        let lifecycle = self.lifecycle.clone();
+        let response = self.inner.call(req);
+        let lifecycle = Arc::clone(&self.lifecycle);
         Box::pin(async move {
             let response = response.await;
             // A `shutdown` that was refused (sent before `initialize`, or
@@ -342,11 +359,11 @@ where
 /// otherwise (including when the client just closes the connection).
 pub async fn run_stdio() -> i32 {
     let inspector: Arc<dyn ViInspector> = Arc::new(RsrcInspector);
-    let state = Arc::new(State::new(inspector.clone()));
+    let state = Arc::new(State::new(Arc::clone(&inspector)));
     let (jobs, queue) = mpsc::unbounded_channel();
     let (service, socket) = LspService::build(|client| {
         tokio::spawn(worker::run(
-            state.clone(),
+            Arc::clone(&state),
             ClientPublisher(client),
             queue,
             jobs.clone(),
@@ -363,7 +380,7 @@ pub async fn run_stdio() -> i32 {
     let lifecycle = Arc::new(Lifecycle::default());
     let service = Handshake {
         inner: service,
-        lifecycle: lifecycle.clone(),
+        lifecycle: Arc::clone(&lifecycle),
         jobs,
     };
     let server = Server::new(tokio::io::stdin(), tokio::io::stdout(), socket);

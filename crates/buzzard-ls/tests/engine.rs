@@ -404,7 +404,7 @@ fn snapshots_are_not_affected_by_later_changes() {
     assert!(before.hover(&b).is_some());
     let after = f.engine.snapshot();
     assert!(!after.contains(&b));
-    assert!(after.callees(&a).is_empty());
+    assert_none(&after.callees(&a));
     assert_eq!(after.paths().collect::<Vec<_>>(), [a.as_path()]);
 }
 

@@ -65,10 +65,9 @@ impl Session {
 
     /// Call a tool and return its result object.
     fn call(&mut self, name: &str, arguments: Value) -> Value {
-        let reply = self.request(
-            "tools/call",
-            json!({ "name": name, "arguments": arguments }),
-        );
+        let mut params = json!({ "name": name });
+        params["arguments"] = arguments;
+        let reply = self.request("tools/call", params);
         let result = reply
             .get("result")
             .unwrap_or_else(|| panic!("protocol error from {name}: {reply}"))
@@ -111,7 +110,10 @@ impl Session {
 }
 
 fn text(result: &Value) -> String {
-    result["content"][0]["text"].as_str().unwrap().to_owned()
+    result["content"][0]["text"]
+        .as_str()
+        .expect("the content is text")
+        .to_owned()
 }
 
 /// Every file under `dir` with its bytes, to prove nothing was modified.
@@ -119,12 +121,12 @@ fn snapshot(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut out = BTreeMap::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(dir) = pending.pop() {
-        for entry in fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
+        for entry in fs::read_dir(&dir).expect("list the directory") {
+            let path = entry.expect("read a directory entry").path();
             if path.is_dir() {
                 pending.push(path);
             } else {
-                out.insert(path.clone(), fs::read(&path).unwrap());
+                out.insert(path.clone(), fs::read(&path).expect("read the file"));
             }
         }
     }
@@ -137,8 +139,8 @@ impl TempDir {
     fn new(name: &str) -> Self {
         let dir = std::env::temp_dir().join(format!("buzzard-mcp-{}-{name}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        Self(dir.canonicalize().unwrap())
+        fs::create_dir_all(&dir).expect("create the temp dir");
+        Self(dir.canonicalize().expect("canonicalize the temp dir"))
     }
 
     /// Write a synthetic VI that links to `calls` as siblings.
@@ -148,7 +150,7 @@ impl TempDir {
             .save_record(0x2300_8000, &[0, 0x400, 0, 0, 0, 0])
             .links(&links)
             .build();
-        fs::write(self.0.join(name), bytes).unwrap();
+        fs::write(self.0.join(name), bytes).expect("write the VI");
     }
 }
 
@@ -277,12 +279,15 @@ fn check_reports_sorted_diagnostics_and_a_summary() {
         .map(|d| (d["path"].as_str().unwrap(), d["code"].as_str().unwrap()))
         .collect();
     let mut sorted = keys.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(keys, sorted);
     for d in diagnostics {
         assert!(d["path"].as_str().unwrap().starts_with("pylavi/"), "{d}");
         assert_eq!(d["severity"], "warning");
-        assert!(!d["message"].as_str().unwrap().is_empty());
+        assert!(
+            !d["message"].as_str().unwrap().is_empty(),
+            "a diagnostic says what is wrong: {d}"
+        );
     }
     let has = |path: &str, code: &str| keys.contains(&(path, code));
     assert!(has("pylavi/absolute_link_PTH.vi", "BZ003"));
@@ -1045,8 +1050,8 @@ fn serve(input: &[u8]) -> Vec<Value> {
     let mut output = Vec::new();
     Server::new(fixtures())
         .serve(Cursor::new(input), &mut output)
-        .unwrap();
-    let text = String::from_utf8(output).unwrap();
+        .expect("in-memory I/O cannot fail");
+    let text = String::from_utf8(output).expect("the output is UTF-8");
     assert!(text.is_empty() || text.ends_with('\n'));
     text.lines()
         .map(|line| serde_json::from_str(line).expect("one JSON object per line"))
@@ -1109,7 +1114,7 @@ fn output_is_byte_identical_across_runs() {
         output
     };
     let first = run();
-    assert!(!first.is_empty());
+    assert!(!first.is_empty(), "the script asks for replies");
     for _ in 0..3 {
         assert_eq!(run(), first);
     }
@@ -1146,5 +1151,6 @@ fn serve_survives_binary_garbage_and_oversized_lines() {
         replies[3],
         json!({ "jsonrpc": "2.0", "id": 2, "result": {} })
     );
-    assert!(serve(b"").is_empty());
+    let silent = serve(b"");
+    assert!(silent.is_empty(), "expected nothing, got {silent:?}");
 }

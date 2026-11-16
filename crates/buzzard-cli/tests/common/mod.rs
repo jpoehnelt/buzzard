@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "each test crate uses a different subset of these helpers"
+)]
+
 use std::fs;
 use std::path::PathBuf;
 

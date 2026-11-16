@@ -342,8 +342,8 @@ mod tests {
     struct FailingFlush;
 
     impl Write for FailingFlush {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            Ok(bytes.len())
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
         }
 
         fn flush(&mut self) -> io::Result<()> {

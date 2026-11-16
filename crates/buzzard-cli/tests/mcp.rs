@@ -30,9 +30,9 @@ impl Session {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .unwrap();
+            .expect("start `buzzard mcp`");
         let stdin = child.stdin.take();
-        let stdout = BufReader::new(child.stdout.take().unwrap());
+        let stdout = BufReader::new(child.stdout.take().expect("stdout is piped"));
         let (tx, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in stdout.lines() {
@@ -51,9 +51,9 @@ impl Session {
     }
 
     fn send_line(&mut self, line: &str) {
-        let stdin = self.stdin.as_mut().unwrap();
-        writeln!(stdin, "{line}").unwrap();
-        stdin.flush().unwrap();
+        let stdin = self.stdin.as_mut().expect("stdin is still open");
+        writeln!(stdin, "{line}").expect("write to the server");
+        stdin.flush().expect("flush to the server");
     }
 
     /// The next stdout line, which must be exactly one JSON-RPC message.
@@ -81,24 +81,23 @@ impl Session {
     }
 
     fn call(&mut self, name: &str, arguments: Value) -> Value {
-        let reply = self.request(
-            "tools/call",
-            json!({ "name": name, "arguments": arguments }),
-        );
+        let mut params = json!({ "name": name });
+        params["arguments"] = arguments;
+        let reply = self.request("tools/call", params);
         reply["result"].clone()
     }
 
     /// Close stdin and wait for the process; returns `(exit ok, stderr)`.
     fn finish(mut self) -> (bool, String) {
         drop(self.stdin.take());
-        let status = self.child.wait().unwrap();
+        let status = self.child.wait().expect("wait for the server");
         let mut stderr = String::new();
         self.child
             .stderr
             .take()
-            .unwrap()
+            .expect("stderr is piped")
             .read_to_string(&mut stderr)
-            .unwrap();
+            .expect("read the server's stderr");
         assert!(
             self.lines.recv_timeout(TIMEOUT).is_err(),
             "no unsolicited output before exit"
@@ -108,10 +107,16 @@ impl Session {
 }
 
 fn text(result: &Value) -> &str {
-    result["content"][0]["text"].as_str().unwrap()
+    result["content"][0]["text"]
+        .as_str()
+        .expect("the content is text")
 }
 
 #[test]
+#[expect(
+    clippy::similar_names,
+    reason = "`callers` and `callees` hold the answers of `buzzard_callers` and `buzzard_callees`"
+)]
 fn full_session_over_real_pipes() {
     let fixtures = fixtures().canonicalize().unwrap();
     let mut session = Session::start(&fixtures);
