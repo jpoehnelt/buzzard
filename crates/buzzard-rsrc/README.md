@@ -46,7 +46,7 @@ against it, and it covers only what buzzard's own tests need.
 
 ## Licence
 
-Apache-2.0. See `LICENSE` and `NOTICE` in this package. Two generated tables
+Apache-2.0, with one table under MIT (`Apache-2.0 AND MIT`). See `LICENSE` and `NOTICE` in this package. Two generated tables
 hold names taken from other projects: built-in function names from LVKit
 (Apache-2.0) and heap tag and class names from pylabview (MIT). `NOTICE` has
 their copyright lines, what was taken, and the MIT licence text.
