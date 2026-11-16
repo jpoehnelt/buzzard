@@ -10,25 +10,28 @@ use walkdir::WalkDir;
 use crate::dataflow::{self, Finding};
 use crate::inspector::Inspection;
 use crate::project::{is_project_file, ProjectFile};
+use crate::verify::{self, Issue};
 
 /// What is kept in memory for one binary file: its metadata and the
-/// results of the dataflow checks. The diagram itself is not retained.
+/// results of the dataflow and state machine checks. The diagram itself
+/// is not retained.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Analysis {
     pub metadata: ViMetadata,
     pub dataflow: Vec<Finding>,
+    /// What the verification of the diagram's state machines found.
+    pub state_machines: Vec<Issue>,
 }
 
 impl From<Inspection> for Analysis {
     fn from(inspection: Inspection) -> Self {
-        let dataflow = inspection
-            .diagram
-            .as_ref()
-            .map(dataflow::analyze)
-            .unwrap_or_default();
+        let diagram = inspection.diagram.as_ref();
         Self {
+            dataflow: diagram.map(dataflow::analyze).unwrap_or_default(),
+            state_machines: diagram
+                .map(|diagram| verify::verify(diagram).issues())
+                .unwrap_or_default(),
             metadata: inspection.metadata,
-            dataflow,
         }
     }
 }

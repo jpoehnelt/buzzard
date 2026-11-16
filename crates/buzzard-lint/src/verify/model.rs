@@ -9,7 +9,9 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub enum Successors {
     /// Exactly these state names can be written as the next state. A name
-    /// that is not a state of the machine selects the default state.
+    /// that is not a state of the machine selects the default state; the
+    /// extraction never produces one and uses [`State::unmatched`] for
+    /// values without a case instead.
     Known(BTreeSet<String>),
     /// The next state comes from data the analysis cannot follow.
     Unknown,
@@ -29,6 +31,11 @@ pub enum Stop {
 pub struct State {
     pub name: String,
     pub successors: Successors,
+    /// Values this state can write as the next state that no case is
+    /// labelled with, so the default state handles them. Kept apart from
+    /// the successor names so that such a value can never be mistaken for
+    /// a state whose name happens to read the same.
+    pub unmatched: BTreeSet<String>,
     pub stop: Stop,
 }
 
@@ -73,8 +80,11 @@ pub struct Report {
     /// Resolved transitions `(from, to)`, sorted, for display and export.
     pub transitions: Vec<(String, String)>,
     pub findings: Vec<Finding>,
-    /// True when every successor and every stop condition was read exactly,
-    /// so the model is the program's state graph and not only a bound on it.
+    /// True when the initial state, every successor set and every stop
+    /// condition was read from constants on the diagram, so that nothing
+    /// in the model is a guess at data the analysis could not follow. The
+    /// transitions are still "may" transitions: which of several constants
+    /// a state writes can depend on data.
     pub exact: bool,
 }
 
@@ -105,6 +115,12 @@ impl Machine {
                 Successors::Known(names) => names
                     .iter()
                     .filter_map(|name| self.resolve(index, name))
+                    .chain(
+                        // An unmatched value runs the default state.
+                        (!state.unmatched.is_empty())
+                            .then(|| index.get(self.default.as_deref()?).copied())
+                            .flatten(),
+                    )
                     .collect(),
             })
             .collect()
@@ -184,14 +200,15 @@ impl Machine {
             if !live(i) {
                 continue;
             }
-            for name in names {
-                if !index.contains_key(name.as_str()) {
-                    findings.push(Finding::UndefinedTarget {
-                        from: state.name.clone(),
-                        target: name.clone(),
-                        handled_by: self.default.clone(),
-                    });
-                }
+            let undefined = names
+                .iter()
+                .filter(|name| !index.contains_key(name.as_str()));
+            for name in undefined.chain(&state.unmatched).collect::<BTreeSet<_>>() {
+                findings.push(Finding::UndefinedTarget {
+                    from: state.name.clone(),
+                    target: name.clone(),
+                    handled_by: self.default.clone(),
+                });
             }
         }
         findings.sort();
@@ -236,6 +253,7 @@ mod tests {
         State {
             name: name.to_owned(),
             successors,
+            unmatched: BTreeSet::new(),
             stop,
         }
     }
@@ -435,6 +453,56 @@ mod tests {
                 Finding::NeverTerminates,
             ]
         );
+    }
+
+    #[test]
+    fn an_unmatched_value_runs_the_default_state() {
+        let with = |default: Option<&str>| {
+            let mut init = state("Init", known(&[]), Stop::Never);
+            init.unmatched = ["Run, Go".to_owned()].into();
+            machine(
+                vec![
+                    init,
+                    // Named exactly like the unmatched value: still not
+                    // the target.
+                    state("Run, Go", known(&["Exit"]), Stop::Never),
+                    state("Exit", known(&[]), Stop::Always),
+                    state("Other", known(&["Exit"]), Stop::Never),
+                ],
+                Some(&["Init"]),
+                default,
+            )
+        };
+        let undefined = |handled_by: Option<&str>| Finding::UndefinedTarget {
+            from: "Init".to_owned(),
+            target: "Run, Go".to_owned(),
+            handled_by: handled_by.map(str::to_owned),
+        };
+        let report = with(Some("Other")).check();
+        assert_eq!(
+            report.findings,
+            [unreachable("Run, Go"), undefined(Some("Other"))]
+        );
+        assert_eq!(report.reachable.unwrap(), ["Init", "Exit", "Other"]);
+        // Without a default state the value has nowhere to go.
+        assert_eq!(
+            with(None).check().findings,
+            [
+                unreachable("Exit"),
+                unreachable("Other"),
+                unreachable("Run, Go"),
+                undefined(None),
+                Finding::NeverTerminates,
+            ]
+        );
+        // A state that never runs is not blamed for what it writes.
+        let mut dead = with(Some("Other"));
+        dead.initial = Some(["Exit".to_owned()].into());
+        assert!(dead
+            .check()
+            .findings
+            .iter()
+            .all(|f| matches!(f, Finding::Unreachable { .. })));
     }
 
     #[test]

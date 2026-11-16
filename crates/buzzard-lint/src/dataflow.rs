@@ -304,6 +304,7 @@ mod tests {
             data_type: Some(data_type),
             dco: Some(uid + 1000),
             dco_class: Some("parm".to_owned()),
+            ..Terminal::default()
         }
     }
 
@@ -316,6 +317,7 @@ mod tests {
             bounds: None,
             terminals,
             diagrams: Vec::new(),
+            ..Node::default()
         }
     }
 

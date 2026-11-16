@@ -19,9 +19,12 @@ pub use blocks::heap::{primitive_name, primitive_names, PrimitiveName};
 pub use blocks::linkinfo::LinkRef;
 pub use blocks::lvsr::{Reentrancy, ViFlags};
 pub use blocks::path::{LvPath, PathKind};
-pub use blocks::types::{DataType, RefKind};
+pub use blocks::types::{DataType, NumericType, RefKind, TypeInfo, Value};
 pub use container::{Resource, RsrcFile};
-pub use diagram::{BlockDiagram, Diagram, Direction, Node, Rect, Terminal, Wire};
+pub use diagram::{
+    BlockDiagram, CaseSelector, Diagram, Direction, LoopInfo, Node, Rect, SelectorKind,
+    SelectorMatch, ShiftRegister, StopTerminal, Terminal, Tunnel, TunnelMode, Wire,
+};
 pub use error::{Result, RsrcError};
 pub use fourcc::FourCc;
 pub use header::RsrcHeader;

@@ -406,3 +406,53 @@ fn lists_files_below_a_directory() {
     assert_eq!(below("missing"), Vec::<PathBuf>::new());
     assert_eq!(snapshot.paths_under(&f.dir).len(), 7);
 }
+
+/// The state machine rules are computed when a file is loaded, so they
+/// are published like every other diagnostic. The file is a real one;
+/// `crates/buzzard-lint/tests/fixtures/verify/README.md` records its source.
+#[test]
+fn publishes_state_machine_findings() {
+    let mut fx = Fixture::new("state-machines");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../buzzard-lint/tests/fixtures/verify/jki-state-machine");
+    fs::copy(
+        source.join("new-support-vis-examples.vi"),
+        fx.dir.join("examples.vi"),
+    )
+    .unwrap();
+    fs::copy(
+        source.join("queued-state-machine-template.vi"),
+        fx.dir.join("template.vi"),
+    )
+    .unwrap();
+
+    let updates = fx.engine.scan();
+    let found: Vec<(PathBuf, Vec<(&str, String)>)> = updates
+        .into_iter()
+        .map(|(path, diagnostics)| {
+            let machine = diagnostics
+                .iter()
+                .filter(|d| d.code.starts_with("BZ2"))
+                .map(|d| (d.code, d.message.clone()))
+                .collect();
+            (path.strip_prefix(&fx.dir).unwrap().to_path_buf(), machine)
+        })
+        .filter(|(_, machine): &(PathBuf, Vec<(&str, String)>)| !machine.is_empty())
+        .collect();
+    let [(path, findings)] = &found[..] else {
+        panic!("{found:?}");
+    };
+    assert_eq!(path, Path::new("examples.vi"));
+    assert_eq!(findings.len(), 3);
+    assert!(findings.iter().all(|(code, _)| *code == "BZ203"));
+    assert!(findings[1].1.starts_with(
+        "string/queue state machine at while loop #70, case structure #177: state \
+         `Action: Step 1` is enqueued but no case handles it"
+    ));
+    assert!(findings[1].1.ends_with("(heuristic, not proven)"));
+
+    // Removing the file withdraws its findings.
+    fs::remove_file(fx.dir.join("examples.vi")).unwrap();
+    let updates = fx.touch("examples.vi");
+    assert_eq!(updates, [("examples.vi".to_owned(), vec![])]);
+}

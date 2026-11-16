@@ -453,3 +453,336 @@ fn llb_archives_parse_as_libraries() {
         FileKind::Library
     );
 }
+
+// State machine facts. The files live with the tests that use them most,
+// `crates/buzzard-lint/tests/fixtures/verify`; its README records where
+// each comes from and its licence.
+
+fn machine_fixture(name: &str) -> Vec<u8> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../buzzard-lint/tests/fixtures/verify")
+        .join(name);
+    fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+fn machine_diagram(name: &str) -> BlockDiagram {
+    let bytes = machine_fixture(name);
+    let file = RsrcFile::parse(&bytes).unwrap();
+    BlockDiagram::from_rsrc(&file).unwrap().unwrap()
+}
+
+/// `process.vi` (saved by version 13): a while loop with four shift
+/// registers around a string case structure with the cases `"Init"` and
+/// `"Idle", Default`. The expected ids were read off the raw heap.
+#[test]
+fn diagram_of_a_state_machine() {
+    use buzzard_rsrc::{SelectorKind, SelectorMatch, ShiftRegister, TunnelMode, Value};
+
+    let bd = machine_diagram("jki-smo/process.vi");
+    let node = |uid: i32| bd.nodes().find(|n| n.uid == uid).unwrap();
+
+    let looping = node(3379);
+    assert_eq!(looping.class, "whileLoop");
+    let info = looping.loop_info.as_ref().unwrap();
+    let stop = info.stop.unwrap();
+    assert_eq!((stop.dco, stop.stop_if_true), (3398, true));
+    assert_eq!(info.shift_registers.len(), 4);
+    assert_eq!(
+        info.shift_registers[0],
+        ShiftRegister {
+            left: vec![2645],
+            right: 2561
+        }
+    );
+    // Each side of the state register has an outer terminal on the loop
+    // and an inner one on the boundary of the loop's diagram.
+    let boundary = &looping.diagrams[0].nodes[0];
+    for (dco, class) in [(2645, "lSR"), (2561, "rSR")] {
+        for owner in [looping, boundary] {
+            let found: Vec<_> = owner
+                .terminals
+                .iter()
+                .filter(|t| t.dco == Some(dco))
+                .collect();
+            assert_eq!(found.len(), 1);
+            assert_eq!(found[0].dco_class.as_deref(), Some(class));
+            assert_eq!(found[0].data_type, Some(DataType::String));
+        }
+    }
+    let condition = boundary
+        .terminals
+        .iter()
+        .find(|t| t.dco == Some(3398))
+        .unwrap();
+    assert_eq!(condition.dco_class.as_deref(), Some("lTst"));
+    assert_eq!(condition.data_type, Some(DataType::Boolean));
+
+    let case = node(3023);
+    let selector = case.selector.as_ref().unwrap();
+    assert_eq!(selector.kind, SelectorKind::String);
+    assert_eq!(
+        selector.frames,
+        [
+            vec![SelectorMatch::Text("Init".to_owned())],
+            vec![SelectorMatch::Text("Idle".to_owned())]
+        ]
+    );
+    assert_eq!(selector.default_frame, Some(1));
+    assert_eq!(selector.label(0), "\"Init\"");
+    assert_eq!(selector.label(1), "\"Idle\", Default");
+    assert_eq!(selector.label(2), "");
+
+    // The next-state tunnel: an output that some frame leaves unwired.
+    let next = case.terminals.iter().find(|t| t.uid == 3189).unwrap();
+    let tunnel = next.tunnel.unwrap();
+    assert!(tunnel.output && tunnel.default_if_unwired && !tunnel.conditional);
+    assert_eq!(tunnel.mode, TunnelMode::Plain);
+    let into = case.terminals.iter().find(|t| t.uid == 3052).unwrap();
+    assert_eq!(into.dco_class.as_deref(), Some("caseSel"));
+    assert_eq!(into.tunnel, None);
+
+    // An enumeration case structure with a default frame without values.
+    let nested = node(3934).selector.as_ref().unwrap();
+    assert_eq!(nested.kind, SelectorKind::Enum);
+    assert_eq!(
+        nested.enum_items,
+        ["unknown", "Created", "Started", "Stopped"]
+    );
+    assert_eq!(nested.default_frame, Some(0));
+    assert_eq!(
+        [nested.label(0), nested.label(1), nested.label(2)],
+        ["Default", "\"unknown\"", "\"Stopped\""]
+    );
+    // An error cluster and a Boolean selector have no default frame.
+    let error = node(303).selector.as_ref().unwrap();
+    assert_eq!(error.kind, SelectorKind::ErrorCluster);
+    assert_eq!(error.default_frame, None);
+    assert_eq!([error.label(0), error.label(1)], ["No Error", "Error"]);
+    let boolean = node(2740).selector.as_ref().unwrap();
+    assert_eq!([boolean.label(0), boolean.label(1)], ["False", "True"]);
+
+    // Constants of each simple type.
+    let constant = |uid: i32| {
+        bd.nodes()
+            .flat_map(|n| &n.terminals)
+            .find(|t| t.uid == uid)
+            .unwrap()
+            .constant
+            .clone()
+    };
+    assert_eq!(constant(4888), Some(Value::String("Init".to_owned())));
+    assert_eq!(constant(2430), Some(Value::Integer(-1)));
+    assert_eq!(constant(1244), Some(Value::Boolean(true)));
+    assert_eq!(
+        constant(2958),
+        Some(Value::Enum {
+            value: 3,
+            name: Some("Stopped".to_owned())
+        })
+    );
+    // Every constant of a simple type decodes; the rest stay `None`.
+    for terminal in bd.nodes().flat_map(|n| &n.terminals) {
+        let is_constant = terminal.dco_class.as_deref() == Some("bDConstDCO");
+        let simple = matches!(
+            terminal.data_type,
+            Some(DataType::Boolean | DataType::Numeric | DataType::String)
+        );
+        assert_eq!(
+            terminal.constant.is_some(),
+            is_constant && simple,
+            "#{}",
+            terminal.uid
+        );
+    }
+}
+
+/// The parameter index identifies the inputs of the Select function
+/// whatever the order of its terminals, and a subVI call's terminals
+/// carry their connector pane slot.
+#[test]
+fn terminals_carry_their_parameter_index() {
+    let bd = machine_diagram("jki-state-machine/new-support-vis-examples.vi");
+    let selects: Vec<_> = bd.nodes().filter(|n| n.primitive == Some(1516)).collect();
+    assert!(selects.len() >= 3);
+    for select in selects {
+        let mut params: Vec<_> = select.terminals.iter().map(|t| t.param).collect();
+        params.sort();
+        assert_eq!(params, [Some(0), Some(1), Some(2), Some(3)]);
+        let by = |index| {
+            select
+                .terminals
+                .iter()
+                .find(|t| t.param == Some(index))
+                .unwrap()
+        };
+        assert_eq!(by(0).direction, Direction::Output);
+        assert_eq!(by(2).data_type, Some(DataType::Boolean));
+        assert_eq!(by(1).data_type, by(3).data_type);
+    }
+    let call = bd
+        .nodes()
+        .find(|n| n.name.as_deref() == Some("Parse State Queue__JKI_lib_State_Machine.vi"))
+        .unwrap();
+    assert!(call.terminals.iter().all(|t| t.param.is_some()));
+    let mut slots: Vec<_> = call.terminals.iter().filter_map(|t| t.param).collect();
+    slots.sort();
+    slots.dedup();
+    assert_eq!(slots.len(), call.terminals.len());
+}
+
+/// Corrupt the fields the state machine decoders read: selector tables,
+/// constant values, shift register links, the loop condition, tunnel
+/// flags and parameter indices. Each is overwritten in the decoded heap,
+/// where a byte-level corruption of the file cannot aim.
+#[test]
+fn hostile_state_machine_fields_never_panic() {
+    use buzzard_rsrc::blocks::heap::{tag_id, Content, Heap, HeapNode};
+    use buzzard_rsrc::blocks::types::TypeTable;
+    use std::collections::HashMap;
+
+    const FIELDS: [&str; 18] = [
+        "SelectRangeArray32",
+        "SelectStringArray",
+        "SelectDefaultCase",
+        "caseSelDCO",
+        "diagramList",
+        "loopTestDCO",
+        "srDCOList",
+        "lsrDCOList",
+        "rsrDCO",
+        "ConstValue",
+        "TunnelType",
+        "IsConditional",
+        "parmIndex",
+        "paramIdx",
+        "objFlags",
+        "typeDesc",
+        "termList",
+        "dco",
+    ];
+    const CONTENTS: [&[u8]; 6] = [
+        &[],
+        &[0xff],
+        &[0x7f, 0xff, 0xff, 0xff],
+        &[0x80, 0, 0, 0],
+        &[0, 0, 0, 9, b'x'],
+        &[0xff; 9],
+    ];
+    type Change = Box<dyn for<'a, 'b> Fn(&'b mut HeapNode<'a>)>;
+
+    /// Apply `change` to the `target`-th node with one of the tags, or to
+    /// the `target`-th selector table entry field. Returns whether there
+    /// was one.
+    fn nth(
+        node: &mut HeapNode<'_>,
+        tags: &[i32],
+        in_entry: bool,
+        target: usize,
+        seen: &mut usize,
+        change: &Change,
+    ) -> bool {
+        // Class 930 is a selector table entry; its fields are tags 0 to 4.
+        let entry = node.class() == Some(930);
+        if tags.contains(&node.tag) || (in_entry && (0..5).contains(&node.tag)) {
+            if *seen == target {
+                change(node);
+                return true;
+            }
+            *seen += 1;
+        }
+        node.children
+            .iter_mut()
+            .any(|child| nth(child, tags, entry, target, seen, change))
+    }
+
+    let mut changes: Vec<Change> = Vec::new();
+    for bytes in CONTENTS {
+        changes.push(Box::new(move |node| node.content = Content::Bytes(bytes)));
+    }
+    changes.push(Box::new(|node| node.children.clear()));
+    changes.push(Box::new(|node| node.content = Content::Bool(true)));
+    // Point every reference below at one object.
+    changes.push(Box::new(|node| {
+        for child in &mut node.children {
+            child.attrs = vec![(-3, 1)];
+        }
+        node.attrs = vec![(-3, 3023)];
+    }));
+    changes.push(Box::new(|node| {
+        let copies = node.children.clone();
+        node.children.extend(copies);
+    }));
+    let nothing: Change = Box::new(|_| {});
+
+    let tags: Vec<i32> = FIELDS.iter().map(|name| tag_id(name).unwrap()).collect();
+    let names = HashMap::new();
+    for name in [
+        "jki-smo/process.vi",
+        "jki-state-machine/new-support-vis-examples.vi",
+    ] {
+        let bytes = machine_fixture(name);
+        let file = RsrcFile::parse(&bytes).unwrap();
+        let heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+        let vctp = zlib::decompress(file.first(b"VCTP").unwrap()).unwrap();
+        let dthp = file.first(b"DTHP");
+        let types = TypeTable::parse(&vctp, dthp).unwrap();
+        let parsed = Heap::parse(&heap).unwrap();
+        let intact = BlockDiagram::from_heap(&parsed, &types, &names).unwrap();
+        assert!(intact.nodes().any(|n| n.selector.is_some()));
+        assert!(intact.nodes().any(|n| n.loop_info.is_some()));
+
+        // Count the fields, then corrupt a spread of them in every way.
+        let mut total = 0;
+        for root in &mut parsed.clone().roots {
+            nth(root, &tags, false, usize::MAX, &mut total, &nothing);
+        }
+        assert!(total > 1_000, "{name}: only {total} fields");
+        for target in (0..total).step_by((total / 150).max(1)) {
+            for change in &changes {
+                let mut copy = parsed.clone();
+                let mut seen = 0;
+                let hit = copy
+                    .roots
+                    .iter_mut()
+                    .any(|root| nth(root, &tags, false, target, &mut seen, change));
+                assert!(hit);
+                if let Some(diagram) = BlockDiagram::from_heap(&copy, &types, &names) {
+                    for node in diagram.nodes() {
+                        if let Some(selector) = &node.selector {
+                            for frame in 0..=selector.frames.len() {
+                                let _ = selector.label(frame);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The decompressed heap and type table, byte by byte in samples.
+        for pos in (0..heap.len()).step_by((heap.len() / 400).max(1)) {
+            for value in [0x00, 0x7f, 0xff] {
+                let mut copy = heap.clone();
+                copy[pos] = value;
+                if let Ok(parsed) = Heap::parse(&copy) {
+                    let _ = BlockDiagram::from_heap(&parsed, &types, &names);
+                }
+            }
+        }
+        for pos in (0..vctp.len()).step_by((vctp.len() / 400).max(1)) {
+            for value in [0x00, 0x7f, 0xff] {
+                let mut copy = vctp.clone();
+                copy[pos] = value;
+                let Ok(table) = TypeTable::parse(&copy, dthp) else {
+                    continue;
+                };
+                for id in 0..table.len() as u32 + 2 {
+                    let _ = table.heap_type_info(id);
+                    for bytes in CONTENTS {
+                        let _ = table.constant(id, bytes);
+                    }
+                }
+                let _ = BlockDiagram::from_heap(&parsed, &table, &names);
+            }
+        }
+    }
+}

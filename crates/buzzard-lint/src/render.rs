@@ -71,6 +71,21 @@ fn colour(data_type: Option<DataType>) -> &'static str {
     }
 }
 
+/// Name of a structure's frame: its number and, for a case structure
+/// with a decoded selector, the case label, e.g. `frame 2: "Idle", Default`.
+pub fn frame_title(node: &Node, index: usize) -> String {
+    let label = node
+        .selector
+        .as_ref()
+        .map(|selector| selector.label(index))
+        .unwrap_or_default();
+    if label.is_empty() {
+        format!("frame {}", index + 1)
+    } else {
+        format!("frame {}: {}", index + 1, shorten(&label, 60))
+    }
+}
+
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -205,11 +220,14 @@ pub fn to_svg(diagram: &BlockDiagram) -> String {
                     } else {
                         queue.push(Panel {
                             title: format!(
-                                "{} #{}, frame {} of {}",
+                                "{} #{}, {}",
                                 label(node),
                                 node.uid,
-                                index + 1,
-                                node.diagrams.len()
+                                frame_title(node, index).replacen(
+                                    &format!("frame {}", index + 1),
+                                    &format!("frame {} of {}", index + 1, node.diagrams.len()),
+                                    1
+                                )
                             ),
                             diagram: frame,
                             size: Some((bounds.width(), bounds.height())),
@@ -484,9 +502,9 @@ pub fn to_dot(diagram: &BlockDiagram) -> String {
             Step::OpenFrame(node, index) => {
                 let _ = writeln!(
                     out,
-                    "{pad}subgraph cluster_f{}_{index} {{\n{pad}  label=\"frame {}\";",
+                    "{pad}subgraph cluster_f{}_{index} {{\n{pad}  label=\"{}\";",
                     node.uid,
-                    index + 1
+                    quote(&frame_title(node, index))
                 );
                 depth += 1;
             }
@@ -534,9 +552,9 @@ pub fn to_mermaid(diagram: &BlockDiagram) -> String {
             Step::OpenFrame(node, index) => {
                 let _ = writeln!(
                     out,
-                    "{pad}subgraph f{}_{index}[\"frame {}\"]",
+                    "{pad}subgraph f{}_{index}[\"{}\"]",
                     node.uid,
-                    index + 1
+                    clean(&frame_title(node, index))
                 );
                 depth += 1;
             }
@@ -618,6 +636,7 @@ mod tests {
             bounds,
             terminals: Vec::new(),
             diagrams,
+            ..Node::default()
         }
     }
 
