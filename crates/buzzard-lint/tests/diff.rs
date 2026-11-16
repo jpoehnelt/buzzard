@@ -101,21 +101,21 @@ fn fixtures_that_differ_in_their_diagram() {
         text("empty.vi", "add.vi"),
         "1 node added, 1 changed; 3 wires added; 1 setting changed\n\
          changed: saved name `empty.vi` -> `add.vi`\n\
-         added: built-in function 1050 #43\n\
+         added: built-in function `Add` #43\n\
          changed: diagram boundary #7: terminals 0 -> 3 (+3 numeric)\n\
-         added: numeric wire from built-in function 1050 #43 to diagram boundary #7\n\
-         added: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
-         added: numeric wire from diagram boundary #7 to built-in function 1050 #43\n"
+         added: numeric wire from built-in function `Add` #43 to diagram boundary #7\n\
+         added: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
+         added: numeric wire from diagram boundary #7 to built-in function `Add` #43\n"
     );
     assert_eq!(
         text("add.vi", "empty.vi"),
         "1 node removed, 1 changed; 3 wires removed; 1 setting changed\n\
          changed: saved name `add.vi` -> `empty.vi`\n\
-         removed: built-in function 1050 #43\n\
+         removed: built-in function `Add` #43\n\
          changed: diagram boundary #7: terminals 3 -> 0 (-3 numeric)\n\
-         removed: numeric wire from built-in function 1050 #43 to diagram boundary #7\n\
-         removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
-         removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n"
+         removed: numeric wire from built-in function `Add` #43 to diagram boundary #7\n\
+         removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
+         removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n"
     );
     assert_eq!(
         text("empty.vi", "relative_link.vi"),

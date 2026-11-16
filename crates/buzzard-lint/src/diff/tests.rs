@@ -313,7 +313,7 @@ fn frames_are_named_when_a_structure_has_several() {
     assert_eq!(
         text(&old, &new),
         "2 nodes added\n\
-         added: built-in function 1050 #70 in case structure #50 frame 1 > while loop #60\n\
+         added: built-in function `Add` #70 in case structure #50 frame 1 > while loop #60\n\
          added: while loop #60 in case structure #50 frame 1\n"
     );
 }
@@ -855,4 +855,22 @@ fn hostile_diagrams_do_not_panic() {
     }
     assert!(diff(Some(&hostile), Some(&hostile), DiffOptions::default()).identical);
     let _ = diff(Some(&hostile), None, DiffOptions { ignore_moves: true });
+}
+
+#[test]
+fn functions_are_named_where_the_table_knows_them() {
+    // 1050 and 3915 are both called Add, so the ids stay in the detail.
+    let old = file(vec![function(10, 1050, vec![terminal(11, NUM)])], &[]);
+    let new = file(vec![function(10, 3915, vec![terminal(11, NUM)])], &[]);
+    assert_eq!(
+        text(&old, &new),
+        "1 node changed\n\
+         changed: built-in function `Add` #10: function id 1050 (Add) -> 3915 (Add)\n"
+    );
+    let new = file(vec![function(10, 999_999, vec![terminal(11, NUM)])], &[]);
+    assert_eq!(
+        text(&old, &new),
+        "1 node changed\n\
+         changed: built-in function 999999 #10: function id 1050 (Add) -> 999999\n"
+    );
 }

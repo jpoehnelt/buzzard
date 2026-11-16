@@ -37,11 +37,11 @@ fn revision(side: &str) -> String {
 
 const ADD_TO_EMPTY: &str = "1 node removed, 1 changed; 3 wires removed; 1 setting changed\n\
      changed: saved name `add.vi` -> `empty.vi`\n\
-     removed: built-in function 1050 #43\n\
+     removed: built-in function `Add` #43\n\
      changed: diagram boundary #7: terminals 3 -> 0 (-3 numeric)\n\
-     removed: numeric wire from built-in function 1050 #43 to diagram boundary #7\n\
-     removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
-     removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n";
+     removed: numeric wire from built-in function `Add` #43 to diagram boundary #7\n\
+     removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
+     removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n";
 
 #[test]
 fn exit_status_follows_diff() {
@@ -95,11 +95,11 @@ fn a_missing_side_is_all_added_or_all_removed() {
         stdout,
         "2 nodes added; 3 wires added\n\
          note: old file is missing: everything is reported as added\n\
-         added: built-in function 1050 #43\n\
+         added: built-in function `Add` #43\n\
          added: diagram boundary #7\n\
-         added: numeric wire from built-in function 1050 #43 to diagram boundary #7\n\
-         added: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
-         added: numeric wire from diagram boundary #7 to built-in function 1050 #43\n"
+         added: numeric wire from built-in function `Add` #43 to diagram boundary #7\n\
+         added: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
+         added: numeric wire from diagram boundary #7 to built-in function `Add` #43\n"
     );
 
     let (code, stdout, _) = run(&["diff", &pylavi("empty.vi"), "/dev/null"]);
@@ -170,11 +170,11 @@ fn formats_carry_the_same_report() {
          \n\
          #### Block diagram\n\
          \n\
-         - removed: built-in function 1050 #43\n\
+         - removed: built-in function `Add` #43\n\
          - changed: diagram boundary #7: terminals 3 -> 0 (-3 numeric)\n\
-         - removed: numeric wire from built-in function 1050 #43 to diagram boundary #7\n\
-         - removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
-         - removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n"
+         - removed: numeric wire from built-in function `Add` #43 to diagram boundary #7\n\
+         - removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
+         - removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n"
     );
 
     let (code, json, _) = run(&["diff", &old, &new, "--format", "json"]);
@@ -187,7 +187,7 @@ fn formats_carry_the_same_report() {
     assert_eq!(value["nodes"]["removed"][0]["uid"], 43);
     assert_eq!(
         value["nodes"]["removed"][0]["description"],
-        "built-in function 1050"
+        "built-in function `Add`"
     );
     assert_eq!(
         value["nodes"]["changed"][0]["details"][0],
@@ -396,11 +396,11 @@ fn git_diff_runs_the_external_driver() {
         "buzzard diff a/Main.vi b/Main.vi\n\
          2 nodes removed; 3 wires removed\n\
          note: new file is missing: everything is reported as removed\n\
-         removed: built-in function 1050 #43\n\
+         removed: built-in function `Add` #43\n\
          removed: diagram boundary #7\n\
-         removed: numeric wire from built-in function 1050 #43 to diagram boundary #7\n\
-         removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
-         removed: numeric wire from diagram boundary #7 to built-in function 1050 #43\n\
+         removed: numeric wire from built-in function `Add` #43 to diagram boundary #7\n\
+         removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
+         removed: numeric wire from diagram boundary #7 to built-in function `Add` #43\n\
          buzzard diff a/New.vi b/New.vi\n\
          1 node added\n\
          note: old file is missing: everything is reported as added\n\

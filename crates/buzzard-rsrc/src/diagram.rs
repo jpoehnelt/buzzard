@@ -123,7 +123,9 @@ pub struct Node {
     /// Name of the called file for subVI calls and similar linked nodes.
     pub name: Option<String>,
     /// Resource id of a built-in function. The ids are stable across
-    /// versions, but no public table maps them to function names.
+    /// versions. The file does not name the function;
+    /// [`primitive_name`](crate::primitive_name) looks the id up in a
+    /// vendored table.
     pub primitive: Option<u32>,
     /// Position within the enclosing diagram. Nodes inside a structure are
     /// positioned relative to the structure's top-left corner.

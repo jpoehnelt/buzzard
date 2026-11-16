@@ -15,6 +15,7 @@ pub mod metadata;
 mod reader;
 pub mod version;
 
+pub use blocks::heap::{primitive_name, primitive_names, PrimitiveName};
 pub use blocks::linkinfo::LinkRef;
 pub use blocks::lvsr::{Reentrancy, ViFlags};
 pub use blocks::path::{LvPath, PathKind};

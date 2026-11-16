@@ -61,7 +61,7 @@ use buzzard_rsrc::{
 };
 use serde::Serialize;
 
-use crate::dataflow::describe;
+use crate::dataflow::{describe, function_name};
 use crate::render::label;
 use crate::Inspection;
 
@@ -383,7 +383,10 @@ pub fn describe_node(node: &Node) -> String {
         ("sRN", _, _) => "diagram boundary".to_owned(),
         // Structures are named by `label`; it falls back to `describe`.
         (_, None, None) => label(node),
-        ("prim", None, Some(id)) => format!("built-in function {id}"),
+        // A function the table does not name is told apart by its id.
+        ("prim", None, Some(id)) if function_name(node).is_none() => {
+            format!("built-in function {id}")
+        }
         _ => describe(node),
     };
     clean(&text)
@@ -798,7 +801,14 @@ fn diagrams(
             ));
         }
         if old_node.primitive != new_node.primitive {
-            let id = |p: Option<u32>| p.map_or_else(|| "none".to_owned(), |p| p.to_string());
+            // The id stays in the text: two ids can share a name.
+            let id = |p: Option<u32>| match p {
+                None => "none".to_owned(),
+                Some(p) => match buzzard_rsrc::primitive_name(p) {
+                    Some(function) => format!("{p} ({})", function.name),
+                    None => p.to_string(),
+                },
+            };
             details.push(format!(
                 "function id {} -> {}",
                 id(old_node.primitive),

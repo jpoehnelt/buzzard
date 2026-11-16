@@ -4,6 +4,7 @@
 //!   positions stored in the file. Wires are drawn as simple elbows between
 //!   their end points, not along their original routes, and built-in
 //!   functions are labelled boxes because their icons are not in the file.
+//!   The label is the function's name where the vendored table has it.
 //! * [`to_dot`] and [`to_mermaid`] emit the graph for tools that do their
 //!   own layout (Graphviz, Mermaid).
 
@@ -12,7 +13,7 @@ use std::fmt::Write;
 
 use buzzard_rsrc::{BlockDiagram, DataType, Diagram, Direction, Node, Terminal};
 
-use crate::dataflow::describe;
+use crate::dataflow::{describe, function_name};
 
 const STRUCTURES: [(&str, &str); 10] = [
     ("commentNode", "diagram disable structure"),
@@ -37,7 +38,10 @@ pub fn label(node: &Node) -> String {
     }
     match (&node.name, node.primitive) {
         (Some(name), _) => name.clone(),
-        (None, Some(id)) => format!("function {id}"),
+        (None, Some(id)) => match function_name(node) {
+            Some(function) => function.to_owned(),
+            None => format!("function {id}"),
+        },
         (None, None) => describe(node),
     }
 }
@@ -573,7 +577,7 @@ mod tests {
         assert_eq!(svg.matches("<title>control terminal").count(), 2);
         assert_eq!(svg.matches("<title>indicator terminal").count(), 1);
         assert_eq!(svg.matches("class=\"node\"").count(), 1);
-        assert!(svg.contains(">function 1050</text>"), "{svg}");
+        assert!(svg.contains(">Add</text>"), "{svg}");
         assert_eq!(svg.matches("<path class=\"wire\"").count(), 3);
         // The function box is 32 pixels square, where the editor put it.
         assert!(
@@ -596,7 +600,7 @@ mod tests {
         let diagram = fixture("add.vi");
         assert_eq!(
             to_mermaid(&diagram),
-            "flowchart LR\n  n7[\"boundary #7\"]\n  n43[\"function 1050 #43\"]\n  \
+            "flowchart LR\n  n7[\"boundary #7\"]\n  n43[\"Add #43\"]\n  \
              n7 -->|numeric| n43\n  n43 -->|numeric| n7\n"
         );
         let dot = to_dot(&diagram);
@@ -665,6 +669,82 @@ mod tests {
         assert_eq!(dot.matches("subgraph cluster_").count(), 4);
         assert_eq!(dot.matches('{').count(), dot.matches('}').count());
         assert!(dot.contains("a \\\"quoted\\\" <name> & [more] #60"));
+    }
+
+    fn function(uid: i32, id: u32) -> Node {
+        Node {
+            name: None,
+            primitive: Some(id),
+            ..node(uid, "prim", None, vec![])
+        }
+    }
+
+    #[test]
+    fn functions_outside_the_table_keep_their_id() {
+        assert_eq!(label(&function(1, 1050)), "Add");
+        assert_eq!(label(&function(1, 999_999)), "function 999999");
+    }
+
+    #[test]
+    fn every_function_name_survives_every_format() {
+        let names: Vec<_> = buzzard_rsrc::primitive_names().collect();
+        let nodes = names
+            .iter()
+            .enumerate()
+            .map(|(index, (id, _))| {
+                let top = index as i16 * 40;
+                Node {
+                    bounds: Some(Rect {
+                        top,
+                        left: 0,
+                        bottom: top + 32,
+                        right: 32,
+                    }),
+                    ..function(index as i32 + 10, *id)
+                }
+            })
+            .collect();
+        let diagram = BlockDiagram {
+            root: Diagram {
+                uid: 1,
+                nodes,
+                wires: vec![],
+            },
+        };
+        let svg = to_svg(&diagram);
+        let dot = to_dot(&diagram);
+        let mermaid = to_mermaid(&diagram);
+        let markdown = crate::summary::diagram_to_markdown(&diagram);
+        for (index, (_, entry)) in names.iter().enumerate() {
+            let (uid, name) = (index + 10, entry.name);
+            let escaped = name.replace('&', "&amp;");
+            // The box shows a long name cut short; the tooltip has all of it.
+            let shown = shorten(name, 34).replace('&', "&amp;");
+            assert!(svg.contains(&format!(">{shown}</text>")), "{name}");
+            assert!(svg.contains(&format!(
+                "<title>built-in function `{escaped}` #{uid}</title>"
+            )));
+            assert!(dot.contains(&format!("n{uid} [label=\"{name} #{uid}\"];")));
+            assert!(mermaid.contains(&format!("n{uid}[\"{name} #{uid}\"]")));
+            assert!(markdown.contains(&format!("- built-in function `{name}` #{uid}\n")));
+        }
+        // Nothing in a name opened a tag, an entity or a second line.
+        assert!(!svg.contains("&amp;amp;"));
+        assert_eq!(svg.matches("<text ").count(), names.len());
+        for piece in svg.split('&').skip(1) {
+            assert!(
+                ["amp;", "lt;", "gt;", "quot;"]
+                    .iter()
+                    .any(|entity| piece.starts_with(entity)),
+                "bare ampersand before {:?}",
+                &piece[..piece.len().min(20)]
+            );
+        }
+        assert_eq!(mermaid.lines().count(), names.len() + 1);
+        assert_eq!(
+            markdown.lines().filter(|l| l.starts_with("- ")).count(),
+            names.len()
+        );
     }
 
     #[test]

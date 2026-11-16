@@ -48,8 +48,10 @@ buzzard inspect Main.vi --format dot | dot -Tpng -o Main.png
 
 The SVG places nodes, structures and tunnels where the editor drew them.
 Wires are drawn as elbows between their end points, not along their original
-routes, and built-in functions are labelled boxes (`function 1050`) because
-neither their icons nor their names are stored in the file.
+routes, and built-in functions are labelled boxes because their icons are
+not stored in the file. Their names are not stored either: a box is labelled
+from a vendored table of function names (`Add`), or with the function's id
+(`function 1050`) when the table does not have it.
 
 Run the language server over stdio:
 
@@ -116,8 +118,10 @@ editor keeps across saves: over 1,340 pairs of consecutive revisions from
 two public repositories, 96% of nodes kept their id. Nodes whose id did
 change are matched by what they are and where they are (class, name,
 function id, terminal types, enclosing structures); what is left is
-reported as added or removed. Built-in functions are named by their
-function id, because the file does not hold their names.
+reported as added or removed. The file does not hold the names of built-in
+functions: they are named from a vendored table (``built-in function `Add` ``)
+and, where the table has no entry, by their function id
+(`built-in function 1234`).
 
 ### In git
 
@@ -366,9 +370,15 @@ does not lead to a workspace file:
 - `BZ006` is re-evaluated when a watched `.vi`, `.ctl` or project file
   changes. Deleting a member of another type (a `.dll`, a text file) is only
   noticed at the next such change.
-- Built-in functions on the block diagram are known only by a numeric id.
-  Nothing in the file names them, so the dataflow rules reason from terminal
-  types and wiring alone.
+- Built-in functions on the block diagram are stored as a numeric id; nothing
+  in the file names them. They are named from a vendored table that covers
+  687 ids (see `NOTICE`). An id outside the table is shown as a number. The
+  table marks 162 names as verified, meaning its source records that it
+  confirmed which function the id is; the other 525 were taken over from an
+  export without independent confirmation and may be wrong. Verified and
+  unverified names are printed the same way. The names are used for wording
+  only: the dataflow rules still reason from terminal types and wiring
+  alone.
 - Constant values, label text, case selector values and wire routes are not
   decoded.
 - The dataflow rules and the diagram's terminal directions were validated
@@ -391,6 +401,15 @@ pylavi. The project file fixtures under
 (BSD 3-Clause) and [ni/grpc-labview](https://github.com/ni/grpc-labview)
 (MIT); their licence texts are kept next to the files. The names of heap
 tags and object classes are generated from pylabview.
+
+The table of built-in function names
+(`crates/buzzard-rsrc/src/blocks/heap/primitives.rs`) is generated from
+[pragmatest-dev/lvkit](https://github.com/pragmatest-dev/lvkit) (Apache-2.0,
+Copyright 2025-2026 Ryan Friedman) by `tools/gen_primitives.py`. Only ids,
+function names and a verified flag were taken. `NOTICE` records the commit,
+what was changed, and where LVKit got the names from;
+`LICENSES/Apache-2.0.txt` is the licence that covers the table. Everything
+else in this repository is under the MIT licence in `LICENSE`.
 
 The conformance suite in this repository uses 34 small files. During
 development the parser, diagram decoder and renderers are also run over

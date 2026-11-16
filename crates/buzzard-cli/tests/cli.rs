@@ -139,7 +139,10 @@ fn inspect_prints_markdown_and_json() {
         markdown.contains("## Block diagram\n\n2 nodes, 3 wires, 1 diagrams.\n"),
         "{markdown}"
     );
-    assert!(markdown.contains("- built-in function #43\n"), "{markdown}");
+    assert!(
+        markdown.contains("- built-in function `Add` #43\n"),
+        "{markdown}"
+    );
     assert!(
         markdown.contains("  - out #51 numeric -> diagram boundary #7 (terminal #162)\n"),
         "{markdown}"
