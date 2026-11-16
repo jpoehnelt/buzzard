@@ -274,12 +274,19 @@ A proof is about the file as it was saved:
   records every such loss: a signal, node, terminal or frame that does not
   resolve or is listed twice, a wire end that is no terminal of its diagram,
   two wires into one terminal, an object defined twice, an object that no
-  list names, and a list that does not hold as many elements as it states.
-  A block diagram with any loss is listed as not decoded completely and is
+  list names, a list that does not hold as many elements as it states, an
+  object with a field it cannot name or with the same field twice, and a
+  heap whose byte stream breaks a rule that every real one keeps (a
+  closing entry that does not match its opening one or carries data, an
+  attribute of an unknown kind, a node left open). A block diagram with
+  any loss is listed as not decoded completely and is
   not searched for classic state machines at all. None of the 1,773 real
   files it was checked on has a loss. A selector table is used only when it
   is whole: every entry has its five fields exactly once, and every case
-  that is not the default has a value.
+  that is not the default has a value. What is left is damage that changes
+  a value and nothing else, such as the item an enumeration constant holds
+  or the number of the default case: the file then describes another
+  program, and the findings are about that program.
 
 ### What is not proven
 

@@ -54,10 +54,39 @@ const RELIABLE_DIRECTION: [&str; 16] = [
 /// True" and clear for "Continue if True".
 ///
 /// Checked on 290 loops saved by versions 13 to 25: the flags are `0x10001`
-/// (274) or `0x1` (16). All seven loops whose terminal is fed by a constant
+/// (274) or `0x1` (16); see [`LTST_ALWAYS_SET`]. All seven loops whose terminal is fed by a constant
 /// True have the bit set and the one fed by a constant False has it clear;
 /// the opposite reading would make all eight loops run forever.
 const STOP_IF_TRUE: u32 = 0x1_0000;
+
+/// Bit of a loop condition terminal's `objFlags` that is set on every one
+/// of those 290 loops. A terminal without it has no readable flags, and
+/// its polarity is then not taken from them.
+const LTST_ALWAYS_SET: u32 = 0x1;
+
+/// Every field that a case structure object has in 1,713 case structures
+/// of 1,773 real files. The field that names the default case is absent
+/// when the default is frame 0 (1,153 of them), so its absence is
+/// trusted only in an object with no field beyond these.
+const SELECT_FIELDS: [&str; 17] = [
+    "SelectDefaultCase",
+    "SelectNRightType",
+    "SelectRangeArray32",
+    "SelectSelLabFlags",
+    "SelectStringArray",
+    "bounds",
+    "caseSelDCO",
+    "clumpNum",
+    "contRect",
+    "dIdx",
+    "diagramList",
+    "label",
+    "objFlags",
+    "selString",
+    "shortCount",
+    "termList",
+    "tunnelList",
+];
 
 /// Bit of an output tunnel's `objFlags` that is set when at least one frame
 /// leaves the tunnel unwired and the type's default value is used there.
@@ -418,6 +447,19 @@ pub enum Loss {
     /// An object id defined twice in the heap, so that references to it
     /// are ambiguous.
     RepeatedObject,
+    /// An object with a field whose tag is not known, or with two fields
+    /// of one tag. A field that is absent has a meaning (zero; frame 0
+    /// for the default case), so a field hidden behind a damaged tag
+    /// changes what the object says without leaving a gap. None of the
+    /// 572,878 objects in the diagram heaps of 1,773 real files has
+    /// either, apart from field 0 of the classes that number their own
+    /// fields.
+    Field,
+    /// The heap's byte stream is irregular
+    /// ([`Heap::irregular`](crate::blocks::heap::Heap::irregular)), in
+    /// the diagram heap or the front panel heap: nodes may have been
+    /// swallowed without leaving any trace in the tree.
+    Stream,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -512,6 +554,7 @@ impl BlockDiagram {
             heap: Census::default(),
             built: Census::default(),
             repeated_object: false,
+            odd_field: false,
             types,
             names,
         };
@@ -531,12 +574,17 @@ impl BlockDiagram {
         // What the heap defines must all have arrived somewhere: a list
         // whose field tag is damaged takes its elements out of sight
         // without leaving an element that fails to resolve.
-        let (heap, built) = (builder.heap, builder.built);
+        let (counted, built) = (builder.heap, builder.built);
         let unplaced = [
-            (heap.terminals != built.terminals, Loss::Terminal),
-            (heap.diagrams != built.diagrams, Loss::Frame),
-            (heap.signals != built.signals, Loss::Wire),
+            (counted.terminals != built.terminals, Loss::Terminal),
+            (counted.diagrams != built.diagrams, Loss::Frame),
+            (counted.signals != built.signals, Loss::Wire),
             (builder.repeated_object, Loss::RepeatedObject),
+            (builder.odd_field, Loss::Field),
+            (
+                heap.irregular || panel.is_some_and(|panel| panel.irregular),
+                Loss::Stream,
+            ),
         ];
         root.losses.extend(
             unplaced
@@ -622,6 +670,8 @@ struct Builder<'h, 'a> {
     built: Census,
     /// Whether an object id is defined twice in the diagram heap.
     repeated_object: bool,
+    /// Whether an object has a field of an unknown tag or a field twice.
+    odd_field: bool,
     types: &'h TypeTable,
     names: &'h HashMap<i32, String>,
 }
@@ -652,6 +702,15 @@ impl<'h, 'a> Builder<'h, 'a> {
     fn index(&mut self, node: &'h HeapNode<'a>) {
         if node.class().is_some() {
             Self::count(&mut self.heap, node);
+            // Only objects of a known class: the fields of an unknown
+            // one cannot be judged. Field 0 is the first field of the
+            // classes that number their own.
+            if node.class_name().is_some() && !self.odd_field {
+                let mut tags = HashSet::new();
+                self.odd_field = node.children.iter().any(|field| {
+                    (field.tag != 0 && field.tag_name().is_none()) || !tags.insert(field.tag)
+                });
+            }
             if let Some(uid) = node.uid() {
                 match self.objects.entry(uid) {
                     Entry::Occupied(_) => self.repeated_object = true,
@@ -711,6 +770,13 @@ impl<'h, 'a> Builder<'h, 'a> {
             list.attr(ATTR_ELEMENTS)
                 .is_some_and(|stated| usize::try_from(stated) == Ok(list.children.len()))
         })
+    }
+
+    /// Whether every field of an object is one of the named ones.
+    fn only_fields(object: &HeapNode<'_>, fields: &[&str]) -> bool {
+        let named =
+            |field: &HeapNode<'_>| field.tag_name().is_some_and(|name| fields.contains(&name));
+        object.children.iter().all(named)
     }
 
     /// The object an element stands for: itself if it is a definition,
@@ -947,8 +1013,12 @@ impl<'h, 'a> Builder<'h, 'a> {
         let default_frame = match kind {
             SelectorKind::Boolean | SelectorKind::ErrorCluster => None,
             _ => match object.child_named("SelectDefaultCase") {
-                // An absent field is frame 0.
-                None => Some(0),
+                // An absent field is frame 0. That reading is only safe
+                // when the field cannot be hiding under another name: a
+                // damaged tag that happens to be a known one leaves the
+                // object with a field no case structure has.
+                None if Self::only_fields(object, &SELECT_FIELDS) => Some(0),
+                None => return None,
                 Some(field) => match field.uint()? {
                     0xFF => None,
                     index if (index as usize) < frames => Some(index),
@@ -985,6 +1055,8 @@ impl<'h, 'a> Builder<'h, 'a> {
             .child_named("loopTestDCO")
             .and_then(|element| self.resolve(element))
             .filter(|test| test.class_name() == Some("lTst"))
+            // An absent flags field would read as "continue if true".
+            .filter(|test| flags(test) & LTST_ALWAYS_SET != 0)
             .and_then(|test| {
                 Some(StopTerminal {
                     dco: test.uid()?,

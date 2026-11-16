@@ -502,7 +502,7 @@ fn real_machines_outside_the_repository() {
 
 /// The single changed bytes of real files that were reported to give
 /// false proofs, as `(file, offset in the inflated heap, old byte, new
-/// byte, whether the damage is a recorded loss)`.
+/// byte)`.
 ///
 /// * The first renumbers the inner terminal of the next-state tunnel in
 ///   one frame, so the wire into it ends nowhere.
@@ -510,31 +510,30 @@ fn real_machines_outside_the_repository() {
 ///   Either way the frame looked unwired, the tunnel's default was taken
 ///   for what the frame writes, and three states were "proven"
 ///   unreachable.
-/// * The third takes the frame index out of a selector table entry. The
-///   value then selected frame 0, a state `frame 1` was made up for the
-///   frame left without a value, and five states were "proven"
-///   unreachable.
-const REPORTED_DAMAGE: [(&str, usize, u8, u8, bool); 3] = [
+/// * The third turns the frame index of a selector table entry into a
+///   second copy of another field. The absent index read as frame 0, a
+///   state `frame 1` was made up for the frame left without a value, and
+///   five states were "proven" unreachable.
+///
+/// Each is now a recorded loss, so the diagram is not searched at all.
+const REPORTED_DAMAGE: [(&str, usize, u8, u8); 3] = [
     (
         "GaborDernoczi_LabVIEW_State_Machine/State_Machine.vi",
         4899,
         0xf0,
         0x00,
-        true,
     ),
     (
         "GaborDernoczi_LabVIEW_State_Machine/State_Machine.vi",
         5197,
         0xfe,
         0x00,
-        true,
     ),
     (
         "TomsLabVIEWAdventure_Guessing-Game/Main.vi",
         24731,
         0x23,
         0x21,
-        false,
     ),
 ];
 
@@ -550,7 +549,7 @@ fn damage_to_the_real_machines_proves_nothing_new() {
     let root = PathBuf::from(
         std::env::var_os("BUZZARD_FSM_SAMPLES").expect("BUZZARD_FSM_SAMPLES is not set"),
     );
-    for (path, at, old, new, lossy) in REPORTED_DAMAGE {
+    for (path, at, old, new) in REPORTED_DAMAGE {
         let bytes = std::fs::read(root.join(path)).unwrap();
         let file = RsrcFile::parse(&bytes).unwrap();
         let mut heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
@@ -563,7 +562,7 @@ fn damage_to_the_real_machines_proves_nothing_new() {
         let damaged = BlockDiagram::from_inflated_heap(&file, &heap)
             .unwrap()
             .unwrap();
-        assert_eq!(!damaged.is_complete(), lossy, "{path} byte {at}");
+        assert!(!damaged.is_complete(), "{path} byte {at}");
         assert_eq!(extract(&damaged).machines, [], "{path} byte {at}");
         assert_eq!(verify(&damaged).issues(), [], "{path} byte {at}");
     }
@@ -578,10 +577,16 @@ fn damage_to_the_real_machines_proves_nothing_new() {
         total.decoded += found.decoded;
         total.incomplete += found.incomplete;
         total.machines += found.machines;
+        total.revalued.extend(found.revalued);
     }
     println!(
         "{} damaged heaps, {} decoded, {} of them with a recorded loss, {} still with a machine",
         total.trials, total.decoded, total.incomplete, total.machines
+    );
+    println!(
+        "{} proofs about a diagram that differs in a value only: {:#?}",
+        total.revalued.len(),
+        total.revalued
     );
 }
 
@@ -2528,9 +2533,43 @@ struct Damage {
     /// Proven findings the undamaged file does not have, with the place
     /// and the byte that produced them.
     added: Vec<String>,
+    /// The same, where the damage changed nothing but a value: see
+    /// [`skeleton`].
+    revalued: Vec<String>,
     /// Damaged heaps that decoded without a recorded loss to a diagram
     /// with less on it than the undamaged one.
     vanished: Vec<String>,
+}
+
+/// The structure of a diagram without the values on it: what constants
+/// and case tables say, types, names, positions and the polarity of the
+/// condition terminal are blanked.
+///
+/// A changed byte that leaves this as it was has changed a value: an
+/// enumeration constant now holds another item, a case is labelled with
+/// another string or selected by another value, another case is the
+/// default. The result is a complete diagram of another program, and a
+/// proof about it is right about it; nothing was lost. Such findings are
+/// counted apart. Everything else, a wire, a terminal, a node, a class,
+/// a tunnel flag or a parameter index that differs, is damage to the
+/// structure, and that must never add a proof.
+fn skeleton(diagram: &BlockDiagram) -> BlockDiagram {
+    let mut copy = diagram.clone();
+    build::visit(&mut copy.root, &mut |node| {
+        node.name = None;
+        node.bounds = None;
+        node.selector = None;
+        if let Some(stop) = node.loop_info.as_mut().and_then(|info| info.stop.as_mut()) {
+            stop.stop_if_true = false;
+        }
+        for terminal in &mut node.terminals {
+            terminal.bounds = None;
+            terminal.constant = None;
+            terminal.data_type = None;
+            terminal.numeric = None;
+        }
+    });
+    copy
 }
 
 /// How much there is on a diagram: frames, nodes, terminals, wires and
@@ -2578,6 +2617,7 @@ fn damage(bytes: &[u8], step: usize) -> Damage {
     assert!(pristine.is_complete());
     let allowed = proven(&pristine);
     let whole = amount(&pristine);
+    let structure = skeleton(&pristine);
 
     let mut out = Damage::default();
     let mut copy = heap.clone();
@@ -2598,8 +2638,16 @@ fn damage(bytes: &[u8], step: usize) -> Damage {
                 ));
             }
             out.machines += usize::from(!extract(&diagram).machines.is_empty());
-            for finding in proven(&diagram).difference(&allowed) {
-                out.added.push(format!(
+            let found = proven(&diagram);
+            if found.is_subset(&allowed) {
+                continue;
+            }
+            let list = match skeleton(&diagram) == structure {
+                true => &mut out.revalued,
+                false => &mut out.added,
+            };
+            for finding in found.difference(&allowed) {
+                list.push(format!(
                     "byte {at} {:#04x} -> {value:#04x}: {finding}",
                     heap[at]
                 ));
@@ -2608,6 +2656,52 @@ fn damage(bytes: &[u8], step: usize) -> Damage {
         copy[at] = heap[at];
     }
     out
+}
+
+/// One changed byte of a file in the repository that gave a proof: the
+/// tag of the field that says which case of the machine's case structure
+/// is the default (`26 54 01`: field 565, one byte, frame 1). An absent
+/// field means frame 0, so with the tag damaged the default moved from
+/// "Idle" to "Init", the empty string that "Init" hands on selected
+/// "Init" itself, and "Idle" was "proven" unreachable. The object now
+/// has a field that cannot be named, or the same field twice, which is a
+/// recorded loss.
+#[test]
+fn a_damaged_field_tag_in_a_real_file_proves_nothing() {
+    use buzzard_rsrc::blocks::zlib;
+    use buzzard_rsrc::RsrcFile;
+
+    const AT: usize = 72_333;
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify/jki-smo/process.vi");
+    let bytes = std::fs::read(path).unwrap();
+    let file = RsrcFile::parse(&bytes).unwrap();
+    let mut heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
+    assert_eq!(heap[AT - 1..AT + 2], [0x26, 0x54, 0x01]);
+    let mut decode = |at: usize, value: u8| {
+        let old = std::mem::replace(&mut heap[at], value);
+        let diagram = BlockDiagram::from_inflated_heap(&file, &heap);
+        heap[at] = old;
+        diagram.unwrap().unwrap()
+    };
+    assert_eq!(proven(&decode(AT, 0x54)), BTreeSet::new());
+    let mut lossy = 0;
+    for value in TAGS {
+        let diagram = decode(AT, value);
+        lossy += usize::from(!diagram.is_complete());
+        assert_eq!(extract(&diagram).machines, [], "{value:#04x}");
+        assert_eq!(verify(&diagram).issues(), [], "{value:#04x}");
+    }
+
+    assert!(lossy >= 2);
+
+    // The value of the field is another matter. With frame 0 written
+    // there the file is whole and says that "Init" is the default case:
+    // another program, in which "Idle" really is never reached.
+    let other = decode(AT + 1, 0x00);
+    assert!(other.is_complete());
+    assert_eq!(only(&other).default.as_deref(), Some("Init"));
+    assert_eq!(only(&other).check().findings, [unreachable("Idle")]);
 }
 
 /// Every `step`-th byte of the heap is damaged. Set
@@ -2619,6 +2713,16 @@ fn damage_step(default: usize) -> usize {
     }
 }
 
+/// What the tag byte in `a_damaged_field_tag_in_a_real_file_proves_nothing`
+/// is changed to.
+///
+/// `0x55` makes it a second copy of a field the object already has, and
+/// `0xff` a field nothing has: both are a recorded loss, and the diagram
+/// is not searched. The others make it a field that exists elsewhere but
+/// that no case structure has; the selector table is then not trusted to
+/// say that frame 0 is the default, so there is no table and no machine.
+const TAGS: [u8; 6] = [0x00, 0x44, 0x53, 0x55, 0xd4, 0xff];
+
 const FIXTURES: [&str; 5] = [
     "jki-smo/process.vi",
     "jki-state-machine/queued-state-machine-template.vi",
@@ -2627,11 +2731,17 @@ const FIXTURES: [&str; 5] = [
     "lv-mqtt-broker/test-simple-connection.vi",
 ];
 
-/// The invariant behind the word "proven": damage to the file may remove
-/// findings, but no proven finding appears that the undamaged file does
-/// not have. And the property of the decoder that the invariant rests
-/// on: whenever a frame, a node, a terminal, a wire or a wire end is gone
-/// from the decoded diagram, a loss is on record.
+/// The invariant behind the word "proven": damage to the structure of a
+/// diagram may remove findings, but no proven finding appears that the
+/// undamaged file does not have. And the property of the decoder that the
+/// invariant rests on: whenever a frame, a node, a terminal, a wire or a
+/// wire end is gone from the decoded diagram, a loss is on record.
+///
+/// Damage that only changes a value (see [`skeleton`]) gives a complete
+/// diagram of another program; proofs about it are counted and printed,
+/// not failed. With every byte tried, `process.vi` has 34 of them: the
+/// label of the case "Init" spelled otherwise (the new name is then
+/// unreachable) and the number of the default case changed.
 #[test]
 fn a_damaged_heap_never_adds_a_proven_finding() {
     let step = damage_step(499);
@@ -2647,10 +2757,16 @@ fn a_damaged_heap_never_adds_a_proven_finding() {
         total.decoded += found.decoded;
         total.incomplete += found.incomplete;
         total.machines += found.machines;
+        total.revalued.extend(found.revalued);
     }
     println!(
         "{} damaged heaps, {} decoded, {} of them with a recorded loss, {} still with a machine",
         total.trials, total.decoded, total.incomplete, total.machines
+    );
+    println!(
+        "{} proofs about a diagram that differs in a value only: {:#?}",
+        total.revalued.len(),
+        total.revalued
     );
     // The test means something only if damage is noticed and some
     // damaged files still give a machine to make claims about.

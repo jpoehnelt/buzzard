@@ -816,6 +816,14 @@ fn own_list<'t, 'a>(object: &'t mut HeapNode<'a>, tag: i32) -> &'t mut Vec<HeapN
     &mut list.unwrap().children
 }
 
+/// The fields of the first object that has a field with the given tag.
+fn fields_of_owner<'t, 'a>(root: &'t mut HeapNode<'a>, tag: i32) -> &'t mut Vec<HeapNode<'a>> {
+    let owner = first_mut(root, &|n| {
+        n.class().is_some() && n.children.iter().any(|c| c.tag == tag)
+    });
+    &mut owner.unwrap().children
+}
+
 /// Attribute ids of a heap object: its class and its unique id.
 const CLASS: i32 = -2;
 const UID: i32 = -3;
@@ -944,10 +952,11 @@ fn every_loss_of_the_decoder_is_recorded() {
         [Loss::WireConflict]
     );
     // A whole signal list out of sight behind a damaged field tag: no
-    // element fails to resolve, but the signals are not accounted for.
+    // element fails to resolve, but the signals are not accounted for,
+    // and the tag is not one an object has.
     assert_eq!(
         losses(&|root| list_mut(root, wires).tag = NO_FIELD),
-        [Loss::Wire]
+        [Loss::Wire, Loss::Field]
     );
 
     // An element gone from a list that still states its old length: the
@@ -974,6 +983,51 @@ fn every_loss_of_the_decoder_is_recorded() {
     });
     assert!(found.contains(&Loss::Wire), "{found:?}");
 
+    // A field behind a damaged tag, and a field twice. The first signal
+    // list sits in a diagram object.
+    assert_eq!(
+        losses(&|root| {
+            let fields = fields_of_owner(root, wires);
+            let last = fields.len() - 1;
+            fields[last].tag = NO_FIELD;
+        })
+        .last(),
+        Some(&Loss::Field)
+    );
+    let found = losses(&|root| {
+        let fields = fields_of_owner(root, wires);
+        let again = fields[0].clone();
+        fields.push(again);
+    });
+    assert!(found.contains(&Loss::Field), "{found:?}");
+
+    // A heap whose byte stream is irregular. One changed byte can make
+    // the count of a node's attributes larger, and the entries that
+    // follow are then read as attributes: the tree is whole, the nodes
+    // are gone, and nothing in the tree tells. Here the first list
+    // element with a class and an id (`10 19 02 fe`: open, two
+    // attributes, the first of them the class) gets a count of 18.
+    let streamed = |change: &dyn Fn(&mut Vec<u8>)| -> Vec<Loss> {
+        let mut copy = heap.clone();
+        change(&mut copy);
+        let diagram = BlockDiagram::from_inflated_heap(&file, &copy);
+        let diagram = diagram.unwrap().unwrap();
+        let mut all: Vec<Loss> = diagram
+            .diagrams()
+            .iter()
+            .flat_map(|d| d.losses.clone())
+            .collect();
+        all.sort();
+        all.dedup();
+        all
+    };
+    assert_eq!(streamed(&|_| {}), []);
+    let element = heap
+        .windows(4)
+        .position(|bytes| bytes == [0x10, 0x19, 0x02, 0xfe])
+        .unwrap();
+    let found = streamed(&|bytes| bytes[element + 2] = 0x12);
+    assert!(found.contains(&Loss::Stream), "{found:?}");
     // A node the decoder cannot resolve takes its terminals with it.
     let found = losses(&|root| dangle(&mut list_mut(root, nodes).children[1]));
     assert!(found.contains(&Loss::Node), "{found:?}");

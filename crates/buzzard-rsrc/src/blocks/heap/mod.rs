@@ -34,6 +34,10 @@ pub mod tag {
 /// Deepest nesting accepted, so recursive consumers cannot overflow the stack.
 pub const MAX_DEPTH: usize = 256;
 
+/// The attribute ids that the nodes of real heaps carry: class, unique
+/// id, element count of a list, and one more of unknown meaning.
+const KNOWN_ATTRS: [i32; 4] = [ATTR_CLASS, ATTR_UID, -5, -6];
+
 const SCOPE_OPEN: u8 = 0;
 const SCOPE_LEAF: u8 = 1;
 const SCOPE_CLOSE: u8 = 2;
@@ -202,6 +206,14 @@ fn lookup(table: &'static [(i32, &'static str)], id: i32) -> Option<&'static str
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Heap<'a> {
     pub roots: Vec<HeapNode<'a>>,
+    /// The stream breaks a rule that every heap of 1,773 real files
+    /// keeps: an entry that closes a node has the tag of the entry that
+    /// opened it and carries no attributes and no content, a node has
+    /// each of its attributes once and only of the four kinds seen
+    /// (ids -2, -3, -5 and -6), and no node is left open at the end. The parser reads on regardless, so that a
+    /// damaged file stays usable, but nodes may then be missing: a
+    /// damaged attribute count swallows the entries after it.
+    pub irregular: bool,
 }
 
 impl<'a> Heap<'a> {
@@ -214,6 +226,7 @@ impl<'a> Heap<'a> {
         // Open nodes, innermost last. `stack[0]` collects the roots.
         let mut stack: Vec<Vec<HeapNode<'a>>> = vec![Vec::new()];
         let mut open: Vec<HeapNode<'a>> = Vec::new();
+        let mut irregular = false;
         while r.remaining() > 0 {
             let b0 = r.u8()?;
             let b1 = r.u8()?;
@@ -243,6 +256,13 @@ impl<'a> Heap<'a> {
                     attrs.push((id, value));
                 }
             }
+            // Short enough to compare pairwise; a longer list is not one
+            // a real node has.
+            irregular |= attrs.len() > KNOWN_ATTRS.len()
+                || attrs.iter().enumerate().any(|(at, (id, _))| {
+                    !KNOWN_ATTRS.contains(id)
+                        || attrs[..at].iter().any(|(earlier, _)| earlier == id)
+                });
             let content = match size_spec {
                 0 => Content::None,
                 7 => Content::Bool(true),
@@ -285,6 +305,7 @@ impl<'a> Heap<'a> {
                     let Some(mut node) = open.pop() else {
                         return Err(malformed("heap", "close tag without a matching open tag"));
                     };
+                    irregular |= node.tag != tag || has_attrs || size_spec != 0;
                     node.children = stack.pop().expect("one child list per open node");
                     stack.last_mut().expect("stack is never empty").push(node);
                 }
@@ -292,12 +313,14 @@ impl<'a> Heap<'a> {
             }
         }
         // Tolerate a truncated tail: close whatever is still open.
+        irregular |= !open.is_empty();
         while let Some(mut node) = open.pop() {
             node.children = stack.pop().expect("one child list per open node");
             stack.last_mut().expect("stack is never empty").push(node);
         }
         Ok(Self {
             roots: stack.pop().expect("root list"),
+            irregular,
         })
     }
 
@@ -429,6 +452,7 @@ mod tests {
 
         let bytes = heap(&body);
         let parsed = Heap::parse(&bytes).unwrap();
+        assert!(!parsed.irregular);
         assert_eq!(parsed.roots.len(), 1);
         assert_eq!(parsed.node_count(), 4);
         let object = &parsed.roots[0];
@@ -441,6 +465,50 @@ mod tests {
         );
         assert_eq!(object.child(100).unwrap().content, Content::Bool(true));
         assert_eq!(object.child(101).unwrap().bytes(), Some(&b"abc"[..]));
+    }
+
+    #[test]
+    fn an_irregular_stream_is_read_and_flagged() {
+        // <object class=47 uid=5> <leaf 100/> <leaf 101/> </object>
+        let object = |attrs: &[u8], close: Vec<u8>| {
+            let mut body = entry(tag::OBJECT, SCOPE_OPEN, 0, true).to_vec();
+            body.extend_from_slice(attrs);
+            body.extend(entry(100, SCOPE_LEAF, 7, false));
+            body.extend(entry(101, SCOPE_LEAF, 7, false));
+            body.extend(close);
+            heap(&body)
+        };
+        let class_and_uid = [2, (-2i8) as u8, 0, 47, (-3i8) as u8, 0, 5];
+        let close = || entry(tag::OBJECT, SCOPE_CLOSE, 0, false).to_vec();
+        let bytes = object(&class_and_uid, close());
+        let regular = Heap::parse(&bytes).unwrap();
+        assert!(!regular.irregular);
+        assert_eq!(regular.node_count(), 3);
+
+        // The entry that closes the object has another tag, carries
+        // content, or is missing.
+        let other_tag = object(&class_and_uid, entry(202, SCOPE_CLOSE, 0, false).to_vec());
+        let mut with_content = entry(tag::OBJECT, SCOPE_CLOSE, 1, false).to_vec();
+        with_content.push(9);
+        let with_content = object(&class_and_uid, with_content);
+        let left_open = object(&class_and_uid, Vec::new());
+        // An attribute of a kind no node has, and the same one twice.
+        let unknown = object(&[2, (-2i8) as u8, 0, 47, 7, 0, 5], close());
+        let twice = object(&[2, (-3i8) as u8, 0, 47, (-3i8) as u8, 0, 5], close());
+        for bytes in [other_tag, with_content, left_open, unknown, twice] {
+            let parsed = Heap::parse(&bytes).unwrap();
+            assert!(parsed.irregular);
+            assert_eq!(parsed.node_count(), 3);
+        }
+
+        // What one changed byte does: the attribute count 2 becomes 4,
+        // and the two leaves that follow are read as attributes. The
+        // tree is whole but two nodes short.
+        let swallowed = [4, (-2i8) as u8, 0, 47, (-3i8) as u8, 0, 5];
+        let bytes = object(&swallowed, close());
+        let parsed = Heap::parse(&bytes).unwrap();
+        assert!(parsed.irregular);
+        assert_eq!(parsed.node_count(), 1);
     }
 
     #[test]
