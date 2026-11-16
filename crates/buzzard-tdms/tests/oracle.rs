@@ -512,6 +512,21 @@ fn special_cases(dir: &Path) {
             );
         }
     }
+    // A file with a string channel, cut short in its last segment.
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::channel("g", "a").generated(DataType::I32, 3))
+        .object(Object::channel("g", "s").data(Values::String(vec!["one".into(), "three".into()])))
+        .object(Object::channel("g", "b").generated(DataType::F64, 2));
+    builder.segment().no_metadata().chunks(2);
+    let built = builder.build();
+    let last = usize::try_from(built.segment_offsets[1]).expect("small");
+    for cut in (last..built.bytes.len()).step_by(5) {
+        let mut cut_file = built.clone();
+        cut_file.bytes.truncate(cut);
+        save(dir, &format!("cut_strings_{cut:04}"), &cut_file, false);
+    }
     // Text that is not UTF-8, and text that ends in a zero byte.
     let mut builder = FileBuilder::new();
     builder

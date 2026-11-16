@@ -262,7 +262,7 @@ timestamps, and scaled values. It runs when `BUZZARD_TDMS_ORACLE` names a
 Python interpreter with npTDMS installed, and in CI on every change.
 `tests/oracle/README.md` has the details.
 
-615 files are compared: this crate's generated files, files written by
+639 files are compared: this crate's generated files, files written by
 npTDMS's own writer, the real file in `tests/fixtures`, and, because the
 npTDMS wheel ships its test package, the 31 scenario files and 4 data
 files that come with it, run as a black box where pip installed them.
