@@ -106,8 +106,8 @@ test('dependency versions are pinned exactly', () => {
   }
 });
 
-test('the licence is MIT and the file matches the one of the repository', () => {
-  assert.equal(manifest.license, 'MIT');
+test('the licence is Apache-2.0 and the file matches the one of the repository', () => {
+  assert.equal(manifest.license, 'Apache-2.0');
   const own = fs.readFileSync(path.join(root, 'LICENSE'), 'utf8');
   const repository = fs.readFileSync(path.join(root, '..', '..', 'LICENSE'), 'utf8');
   assert.equal(own, repository);

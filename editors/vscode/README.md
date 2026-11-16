@@ -119,4 +119,4 @@ this tool reads.
 
 ## License
 
-MIT. See [LICENSE](LICENSE), a copy of the [licence of the repository](../../LICENSE).
+Apache-2.0. See [LICENSE](LICENSE), a copy of the [licence of the repository](../../LICENSE).
