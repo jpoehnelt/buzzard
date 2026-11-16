@@ -299,7 +299,11 @@ fn diagram_names_subvi_calls() {
 #[test]
 fn empty_diagram_and_files_without_one() {
     let bd = diagram("pylavi/empty.vi");
-    assert!(bd.root.wires.is_empty());
+    assert!(
+        bd.root.wires.is_empty(),
+        "expected nothing, got {:?}",
+        bd.root.wires
+    );
     assert!(bd
         .nodes()
         .all(|n| n.class == "sRN" && n.terminals.is_empty()));
@@ -318,7 +322,11 @@ fn baseline_vi() {
     assert_eq!(meta.kind, FileKind::Vi);
     assert_eq!(meta.version.unwrap().to_string(), "21.0.0");
     assert_eq!(meta.password_protected, Some(false));
-    assert!(meta.links.is_empty());
+    assert!(
+        meta.links.is_empty(),
+        "expected nothing, got {:?}",
+        meta.links
+    );
     let flags = meta.flags.unwrap();
     assert_eq!(flags.separate_compiled_code, Some(false));
     assert_eq!(flags.auto_error_handling, Some(true));

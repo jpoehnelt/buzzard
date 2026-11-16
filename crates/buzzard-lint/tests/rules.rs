@@ -277,7 +277,7 @@ fn graph_answers_callers_and_callees() {
     );
     assert_eq!(names(graph.callees(&dir.0.join("main.vi"))), ["util.vi"]);
     assert_eq!((graph.file_count(), graph.edge_count()), (4, 3));
-    assert!(graph.cycles().is_empty());
+    assert_none(&graph.cycles());
 }
 
 #[test]
@@ -289,7 +289,7 @@ fn output_is_deterministic_and_ignores_apply() {
         dir.vi(&format!("d{}/f{i}.vi", i % 4), version, &words, &[]);
     }
     let first = dir.diagnostics();
-    assert!(!first.is_empty());
+    assert!(!first.is_empty(), "the workspace is built to have problems");
     for _ in 0..5 {
         assert_eq!(dir.diagnostics(), first);
     }
@@ -401,6 +401,12 @@ fn parent_property(components: &[&str]) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;");
     format!("\t<Property Name=\"NI.LVClass.ParentClassLinkInfo\" Type=\"Bin\">{text}</Property>\n")
+}
+
+/// Fail with the unexpected items, which `assert!(v.is_empty())` would hide.
+#[track_caller]
+fn assert_none<T: std::fmt::Debug>(items: &[T]) {
+    assert!(items.is_empty(), "expected nothing, got {items:?}");
 }
 
 fn file_names(paths: &[&Path]) -> Vec<String> {
@@ -580,9 +586,9 @@ fn graph_answers_membership_and_inheritance() {
         file_names(&graph.owners(&at("Base/Base.lvclass"))),
         ["Kit.lvlib"]
     );
-    assert!(graph.owners(&at("App.lvproj")).is_empty());
-    assert!(graph.members(&at("Base/Init.vi")).is_empty());
-    assert!(graph.members(&at("missing.lvlib")).is_empty());
+    assert_none(&graph.owners(&at("App.lvproj")));
+    assert_none(&graph.members(&at("Base/Init.vi")));
+    assert_none(&graph.members(&at("missing.lvlib")));
 
     assert_eq!(
         graph.parent_class(&at("Zeta/Zeta.lvclass")),
@@ -610,9 +616,9 @@ fn graph_answers_membership_and_inheritance() {
     // Callers and callees keep meaning "uses": neither membership nor
     // inheritance shows up there.
     assert_eq!(file_names(&graph.callers(&at("Base/Init.vi"))), ["Run.vi"]);
-    assert!(graph.callers(&at("Base/Base.lvclass")).is_empty());
-    assert!(graph.callees(&at("Zeta/Zeta.lvclass")).is_empty());
-    assert!(graph.callees(&at("App.lvproj")).is_empty());
+    assert_none(&graph.callers(&at("Base/Base.lvclass")));
+    assert_none(&graph.callees(&at("Zeta/Zeta.lvclass")));
+    assert_none(&graph.callees(&at("App.lvproj")));
 
     let count = |kind| graph.edges().iter().filter(|e| e.2 == kind).count();
     assert_eq!(
@@ -725,6 +731,6 @@ fn real_project_fixtures_scan_without_parse_errors() {
     let graph = DependencyGraph::build(&workspace);
     let found = lint(&workspace, &graph, &LintConfig::default());
     // The members were not copied along with the three files.
-    assert!(!found.is_empty());
+    assert!(!found.is_empty(), "the fixture members are missing on disk");
     assert!(found.iter().all(|d| d.code == "BZ006"), "{found:#?}");
 }

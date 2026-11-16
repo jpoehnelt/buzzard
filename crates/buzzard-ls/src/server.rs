@@ -1,6 +1,6 @@
 //! The `tower-lsp` front end over [`Engine`].
 
-use std::future::Future;
+use std::future::{ready, Future, Ready};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -156,12 +156,19 @@ impl Backend {
     /// `buzzard/inspect`: metadata and graph neighbours of one file as JSON.
     /// A project, library or class answers with `project` instead of
     /// `metadata`.
+    ///
+    /// tower-lsp wants a future, but the answer comes straight from the
+    /// in-memory engine, so the future is ready at once.
     #[expect(
-        clippy::unused_async,
-        reason = "tower-lsp registers custom methods as functions that return a future"
+        clippy::needless_pass_by_value,
+        reason = "tower-lsp passes the deserialized params by value"
     )]
-    async fn inspect(&self, params: InspectParams) -> Result<Value> {
-        let path = to_path(&params.uri)?;
+    fn inspect(&self, params: InspectParams) -> Ready<Result<Value>> {
+        ready(self.inspect_now(&params.uri))
+    }
+
+    fn inspect_now(&self, uri: &Url) -> Result<Value> {
+        let path = to_path(uri)?;
         let engine = lock(&self.engine);
         let uris =
             |paths: Vec<PathBuf>| -> Vec<Url> { paths.iter().filter_map(|p| to_url(p)).collect() };

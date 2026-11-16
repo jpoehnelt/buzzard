@@ -237,7 +237,11 @@ PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
         assert_eq!(links[0].link_type, Some(FourCc::new(b"IUVI")));
         assert_eq!(links[0].heap_uids, [0x2b]);
         // The VI-level link in `LIvi` has no trailing path, hence no ids.
-        assert!(scan(RELATIVE)[0].heap_uids.is_empty());
+        assert!(
+            scan(RELATIVE)[0].heap_uids.is_empty(),
+            "expected nothing, got {:?}",
+            scan(RELATIVE)[0].heap_uids
+        );
     }
 
     #[test]
@@ -281,7 +285,11 @@ PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
         let mut data = b"\x00\x01BDHP\x00\x00\x00\x00\x00\x03".to_vec();
         data.extend_from_slice(b"BSVR\x00\x00\x00\x00PTH0\x00\x00\x00\x04\x00\x01\x00\x00");
         data.extend_from_slice(b"\x08PTH test");
-        assert!(scan(&data).is_empty());
+        assert!(
+            scan(&data).is_empty(),
+            "expected nothing, got {:?}",
+            scan(&data)
+        );
     }
 
     #[test]
@@ -290,7 +298,11 @@ PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
         let links = scan(data);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].link_type, None);
-        assert!(links[0].qualified_name.is_empty());
+        assert!(
+            links[0].qualified_name.is_empty(),
+            "expected nothing, got {:?}",
+            links[0].qualified_name
+        );
         assert_eq!(links[0].name(), Some("a.vi"));
     }
 }

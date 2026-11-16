@@ -66,6 +66,12 @@ impl Drop for Fixture {
     }
 }
 
+/// Fail with the unexpected items, which `assert!(v.is_empty())` would hide.
+#[track_caller]
+fn assert_none<T: std::fmt::Debug>(items: &[T]) {
+    assert!(items.is_empty(), "expected nothing, got {items:?}");
+}
+
 fn names(paths: &[PathBuf]) -> Vec<String> {
     paths
         .iter()
@@ -176,7 +182,7 @@ fn answers_navigation_queries() {
     assert_eq!(found, ["Main.vi", "Test Main.vi"]);
     assert_eq!(fx.engine.symbols("rdcfg", 100)[0].name, "Read Config.vi");
     assert_eq!(fx.engine.symbols("", 2).len(), 2);
-    assert!(fx.engine.symbols("zzz", 100).is_empty());
+    assert_none(&fx.engine.symbols("zzz", 100));
 }
 
 fn class_xml(members: &[&str], parent: Option<&str>) -> String {
@@ -355,7 +361,7 @@ fn tracks_changes_to_project_files() {
     fs::write(at("Child.lvclass"), class_xml(&[], None)).unwrap();
     assert_eq!(fx.touch("Child.lvclass"), []);
     assert_eq!(fx.engine.parent_class(&at("Child.lvclass")), None);
-    assert!(fx.engine.child_classes(&at("Base.lvclass")).is_empty());
+    assert_none(&fx.engine.child_classes(&at("Base.lvclass")));
 
     // A file that stops being valid XML is reported and stays a symbol.
     fs::write(at("App.lvproj"), "<Project><Item").unwrap();
@@ -364,7 +370,7 @@ fn tracks_changes_to_project_files() {
         [("App.lvproj".to_owned(), vec!["BZ000"])]
     );
     assert!(fx.engine.project(&at("App.lvproj")).is_none());
-    assert!(fx.engine.members(&at("App.lvproj")).is_empty());
+    assert_none(&fx.engine.members(&at("App.lvproj")));
     let hover = fx.engine.hover(&at("App.lvproj")).unwrap();
     assert!(
         hover.contains("Cannot analyze file: invalid XML"),
@@ -375,6 +381,6 @@ fn tracks_changes_to_project_files() {
     // Deleting it removes the diagnostics and the symbol.
     fs::remove_file(at("App.lvproj")).unwrap();
     assert_eq!(fx.touch("App.lvproj"), [("App.lvproj".to_owned(), vec![])]);
-    assert!(fx.engine.symbols("app", 10).is_empty());
+    assert_none(&fx.engine.symbols("app", 10));
     assert!(fx.engine.hover(&at("App.lvproj")).is_none());
 }
