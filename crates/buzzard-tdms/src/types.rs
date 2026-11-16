@@ -566,6 +566,29 @@ impl Column {
         }
     }
 
+    /// The values as 64-bit floats, for integers, floats and booleans.
+    /// Integers of 64 bits beyond 2^53 lose their low bits.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "documented: a convenience view, not the stored value"
+    )]
+    pub fn into_f64(self) -> Option<Vec<f64>> {
+        Some(match self {
+            Self::I8(v) => v.into_iter().map(f64::from).collect(),
+            Self::I16(v) => v.into_iter().map(f64::from).collect(),
+            Self::I32(v) => v.into_iter().map(f64::from).collect(),
+            Self::I64(v) => v.into_iter().map(|x| x as f64).collect(),
+            Self::U8(v) => v.into_iter().map(f64::from).collect(),
+            Self::Bool(v) => v.into_iter().map(|x| f64::from(u8::from(x != 0))).collect(),
+            Self::U16(v) => v.into_iter().map(f64::from).collect(),
+            Self::U32(v) => v.into_iter().map(f64::from).collect(),
+            Self::U64(v) => v.into_iter().map(|x| x as f64).collect(),
+            Self::F32(v) => v.into_iter().map(f64::from).collect(),
+            Self::F64(v) => v,
+            _ => return None,
+        })
+    }
+
     /// An empty column for a readable type; `None` for the others.
     pub fn empty(dtype: DataType) -> Option<Self> {
         Some(match dtype.without_unit() {

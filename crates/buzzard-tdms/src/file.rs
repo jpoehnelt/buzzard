@@ -279,7 +279,7 @@ impl TdmsFile {
         self.read_columns_of(&plain, range)
     }
 
-    fn read_columns_of(
+    pub(crate) fn read_columns_of(
         &self,
         channels: &[(Channel<'_>, Option<u32>)],
         range: Range<u64>,
@@ -584,7 +584,7 @@ impl<'a> Channel<'a> {
     }
 
     /// The type values are read as, and the scaler to name when reading.
-    fn storage(&self) -> Result<(DataType, Option<u32>)> {
+    pub(crate) fn storage(&self) -> Result<(DataType, Option<u32>)> {
         let object = self.object();
         match self.dtype() {
             DataType::DaqmxRaw => match object.scalers.as_slice() {

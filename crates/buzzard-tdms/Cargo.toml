@@ -26,6 +26,8 @@ arrow-schema = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true
+parquet.workspace = true
+arrow-array.workspace = true
 serde_json.workspace = true
 
 [[example]]
