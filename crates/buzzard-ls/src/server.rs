@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::{
-    Diagnostic as Finding, FileState, LintConfig, RsrcInspector, Severity, ViInspector,
+    summary, Diagnostic as Finding, FileState, LintConfig, RsrcInspector, Severity, ViInspector,
 };
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
@@ -113,10 +113,7 @@ async fn refresh(
             // backend only knows binary files.
             Some(FileState::load(&path))
         } else {
-            Some(match inspector.inspect(&path).await {
-                Ok(meta) => FileState::Parsed(Box::new(meta)),
-                Err(reason) => FileState::Failed(reason),
-            })
+            Some(FileState::from_inspection(inspector.inspect(&path).await))
         };
         changes.push((path, state));
     }
@@ -182,9 +179,47 @@ impl Backend {
     }
 }
 
+impl Backend {
+    /// `buzzard/exportAst`: the block diagram of one file as a graph of
+    /// nodes, terminals and wires, for tools and AI agents. The diagram is
+    /// decoded from disk on request; it is not kept in memory.
+    async fn export_ast(&self, params: ExportAstParams) -> Result<Value> {
+        let path = to_path(&params.uri)?;
+        let markdown = match params.format.as_deref() {
+            None | Some("json") => false,
+            Some("markdown") => true,
+            Some(other) => {
+                return Err(Error::invalid_params(format!(
+                    "unknown format `{other}`; use `json` or `markdown`"
+                )))
+            }
+        };
+        let inspection = self
+            .inspector
+            .inspect(&path)
+            .await
+            .map_err(|reason| Error::invalid_params(format!("cannot read file: {reason}")))?;
+        Ok(match inspection.diagram {
+            None => Value::Null,
+            Some(diagram) if markdown => {
+                json!({ "markdown": summary::diagram_to_markdown(&diagram) })
+            }
+            Some(diagram) => json!({ "diagram": diagram }),
+        })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct InspectParams {
     uri: Url,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExportAstParams {
+    uri: Url,
+    /// `"json"` (default) or `"markdown"`.
+    #[serde(default)]
+    format: Option<String>,
 }
 
 #[tower_lsp::async_trait]
@@ -333,6 +368,7 @@ pub async fn run_stdio() {
         watcher: Mutex::new(None),
     })
     .custom_method("buzzard/inspect", Backend::inspect)
+    .custom_method("buzzard/exportAst", Backend::export_ast)
     .finish();
     let exit = Arc::new(Notify::new());
     let service = ExitAware {

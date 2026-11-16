@@ -7,11 +7,35 @@ use buzzard_rsrc::{ViMetadata, RSRC_EXTENSIONS};
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
+use crate::dataflow::{self, Finding};
+use crate::inspector::Inspection;
 use crate::project::{is_project_file, ProjectFile};
+
+/// What is kept in memory for one binary file: its metadata and the
+/// results of the dataflow checks. The diagram itself is not retained.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Analysis {
+    pub metadata: ViMetadata,
+    pub dataflow: Vec<Finding>,
+}
+
+impl From<Inspection> for Analysis {
+    fn from(inspection: Inspection) -> Self {
+        let dataflow = inspection
+            .diagram
+            .as_ref()
+            .map(dataflow::analyze)
+            .unwrap_or_default();
+        Self {
+            metadata: inspection.metadata,
+            dataflow,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileState {
-    Parsed(Box<ViMetadata>),
+    Parsed(Box<Analysis>),
     /// A parsed `.lvproj`, `.lvlib` or `.lvclass` file.
     Project(Box<ProjectFile>),
     /// The file could not be read or parsed; the message says why.
@@ -28,15 +52,20 @@ impl FileState {
                 Err(reason) => FileState::Failed(reason),
             };
         }
-        match ViMetadata::from_path(path) {
-            Ok(meta) => FileState::Parsed(Box::new(meta)),
-            Err(err) => FileState::Failed(err.to_string()),
+        Self::from_inspection(Inspection::from_path(path))
+    }
+
+    /// Turn a backend's answer for a binary file into a file state.
+    pub fn from_inspection(inspection: Result<Inspection, String>) -> Self {
+        match inspection {
+            Ok(inspection) => FileState::Parsed(Box::new(inspection.into())),
+            Err(reason) => FileState::Failed(reason),
         }
     }
 
     pub fn metadata(&self) -> Option<&ViMetadata> {
         match self {
-            FileState::Parsed(meta) => Some(meta),
+            FileState::Parsed(analysis) => Some(&analysis.metadata),
             FileState::Project(_) | FileState::Failed(_) => None,
         }
     }

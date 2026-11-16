@@ -3,10 +3,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use buzzard_lint::project::is_project_file;
+use buzzard_lint::Inspection;
 use buzzard_lint::{
     lint, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity, Workspace,
 };
-use buzzard_rsrc::ViMetadata;
+use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Static analyzer and language server that reads binary .vi and .ctl files
@@ -58,6 +59,14 @@ enum CheckFormat {
 enum InspectFormat {
     Markdown,
     Json,
+}
+
+/// JSON shape of `inspect`: the metadata fields plus the block diagram.
+#[derive(serde::Serialize)]
+struct InspectOutput<'a> {
+    #[serde(flatten)]
+    metadata: &'a ViMetadata,
+    diagram: Option<&'a BlockDiagram>,
 }
 
 fn main() -> ExitCode {
@@ -121,16 +130,24 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::Inspect { file, format } => match ViMetadata::from_path(&file) {
-            Ok(meta) => {
+        Command::Inspect { file, format } => match Inspection::from_path(&file) {
+            Ok(inspection) => {
                 let rendered = match format {
-                    InspectFormat::Json => to_json(&meta),
+                    InspectFormat::Json => to_json(&InspectOutput {
+                        metadata: &inspection.metadata,
+                        diagram: inspection.diagram.as_ref(),
+                    }),
                     InspectFormat::Markdown => {
                         let title = file
                             .file_name()
                             .unwrap_or(file.as_os_str())
                             .to_string_lossy();
-                        summary::to_markdown(&title, &meta, None)
+                        let mut text = summary::to_markdown(&title, &inspection.metadata, None);
+                        if let Some(diagram) = &inspection.diagram {
+                            text.push('\n');
+                            text.push_str(&summary::diagram_to_markdown(diagram));
+                        }
+                        text
                     }
                 };
                 print(&rendered);

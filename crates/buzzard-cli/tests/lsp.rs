@@ -224,6 +224,19 @@ fn full_editor_session() {
     std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
     session.diagnostics_for("/App.lvproj", |d| d.is_empty());
 
+    // The block diagram of a file on request, as a graph or as text.
+    let real = fixtures().join("add.vi");
+    let ast = session.request("buzzard/exportAst", json!({ "uri": file_uri(&real) }));
+    assert_eq!(ast["diagram"]["root"]["nodes"][1]["class"], "prim");
+    let ast = session.request(
+        "buzzard/exportAst",
+        json!({ "uri": file_uri(&real), "format": "markdown" }),
+    );
+    assert!(ast["markdown"]
+        .as_str()
+        .unwrap()
+        .starts_with("## Block diagram"));
+
     // Saving a fixed file from the IDE is picked up by the file watcher.
     dir.vi("util.vi", &CLEAN, &[]);
     session.diagnostics_for("/util.vi", |d| d.is_empty());
@@ -231,7 +244,7 @@ fn full_editor_session() {
     // A newly saved file that closes a cycle is reported on both members.
     dir.vi("util.vi", &CLEAN, &["main.vi"]);
     for name in ["/main.vi", "/util.vi"] {
-        let found = session.diagnostics_for(name, |d| !d.is_empty());
+        let found = session.diagnostics_for(name, |d| d.iter().any(|x| x["code"] == "BZ005"));
         assert_eq!(found[0]["code"], "BZ005");
         assert_eq!(found[0]["severity"], 1);
         assert_eq!(found[0]["relatedInformation"].as_array().unwrap().len(), 1);

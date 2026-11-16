@@ -133,6 +133,29 @@ fn inspect_prints_markdown_and_json() {
     assert_eq!(parsed["password_protected"], true);
     assert_eq!(parsed["version"]["major"], 21);
 
+    // The block diagram is part of both formats.
+    let (_, markdown, _) = run(&["inspect", "add.vi"], &fixtures);
+    assert!(
+        markdown.contains("## Block diagram\n\n2 nodes, 3 wires, 1 diagrams.\n"),
+        "{markdown}"
+    );
+    assert!(markdown.contains("- built-in function #43\n"), "{markdown}");
+    assert!(
+        markdown.contains("  - out #51 numeric -> diagram boundary #7 (terminal #162)\n"),
+        "{markdown}"
+    );
+    let (_, markdown, _) = run(&["inspect", "relative_link.vi"], &fixtures);
+    assert!(markdown.contains("- subVI `empty.vi` #43\n"), "{markdown}");
+
+    let (_, json, _) = run(&["inspect", "add.vi", "--format", "json"], &fixtures);
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["kind"], "vi");
+    assert_eq!(parsed["diagram"]["root"]["nodes"][1]["class"], "prim");
+    assert_eq!(
+        parsed["diagram"]["root"]["wires"].as_array().unwrap().len(),
+        3
+    );
+
     let dir = TempDir::new("inspect");
     std::fs::write(dir.0.join("bad.vi"), b"nope").unwrap();
     let (code, _, stderr) = run(&["inspect", "bad.vi"], &dir.0);
