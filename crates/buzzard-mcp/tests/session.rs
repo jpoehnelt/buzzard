@@ -232,6 +232,7 @@ fn tools_list_describes_every_tool_with_a_schema() {
         [
             "buzzard_check",
             "buzzard_verify",
+            "buzzard_deps",
             "buzzard_inspect",
             "buzzard_diagram",
             "buzzard_callers",
@@ -979,6 +980,14 @@ fn corrupted_files_give_tool_errors_or_results_never_a_dead_session() {
     }
     let (_, structured) = session.ok("buzzard_check", json!({ "paths": ["."] }));
     assert_eq!(structured["summary"]["files"], variants.len());
+    for format in ["text", "json", "markdown"] {
+        let (_, structured) = session.ok(
+            "buzzard_deps",
+            json!({ "paths": ["."], "format": format, "roots": { "vilib": "." } }),
+        );
+        assert_eq!(structured["files"], variants.len());
+        assert_ne!(structured["unparsed"], json!([]));
+    }
     session.ok(
         "buzzard_callers",
         json!({ "path": "case0.vi", "root": "." }),
@@ -1096,7 +1105,7 @@ fn serve_runs_a_whole_session_over_a_reader_and_writer() {
         ]
     );
     assert_eq!(replies[0]["result"]["serverInfo"]["name"], "buzzard");
-    assert_eq!(replies[2]["result"]["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(replies[2]["result"]["tools"].as_array().unwrap().len(), 9);
     assert_eq!(replies[3]["error"]["code"], -32700);
     assert_eq!(replies[4]["result"]["isError"], false);
     assert_eq!(replies[5]["result"]["isError"], true);
@@ -1286,4 +1295,191 @@ fn check_reports_state_machine_findings() {
         .map(|rule| rule["code"].as_str().unwrap())
         .collect();
     assert!(codes.ends_with(&["BZ201", "BZ202", "BZ203"]));
+}
+
+// --------------------------------------------------------------------- deps
+
+/// A workspace with a link of every kind, and an installation beside it.
+fn linked_workspace(name: &str) -> TempDir {
+    let dir = TempDir::new(name);
+    let symbolic = |text: &str| {
+        let components: Vec<&str> = text.split('/').collect();
+        LvPath::absolute(&components)
+    };
+    let links = [
+        symbolic("<vilib>/Utility/error.llb/Clear Errors.vi"),
+        symbolic("<vilib>/Utility/Gone.vi"),
+        symbolic("<userlib>/_OpenG.lib/error/error.llb/Build Error Cluster__ogtk.vi"),
+        LvPath::absolute(&["C", "Users", "me", "Scratch.vi"]),
+        LvPath::sibling("helper.vi"),
+        LvPath::sibling("removed.vi"),
+    ];
+    let named: Vec<(&str, LvPath)> = links
+        .iter()
+        .map(|link| {
+            (
+                link.file_name().expect("the link names a file"),
+                link.clone(),
+            )
+        })
+        .collect();
+    let bytes = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0, 0x400, 0, 0, 0, 0])
+        .links(&named)
+        .build();
+    fs::create_dir_all(dir.0.join("ws")).expect("write the test workspace");
+    fs::write(dir.0.join("ws/main.vi"), bytes).expect("write the test workspace");
+    fs::write(dir.0.join("ws/broken.vi"), b"RSRC").expect("write the test workspace");
+    fs::create_dir_all(dir.0.join("install/vi.lib/Utility")).expect("write the test workspace");
+    fs::write(dir.0.join("install/vi.lib/Utility/error.llb"), b"x")
+        .expect("write the test workspace");
+    let helper = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0, 0x400, 0, 0, 0, 0])
+        .build();
+    fs::write(dir.0.join("ws/helper.vi"), helper).expect("write the test workspace");
+    dir
+}
+
+#[test]
+fn deps_lists_external_dependencies_like_the_command_line() {
+    let dir = linked_workspace("deps");
+    let mut session = Session::new(dir.0.clone());
+    let (text, structured) = session.ok("buzzard_deps", json!({ "paths": ["ws"] }));
+    assert_eq!(
+        text,
+        "<userlib> (not checked: no directory was given for root userlib)
+  _OpenG.lib/error (1 file)
+    unchecked <userlib>/_OpenG.lib/error/error.llb/Build Error Cluster__ogtk.vi
+      used by ws/main.vi
+
+<vilib> (not checked: no directory was given for root vilib)
+  Utility (1 file)
+    unchecked <vilib>/Utility/Gone.vi
+      used by ws/main.vi
+  Utility/error.llb (1 file)
+    unchecked <vilib>/Utility/error.llb/Clear Errors.vi
+      used by ws/main.vi
+
+Machine-absolute links (1)
+  C:/Users/me/Scratch.vi
+    used by ws/main.vi
+
+Missing relative links (1)
+  ws/removed.vi
+    used by ws/main.vi
+
+Unparsed files (1)
+  ws/broken.vi: cannot analyze file: file is too small to be an RSRC container (4 bytes)
+
+Scanned 3 files: 3 external files in 3 packages under 2 symbolic roots (0 found, 0 missing, 3 \
+         unchecked), 1 machine-absolute link, 1 missing relative link, 1 unparsed file.
+"
+    );
+    assert_eq!(structured["files"], 3);
+    assert_eq!(structured["roots"][1]["root"], "vilib");
+    assert!(structured["roots"][1].get("directory").is_none());
+    assert_eq!(
+        structured["missing"],
+        json!([{ "target": "ws/removed.vi", "referrers": ["ws/main.vi"] }])
+    );
+    assert_eq!(structured["unparsed"][0]["path"], "ws/broken.vi");
+
+    // With a directory for a root, its files are looked up; the roots
+    // may be an object or a list of NAME=DIR strings.
+    let statuses = |structured: &Value| -> Vec<String> {
+        structured["roots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|root| root["packages"].as_array().unwrap())
+            .flat_map(|package| package["targets"].as_array().unwrap())
+            .map(|target| target["status"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let (json_text, by_object) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "format": "json", "roots": { "VILIB": "install/vi.lib" } }),
+    );
+    assert_eq!(statuses(&by_object), ["unchecked", "missing", "found"]);
+    assert_eq!(by_object["roots"][1]["directory"], "install/vi.lib");
+    assert_eq!(
+        serde_json::from_str::<Value>(&json_text).unwrap(),
+        by_object
+    );
+    let (markdown, by_list) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["ws"], "format": "markdown", "roots": ["vilib=install/vi.lib"] }),
+    );
+    assert_eq!(by_list, by_object);
+    assert!(markdown.starts_with("# External dependencies\n"));
+    assert!(markdown.contains("Checked in install/vi.lib: 1 found, 1 missing."));
+    assert!(markdown
+        .contains("| `Utility/error.llb` | `<vilib>/Utility/error.llb/Clear Errors.vi` | found | `ws/main.vi` |"));
+
+    // The answer is the same every time, and follows the disk.
+    let again = session.ok("buzzard_deps", json!({ "paths": ["ws"] }));
+    assert_eq!(again, (text, structured));
+    fs::write(
+        dir.0.join("ws/removed.vi"),
+        fs::read(dir.0.join("ws/helper.vi")).unwrap(),
+    )
+    .unwrap();
+    let (_, after) = session.ok("buzzard_deps", json!({ "paths": ["ws"] }));
+    assert_eq!(after["missing"], json!([]));
+}
+
+#[test]
+fn deps_checks_its_arguments() {
+    let dir = linked_workspace("deps-arguments");
+    let mut session = Session::new(dir.0.clone());
+    for (arguments, expected) in [
+        (json!({}), "missing required argument `paths`"),
+        (json!({ "paths": [] }), "must name at least one file"),
+        (json!({ "paths": [""] }), "contains an empty path"),
+        (json!({ "paths": "ws" }), "must be an array of strings"),
+        (json!({ "paths": ["nope"] }), "path does not exist: nope"),
+        (
+            json!({ "paths": ["ws"], "format": "dot" }),
+            "argument `format` must be one of: text, json, markdown",
+        ),
+        (
+            json!({ "paths": ["ws"], "limit": 3 }),
+            "unknown argument `limit`",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": "vilib=install" }),
+            "argument `roots` must be an object",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": ["vilib"] }),
+            "not of the form NAME=DIR",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": [7] }),
+            "must be an array of strings",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": { "vilib": 7 } }),
+            "must map each root name to a directory string",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": { "vilib": "" } }),
+            "no directory for `vilib`",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": { "vi lib": "install" } }),
+            "not the name of a symbolic root",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": { "vilib": "nowhere" } }),
+            "does not exist",
+        ),
+        (
+            json!({ "paths": ["ws"], "roots": ["vilib=install", "VILIB=ws"] }),
+            "two directories",
+        ),
+    ] {
+        let message = session.fails("buzzard_deps", arguments);
+        assert!(message.contains(expected), "{message}");
+    }
 }

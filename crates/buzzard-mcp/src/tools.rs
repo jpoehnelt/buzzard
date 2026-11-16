@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use buzzard_lint::deps::{self as dependencies, Roots};
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::verify::report::{self, Verified};
 use buzzard_lint::workspace::{discover, normalize};
@@ -21,9 +22,10 @@ use buzzard_lint::{
 use buzzard_rsrc::FileKind;
 use serde_json::{json, Map, Value};
 
-pub(crate) const NAMES: [&str; 8] = [
+pub(crate) const NAMES: [&str; 9] = [
     "buzzard_check",
     "buzzard_verify",
+    "buzzard_deps",
     "buzzard_inspect",
     "buzzard_diagram",
     "buzzard_callers",
@@ -37,8 +39,8 @@ pub(crate) const INSTRUCTIONS: &str =
 files directly from disk, without the LabVIEW IDE. All tools are read-only. Relative paths are \
 resolved against the directory the server was started in. Start with buzzard_symbols to find \
 files, buzzard_inspect and buzzard_diagram to read one, buzzard_callers and buzzard_callees to \
-navigate, buzzard_check to lint, and buzzard_verify to check the state machines on block \
-diagrams.";
+navigate, buzzard_check to lint, buzzard_verify to check the state machines on block \
+diagrams, and buzzard_deps to list what must be installed before the files can be opened.";
 
 /// Longest accepted path or query argument, in bytes.
 const MAX_TEXT_BYTES: usize = 4096;
@@ -249,6 +251,7 @@ pub(crate) fn call(
     match name {
         "buzzard_check" => check(state, arguments),
         "buzzard_verify" => verify(state, arguments),
+        "buzzard_deps" => deps(state, arguments),
         "buzzard_inspect" => inspect(state, arguments),
         "buzzard_diagram" => diagram(state, arguments),
         "buzzard_callers" => neighbors(state, arguments, Direction::Callers),
@@ -419,6 +422,108 @@ fn verify(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, S
             text: report::to_text(&verified),
             structured: Some(to_value(&verified)?),
         },
+    })
+}
+
+/// The `roots` argument of `buzzard_deps`: an object of root name to
+/// directory, or a list of `NAME=DIR` strings as the command line takes.
+fn root_directories(state: &State, args: &Args<'_>) -> Result<Roots, String> {
+    let pairs: Vec<(&str, &str)> = match args.map.get("roots") {
+        None => Vec::new(),
+        Some(Value::Object(map)) => {
+            if map.len() > MAX_LIST_ITEMS {
+                return Err(format!(
+                    "argument `roots` has {} entries; at most {MAX_LIST_ITEMS} are accepted",
+                    map.len()
+                ));
+            }
+            map.iter()
+                .map(|(name, dir)| match dir {
+                    Value::String(dir) => {
+                        Ok((check_text("roots", name)?, check_text("roots", dir)?))
+                    }
+                    _ => Err(
+                        "argument `roots` must map each root name to a directory string".to_owned(),
+                    ),
+                })
+                .collect::<Result<_, _>>()?
+        }
+        Some(Value::Array(_)) => args
+            .text_list("roots", false)?
+            .into_iter()
+            .map(|spec| Roots::split(spec).map_err(|err| format!("argument `roots`: {err}")))
+            .collect::<Result<_, _>>()?,
+        Some(_) => {
+            return Err(
+                "argument `roots` must be an object of root name to directory, or an array of \
+                 NAME=DIR strings"
+                    .to_owned(),
+            )
+        }
+    };
+    let mut roots = Roots::default();
+    for (name, dir) in pairs {
+        if dir.is_empty() {
+            return Err(format!("argument `roots` has no directory for `{name}`"));
+        }
+        roots
+            .add(name, &state.resolve(dir))
+            .map_err(|err| format!("argument `roots`: {err}"))?;
+    }
+    Ok(roots)
+}
+
+/// The external dependencies of the files under `paths`, as `buzzard
+/// deps` reports them.
+fn deps(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, String> {
+    const FORMATS: [&str; 3] = ["text", "json", "markdown"];
+    let args = Args::new(arguments, &["paths", "format", "roots", "refresh"])?;
+    let raw_paths = args.text_list("paths", true)?;
+    if raw_paths.is_empty() {
+        return Err("argument `paths` must name at least one file or directory".to_owned());
+    }
+    let format = match arguments.get("format") {
+        None => "text",
+        Some(_) => args.text("format")?,
+    };
+    if !FORMATS.contains(&format) {
+        return Err(format!(
+            "argument `format` must be one of: {}",
+            FORMATS.join(", ")
+        ));
+    }
+    let refresh = args.flag("refresh")?;
+    let roots = root_directories(state, &args)?;
+    let mut scan_roots = Vec::new();
+    for raw in raw_paths {
+        if raw.is_empty() {
+            return Err("argument `paths` contains an empty path".to_owned());
+        }
+        let root = state.resolve(raw);
+        if !root.exists() {
+            return Err(format!("path does not exist: {}", state.show(&root)));
+        }
+        scan_roots.push(root);
+    }
+    let (state, scan) = state.scan(scan_roots, refresh);
+    let mut found = dependencies::scan(&scan.workspace, &scan.graph, &roots);
+    // Report paths the way every other tool does.
+    found.map_paths(|path| state.show(Path::new(path)));
+    let value = to_value(&found)?;
+    let text = match format {
+        // Serialized from the report, not from `value`, so that the fields
+        // come in the order the command line prints them.
+        "json" => {
+            serde_json::to_string_pretty(&found)
+                .map_err(|err| format!("cannot serialize result: {err}"))?
+                + "\n"
+        }
+        "markdown" => dependencies::to_markdown(&found),
+        _ => dependencies::to_text(&found),
+    };
+    Ok(Output {
+        text,
+        structured: Some(value),
     })
 }
 
@@ -697,7 +802,7 @@ fn rules(arguments: &Map<String, Value>) -> Result<Output, String> {
 /// The `tools/list` payload, in the order of [`NAMES`].
 #[expect(
     clippy::too_many_lines,
-    reason = "the schemas of all eight tools, kept together as one table"
+    reason = "the schemas of all nine tools, kept together as one table"
 )]
 pub(crate) fn definitions() -> Value {
     let path = |what: &str| {
@@ -817,6 +922,59 @@ pub(crate) fn definitions() -> Value {
                     "default": "text",
                     "description": "Output format.",
                 },
+            }),
+            &["paths"],
+        ),
+        tool(
+            "buzzard_deps",
+            "List external dependencies",
+            format!(
+                "List what LabVIEW files (.vi, .ctl, .lvproj, .lvlib, .lvclass) under `paths` \
+                 need from outside, as `buzzard deps` prints it. Three lists. (1) Files linked \
+                 under a symbolic root such as <vilib> (libraries shipped with LabVIEW and \
+                 installed add-ons), <instrlib> or <userlib>, grouped by root and by package, \
+                 each with the files that use it. A package is a directory, not a product \
+                 name: the first two directories below the root (three below `addons`), cut \
+                 short at a library such as `error.llb`. (2) Machine-absolute links, which \
+                 only work on a machine laid out like the one that saved the file. (3) \
+                 Relative links with no file at their location. Each file under a root has a \
+                 status: `unchecked` unless `roots` maps that root to a directory, then \
+                 `found` or `missing` by a look at the disk; a file inside an .llb or another \
+                 file counts as found when that file exists. Files that cannot be parsed are \
+                 listed under `unparsed` and are not an error. Formats: `text` (default), \
+                 `json` and `markdown`; the JSON is always returned as structuredContent. \
+                 Read-only. {CACHE_NOTE}"
+            ),
+            json!({
+                "paths": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": MAX_LIST_ITEMS,
+                    "items": path("A file or directory to analyze; directories are scanned recursively."),
+                    "description": "Files and directories to analyze together as one workspace.",
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["text", "json", "markdown"],
+                    "default": "text",
+                    "description": "Output format.",
+                },
+                "roots": {
+                    "description": "Directories of symbolic roots, to look their files up on disk: an object such as {\"vilib\": \"/opt/labview/vi.lib\"}, or an array of NAME=DIR strings. Names are written without angle brackets and matched without regard to case. Each directory must exist.",
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "maxProperties": MAX_LIST_ITEMS,
+                            "additionalProperties": { "type": "string", "minLength": 1, "maxLength": MAX_TEXT_BYTES },
+                        },
+                        {
+                            "type": "array",
+                            "maxItems": MAX_LIST_ITEMS,
+                            "items": { "type": "string", "pattern": "^[^=]+=.+$", "maxLength": MAX_TEXT_BYTES },
+                        },
+                    ],
+                },
+                "refresh": refresh,
             }),
             &["paths"],
         ),

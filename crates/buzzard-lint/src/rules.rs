@@ -9,7 +9,7 @@ use rayon::prelude::*;
 use crate::dataflow::Finding;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph::DependencyGraph;
-use crate::project::ProjectFile;
+use crate::project::{Member, ProjectFile};
 use crate::verify::{Confidence, Problem};
 use crate::workspace::{Analysis, FileState, Workspace};
 
@@ -338,9 +338,7 @@ fn check_members(
 ) {
     let mut missing: BTreeSet<(&str, &str)> = BTreeSet::new();
     for member in project.members.iter().filter(|m| !m.dependency) {
-        let Some(path) = &member.path else { continue };
-        // A file the workspace has loaded exists; only stat the others.
-        if workspace.get(path).is_none() && !path.exists() {
+        if member_is_missing(workspace, member) {
             missing.insert((&member.url, &member.name));
         }
     }
@@ -350,6 +348,18 @@ fn check_members(
             format!("member `{name}` does not exist on disk (`{url}`)"),
         );
     }
+}
+
+/// Whether a member's URL resolves to a path at which there is no file:
+/// neither one the workspace has loaded nor one on disk. A URL that does
+/// not resolve to a path is never missing. `BZ006` and the dependency
+/// report (`crate::deps`) both decide with this function.
+pub(crate) fn member_is_missing(workspace: &Workspace, member: &Member) -> bool {
+    // A file the workspace has loaded exists; only stat the others.
+    member
+        .path
+        .as_ref()
+        .is_some_and(|path| workspace.get(path).is_none() && !path.exists())
 }
 
 fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {

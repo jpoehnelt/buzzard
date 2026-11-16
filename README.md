@@ -161,6 +161,130 @@ failed diff; a file it cannot read is reported in the output instead.
 Set either with `git config --global` to have it in every repository; the
 `.gitattributes` line stays per repository.
 
+## External dependencies
+
+`buzzard deps` lists what a set of files needs from outside itself. It scans
+the same files as `buzzard check` and reads the links stored in each `.vi`
+and `.ctl` file and the member URLs and parent class links of each
+`.lvproj`, `.lvlib` and `.lvclass` file.
+
+```bash
+buzzard deps path/to/project
+```
+
+```text
+<userlib> (not checked: no directory was given for root userlib)
+  _OpenG.lib/error (1 file)
+    unchecked <userlib>/_OpenG.lib/error/error.llb/Build Error Cluster__ogtk.vi
+      used by src/Main.vi
+
+<vilib> (not checked: no directory was given for root vilib)
+  Utility/error.llb (2 files)
+    unchecked <vilib>/Utility/error.llb/Clear Errors.vi
+      used by App.lvproj
+      used by src/Helper.vi
+      used by src/Main.vi
+    unchecked <vilib>/Utility/error.llb/Simple Error Handler.vi
+      used by src/Main.vi
+  addons/_JKI Toolkits/State Machine (1 file)
+    unchecked <vilib>/addons/_JKI Toolkits/State Machine/Parse State Queue.vi
+      used by src/Main.vi
+
+Machine-absolute links (1)
+  C:/Users/me/Scratch.vi
+    used by src/Main.vi
+
+Missing relative links (1)
+  src/Removed.vi
+    used by src/Main.vi
+
+Scanned 3 files: 4 external files in 3 packages under 2 symbolic roots (0 found, 0 missing, 4 unchecked), 1 machine-absolute link, 1 missing relative link, 0 unparsed files.
+```
+
+The report has four lists:
+
+- **Files under a symbolic root.** A link to an installed file starts with
+  a root such as `<vilib>` (the libraries shipped with LabVIEW and installed
+  add-ons), `<instrlib>` (instrument drivers), `<userlib>` or `<resource>`.
+  These files are grouped by root, then by package, and each is listed with
+  the files that link to it. A file that links to a target several times is
+  listed once. Root names are printed in lowercase.
+- **Machine-absolute links.** A path such as `C:/Users/me/Scratch.vi` or a
+  network path only works on a machine laid out like the one that saved the
+  file. For a `.vi` or `.ctl` file these are the links `BZ003` reports.
+- **Missing relative links.** A relative link with no file at its location,
+  neither among the scanned files nor on disk. The location printed is the
+  one the link resolves to. A link is matched to a scanned file the way the
+  [dependency graph](#dependency-graph) matches it, so a stale path whose
+  file name is unique among the scanned files is not missing. A member of a
+  project, library or class is missing exactly when `BZ006` reports it.
+- **Unparsed files.** A file that cannot be read or parsed is listed with
+  the reason. Its links are unknown.
+
+### Packages
+
+A package is the directory a person would install or copy as one unit. The
+rule works on the stored path alone. It reports directories and does not map
+them to product names.
+
+1. The package is the first two directories below the root:
+   `<vilib>/JKI/VIPM API/sub/x.vi` is in `JKI/VIPM API`, and
+   `<vilib>/numeric/x.vi` is in `numeric`.
+2. Below a first directory called `addons` it is the first three, because
+   add-ons install as `addons/<vendor>/<product>`:
+   `<vilib>/addons/_JKI Toolkits/State Machine/x.vi` is in
+   `addons/_JKI Toolkits/State Machine`.
+3. A library ends the name early: a component ending in `.llb` or `.lvlibp`,
+   or a directory ending in `.lvlib` or `.lvclass`.
+   `<vilib>/Utility/error.llb/Clear Errors.vi` is in `Utility/error.llb`.
+4. A file directly below the root, such as `<resource>/lvanlys.dll`, is its
+   own package.
+
+Letter case is kept as stored, so `Platform` and `platform` are two
+packages. A product whose files sit in one directory and in directories
+below it appears as several packages: `LabVIEW Icon API` and
+`LabVIEW Icon API/lv_icon`, for example.
+
+On 1,862 real files from twelve open-source projects the rule gives 88
+packages for 1,156 files under four roots (`<vilib>`, `<userlib>`,
+`<resource>` and `<extravilib>`).
+
+### Checking a root on disk
+
+`--root NAME=DIR` gives the directory of a symbolic root. The name is
+written without angle brackets and matched without regard to case. The
+option may be repeated, once per root:
+
+```bash
+buzzard deps . --root vilib="/opt/labview/vi.lib" --root userlib="/opt/labview/user.lib"
+```
+
+Every file under a root has one of three statuses:
+
+| Status | Meaning |
+| --- | --- |
+| `found` | The root was given a directory and the file is in it |
+| `missing` | The root was given a directory and the file is not in it |
+| `unchecked` | Nobody looked: the root was given no directory, or the stored path has a component that is not a plain name (a parent step, for example) |
+
+A path that leads into a file counts as found when that file exists: a VI
+inside `error.llb` is found when `error.llb` is there, and the private data
+control of a class when its `.lvclass` file is. The `.llb` is not opened, so
+a VI that was removed from it is still reported as found. Names are compared
+the way the file system of the machine running `buzzard` compares them.
+
+`--format` is `text` (the default), `json` or `markdown`. The output is
+sorted and the same input gives the same bytes. The JSON has `files` (the
+number of scanned files), `roots` (each with `root`, `directory` when one
+was given, and `packages`; a package has `name` and `targets`; a target has
+`path`, `status` and `referrers`), `absolute` and `missing` (each entry has
+`target` and `referrers`), and `unparsed` (each entry has `path` and
+`message`).
+
+Exit status: 0 when the report was written, whatever it holds, and 2 for an
+error: a path that does not exist, a `--root` that is not `NAME=DIR`, or a
+`--root` directory that does not exist.
+
 ## Verification
 
 `buzzard verify` finds the state machines on block diagrams and checks
@@ -468,6 +592,7 @@ Or commit a `.mcp.json` at the root of the project to share it with a team:
 | --- | --- | --- |
 | `buzzard_check` | `paths[]`, `ignore?[]`, `limit?`, `refresh?` | Diagnostics (code, severity, path, message) and a summary |
 | `buzzard_verify` | `paths[]`, `format?` (`text`, `json`, `dot`) | The state machines under `paths`: states, transitions, initial state, and findings labelled `PROVEN`, `STRUCTURAL` or `HEURISTIC` |
+| `buzzard_deps` | `paths[]`, `format?` (`text`, `json`, `markdown`), `roots?` (an object such as `{"vilib": "/opt/labview/vi.lib"}`, or a list of `NAME=DIR` strings), `refresh?` | What `buzzard deps` prints: files under symbolic roots by package, machine-absolute links, missing relative links and unparsed files. The JSON is also returned as structured content |
 | `buzzard_inspect` | `path` | Metadata and dependency list of one file, as Markdown and JSON |
 | `buzzard_diagram` | `path`, `format?` (`markdown`, `json`, `mermaid`, `dot`, `svg`) | The block diagram |
 | `buzzard_callers` | `path`, `root`, `refresh?` | Files under `root` that use the file |
@@ -558,11 +683,11 @@ and its tests cut and damage files at every byte.
 | Crate | Purpose |
 | --- | --- |
 | `crates/buzzard-rsrc` | Parser for the binary RSRC resource container |
-| `crates/buzzard-lint` | Lint rules, state machine verification, project file parser, dependency graph, SARIF, the `ViInspector` backend trait |
+| `crates/buzzard-lint` | Lint rules, state machine verification, project file parser, dependency graph, the external dependency report, SARIF, the `ViInspector` backend trait |
 | `crates/buzzard-ls` | Language Server Protocol implementation |
 | `crates/buzzard-mcp` | Model Context Protocol server |
 | `crates/buzzard-tdms` | Reader for TDMS measurement files, Parquet and CSV export |
-| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `diff`, `verify`, `tdms`, `lsp`, `mcp`) |
+| `crates/buzzard-cli` | The `buzzard` binary (`check`, `inspect`, `deps`, `diff`, `verify`, `tdms`, `lsp`, `mcp`) |
 
 ## Development
 
@@ -721,6 +846,12 @@ does not lead to a workspace file:
   different heap format and have no decoded diagram.
 - VIs inside `.llb` archives, packed libraries and installer packages are
   not opened.
+- `buzzard deps` does not list a link that stays inside the file holding it:
+  a shared library called by name alone (`user32.dll`) and a generated
+  instance of a malleable VI have no location to report.
+- `buzzard deps` reads member URLs as stored. A URL that starts with `/` and
+  not with a symbolic root is listed as machine-absolute without a look at
+  the disk.
 - The dependency graph is rebuilt from in-memory metadata on every change.
   That costs milliseconds at the sizes tested; it is not yet edge-incremental.
 

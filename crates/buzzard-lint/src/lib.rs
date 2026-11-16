@@ -5,6 +5,7 @@
 //! output regardless of thread scheduling.
 
 pub mod dataflow;
+pub mod deps;
 pub mod diagnostic;
 pub mod diff;
 pub mod graph;

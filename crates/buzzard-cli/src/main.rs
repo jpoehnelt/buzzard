@@ -1,4 +1,4 @@
-//! The `buzzard` command: `check`, `inspect` and `diff` over the analysis in
+//! The `buzzard` command: `check`, `inspect`, `deps` and `diff` over the analysis in
 //! `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, `mcp`
 //! for the Model Context Protocol server in `buzzard-mcp`, and `tdms` for
 //! the measurement file reader in `buzzard-tdms`.
@@ -23,6 +23,7 @@ use buzzard_lint::{
 use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
 
+mod deps_cmd;
 mod diff_cmd;
 mod tdms_cmd;
 
@@ -60,6 +61,10 @@ enum Command {
         #[arg(long, value_enum, default_value_t = InspectFormat::Markdown)]
         format: InspectFormat,
     },
+    /// List what the files need from outside: installed files (under the
+    /// symbolic roots vilib, instrlib, userlib and so on) grouped by
+    /// package, machine-absolute links and relative links to nothing.
+    Deps(deps_cmd::Args),
     /// Compare two versions of a file: settings, dependencies, nodes, wires.
     Diff(diff_cmd::Args),
     /// Find the state machines on block diagrams and check them: states
@@ -131,6 +136,13 @@ fn main() -> ExitCode {
         }
         Command::Inspect { file, format } => inspect_binary(&file, format),
         Command::Verify { paths, format } => verify(&paths, format),
+        Command::Deps(args) => match deps_cmd::run(&args) {
+            Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
+            Err(message) => {
+                eprintln!("error: {message}");
+                ExitCode::from(2)
+            }
+        },
         Command::Diff(args) => match diff_cmd::run(&args) {
             Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
             Err(message) => {

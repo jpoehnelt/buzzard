@@ -152,6 +152,7 @@ fn full_session_over_real_pipes() {
         [
             "buzzard_check",
             "buzzard_verify",
+            "buzzard_deps",
             "buzzard_inspect",
             "buzzard_diagram",
             "buzzard_callers",
