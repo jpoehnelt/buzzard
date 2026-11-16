@@ -261,15 +261,43 @@ fn parse_desc(r: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
         ));
     }
     let mut body = Reader::new(r.take(len - header)?, "VCTP");
+    parse_body(&mut body, depth)
+}
+
+/// The descriptor a type definition wraps. It is stored inline and is the
+/// last thing in the type definition's body.
+///
+/// Its declared length is 4 bytes larger than the bytes it occupies: in
+/// 8,399 of 8,399 type definitions in 1,750 real files (versions 13 to 25)
+/// the declared length is exactly the rest of the parent body plus 4. The
+/// length is therefore capped at what the parent has left, which also
+/// accepts a nested descriptor that declares its true length.
+fn parse_nested_desc(parent: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
+    let start = parent.pos();
+    let len = var_u2p2(parent)? as usize;
+    let header = parent.pos() - start;
+    if len < header + 2 {
+        return Err(malformed(
+            "VCTP",
+            format!("nested type descriptor length {len} is too small"),
+        ));
+    }
+    let take = (len - header).min(parent.remaining());
+    let mut body = Reader::new(parent.take(take)?, "VCTP");
+    parse_body(&mut body, depth)
+}
+
+/// Parse `flags, code, body` of a descriptor whose length is consumed.
+fn parse_body(body: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
     let _flags = body.u8()?;
     let code = body.u8()?;
     // A descriptor whose body does not parse is kept as opaque; its length
     // is known, so the table stays in step.
     let parsed = match code {
-        CODE_CLUSTER => parse_cluster(&mut body).unwrap_or(Body::Other),
+        CODE_CLUSTER => parse_cluster(body).unwrap_or(Body::Other),
         CODE_REFNUM => body.u16().map(Body::Refnum).unwrap_or(Body::Other),
         CODE_TYPEDEF if depth < MAX_TYPEDEF_DEPTH => {
-            parse_typedef(&mut body, depth).unwrap_or(Body::Other)
+            parse_typedef(body, depth).unwrap_or(Body::Other)
         }
         _ => Body::Other,
     };
@@ -297,7 +325,7 @@ fn parse_typedef(body: &mut Reader<'_>, depth: usize) -> Result<Body> {
     for _ in 0..names {
         body.pstr()?;
     }
-    Ok(Body::TypeDef(Box::new(parse_desc(body, depth + 1)?)))
+    Ok(Body::TypeDef(Box::new(parse_nested_desc(body, depth + 1)?)))
 }
 
 #[cfg(test)]
@@ -356,6 +384,87 @@ mod tests {
         assert_eq!(t.heap_type(5), Some(DataType::Numeric));
         assert_eq!(t.heap_type(0), None);
         assert_eq!(t.heap_type(6), None);
+    }
+
+    fn hex(text: &str) -> Vec<u8> {
+        let digits: Vec<u8> = text.bytes().filter(u8::is_ascii_hexdigit).collect();
+        digits
+            .chunks(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect()
+    }
+
+    /// A table of raw descriptors, each used once by the heap, in order.
+    fn raw_table(descs: &[Vec<u8>]) -> TypeTable {
+        let top: Vec<u16> = (0..descs.len() as u16).collect();
+        let vctp = table(descs, &top);
+        let dthp = [(descs.len() as u16).to_be_bytes(), 1u16.to_be_bytes()].concat();
+        TypeTable::parse(&vctp, Some(&dthp)).unwrap()
+    }
+
+    /// Descriptors copied byte for byte from files saved by the editor. A
+    /// descriptor nested in a type definition declares a length 4 bytes
+    /// larger than it occupies; before that was handled every type
+    /// definition classified as `Other`.
+    #[test]
+    fn real_type_definitions_are_looked_through() {
+        // `State.ctl`, an enum of three items, as saved by version 13: the
+        // nested descriptor declares 0x29 = 41 bytes and occupies 37.
+        let state_enum = hex("003b00f1 00000000 00000001 0953746174652e63746c \
+             0029 4016 0003 0741637175697265 07416e616c797a65 05416c61726d 00 06537461746573 00");
+        // The same type under another label, declaring 0x2d and occupying 41.
+        let next_state = hex(
+            "003f00f1 00000000 00000001 0953746174652e63746c \
+             002d 4016 0003 0741637175697265 07416e616c797a65 05416c61726d 00 0a4e657874205374617465 00",
+        );
+        // `Stored Packet -- cluster.ctl` in a class in a library, as saved
+        // by version 13: a cluster of flat types 5, 6 and 7, declaring
+        // 0x1e = 30 bytes and occupying 26.
+        let stored_packet = hex("006b00f1 00000000 00000003 \
+             114d515454205365727665722e6c766c6962 \
+             155f537562736372697074696f6e2e6c76636c617373 \
+             1c53746f726564205061636b6574202d2d20636c75737465722e63746c \
+             001e 4050 0003 0005 0006 0007 0d53746f726564205061636b6574");
+        let t = raw_table(&[state_enum, next_state, stored_packet]);
+        assert_eq!(t.heap_type(1), Some(DataType::Numeric));
+        assert_eq!(t.heap_type(2), Some(DataType::Numeric));
+        assert_eq!(t.heap_type(3), Some(DataType::Cluster));
+    }
+
+    #[test]
+    fn real_typedef_of_an_error_cluster_is_an_error_cluster() {
+        // The three element types and the plain cluster are copied from a
+        // version 13 file; the type definition wraps the same cluster body
+        // with the editor's length quirk (declared 0x1a, occupying 22).
+        let status = hex("000c 4021 06737461747573 00");
+        let code = hex("000b 4003 00 04636f6465 00");
+        let source = hex("0010 4030 ffffffff 06736f75726365 00");
+        let plain = hex("0016 4050 0003 0000 0001 0002 096572726f72206f7574");
+        let wrapped = hex("002a 00f1 00000000 00000001 076572722e63746c \
+             001a 4050 0003 0000 0001 0002 096572726f72206f7574");
+        let t = raw_table(&[status, code, source, plain, wrapped]);
+        assert_eq!(t.heap_type(1), Some(DataType::Boolean));
+        assert_eq!(t.heap_type(4), Some(DataType::ErrorCluster));
+        assert_eq!(t.heap_type(5), Some(DataType::ErrorCluster));
+    }
+
+    #[test]
+    fn nested_descriptor_lengths_are_bounded() {
+        // A nested descriptor that claims far more than its parent holds,
+        // one that claims less than a header, and one cut off mid-header:
+        // the type definition stays opaque or is read from what is there.
+        for nested in ["ffff 4016 0001 0141 00", "0003 4016", "00", ""] {
+            let mut body = hex("00000000 00000001 0161");
+            body.extend(hex(nested));
+            let t = raw_table(&[desc(CODE_TYPEDEF, &body)]);
+            assert!(matches!(
+                t.heap_type(1),
+                Some(DataType::Numeric | DataType::Other)
+            ));
+        }
+        // A name count far larger than the body.
+        let t = raw_table(&[desc(CODE_TYPEDEF, &hex("00000000 ffffffff 0161"))]);
+        assert_eq!(t.heap_type(1), Some(DataType::Other));
     }
 
     #[test]
