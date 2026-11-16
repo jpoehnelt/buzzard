@@ -13,7 +13,7 @@ yanked = "deny"
 ignore = []
 
 [licenses]
-# Permissive licenses compatible with distributing an MIT binary.
+# Permissive licenses compatible with distributing an Apache-2.0 binary.
 allow = [
     "Apache-2.0",
     # encoding_rs: its encoding tables come from WHATWG under BSD-3-Clause.

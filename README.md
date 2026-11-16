@@ -880,8 +880,8 @@ The table of built-in function names
 Copyright 2025-2026 Ryan Friedman) by `tools/gen_primitives.py`. Only ids,
 function names and a verified flag were taken. `NOTICE` records the commit,
 what was changed, and where LVKit got the names from;
-`LICENSES/Apache-2.0.txt` is the licence that covers the table. Everything
-else in this repository is under the MIT licence in `LICENSE`.
+the table is under the same Apache-2.0 licence as the rest of this
+repository, in `LICENSE`.
 
 The conformance suite in this repository uses 34 small files. During
 development the parser, diagram decoder and renderers are also run over
@@ -909,4 +909,4 @@ tool reads.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

@@ -48,9 +48,9 @@ entry that no longer occurs.
 
 ## Licence boundary
 
-npTDMS is LGPL-3.0. This crate is MIT. To keep them apart:
+npTDMS is LGPL-3.0. This crate is Apache-2.0. To keep them apart:
 
-- `dump.py` is ours, written for this repository, and MIT licensed. It
+- `dump.py` is ours, written for this repository, and Apache-2.0 licensed. It
   imports npTDMS and calls its public API (`TdmsFile.read`,
   `TdmsWriter`, channel and property accessors) and the entry points of
   its shipped test package (`get_scenarios`, `get_bytes_io_file`).

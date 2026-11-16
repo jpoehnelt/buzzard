@@ -1,9 +1,9 @@
 buzzard
 Copyright (c) 2026 buzzard contributors
 
-buzzard is licensed under the MIT licence (see LICENSE). One generated file
-contains data taken from a third-party project under a different licence,
-and one test fixture is a published measurement file under another.
+buzzard is licensed under the Apache License, Version 2.0 (see LICENSE). One
+generated file contains data taken from a third-party project under the same
+licence, and one test fixture is a published measurement file under another.
 This file records what was taken and on what terms.
 
 buzzard is not affiliated with, authorized by, endorsed by, or sponsored by
@@ -19,7 +19,7 @@ File:     crates/buzzard-rsrc/src/blocks/heap/primitives.rs
 Source:   LVKit, https://github.com/pragmatest-dev/lvkit
           src/lvkit/data/primitives/*.json
           commit b0430f03e4a6a0ce9b1015215efb1cce6d7509ff
-Licence:  Apache License, Version 2.0 (full text in LICENSES/Apache-2.0.txt)
+Licence:  Apache License, Version 2.0 (full text in LICENSE)
           Copyright 2025-2026 Ryan Friedman
 
 What was taken: for each built-in function, its resource id, its name, and
