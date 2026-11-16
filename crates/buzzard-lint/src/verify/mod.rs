@@ -3,8 +3,8 @@
 //! A state machine here is the classic pattern: a while loop around a case
 //! structure, with the case selected by a shift register that each case
 //! writes its successor into. [`model`] holds the abstract machine and the
-//! checks that are run on it; extraction from a diagram lives in
-//! [`extract`].
+//! checks that are run on it. Extraction from a diagram is a separate step
+//! that produces a [`Machine`].
 //!
 //! # What "verified" means
 //!
