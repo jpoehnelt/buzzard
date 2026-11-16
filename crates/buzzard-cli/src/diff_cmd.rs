@@ -40,8 +40,14 @@ enum Format {
 /// goes wrong (not an RSRC file, a truncated file) is an error.
 type Side = (Option<Inspection>, Option<String>);
 
+/// Whether `path` names the null device, which git passes for the side of
+/// an added or deleted file: `/dev/null`, or `nul` on Windows.
+fn is_null_device(path: &str) -> bool {
+    path == "/dev/null" || (cfg!(windows) && path.eq_ignore_ascii_case("nul"))
+}
+
 fn load(path: &str) -> Result<Side, String> {
-    if path == "/dev/null" {
+    if is_null_device(path) {
         return Ok((None, None));
     }
     let bytes = match buzzard_rsrc::read_file(Path::new(path)) {
@@ -121,4 +127,21 @@ fn git_driver(args: &Args, options: DiffOptions) -> Result<String, String> {
         Err(message) => format!("cannot compare: {message}\n"),
     };
     Ok(header + &body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn null_device_is_recognised_on_every_platform() {
+        assert!(is_null_device("/dev/null"));
+        // `nul` is the null device on Windows only; elsewhere it is an
+        // ordinary file name.
+        assert_eq!(is_null_device("nul"), cfg!(windows));
+        assert_eq!(is_null_device("NUL"), cfg!(windows));
+        assert!(!is_null_device("null.vi"));
+        assert!(!is_null_device("nul.vi"));
+        assert!(load("/dev/null").unwrap().0.is_none());
+    }
 }
