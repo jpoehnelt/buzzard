@@ -278,15 +278,21 @@ A proof is about the file as it was saved:
   object with a field it cannot name or with the same field twice, and a
   heap whose byte stream breaks a rule that every real one keeps (a
   closing entry that does not match its opening one or carries data, an
-  attribute of an unknown kind, a node left open). A block diagram with
-  any loss is listed as not decoded completely and is
-  not searched for classic state machines at all. None of the 1,773 real
-  files it was checked on has a loss. A selector table is used only when it
-  is whole: every entry has its five fields exactly once, and every case
-  that is not the default has a value. What is left is damage that changes
-  a value and nothing else, such as the item an enumeration constant holds
-  or the number of the default case: the file then describes another
-  program, and the findings are about that program.
+  attribute of an unknown kind or given twice, a node left open). A block
+  diagram with any loss is listed as not decoded completely and is not
+  searched for classic state machines at all. None of the 1,773 real files
+  it was checked on has a loss. A selector table is used only when it is
+  whole: every entry has its five fields exactly once, every case that is
+  not the default has a value, and a case structure that does not say
+  which case is the default (which means the first) has no field that a
+  case structure is not known to have. A loop's condition terminal is read
+  as "stop if true" or "continue if true" only when its flags are present.
+- **Values are taken as they are.** What is left is damage that changes a
+  value and nothing else, such as the item an enumeration constant holds,
+  the text of a case label, the number of the default case or the
+  polarity of the condition terminal. Nothing is lost then: the file
+  describes another program, completely, and the findings are about that
+  program. The file format has no checksum that would tell.
 
 ### What is not proven
 
