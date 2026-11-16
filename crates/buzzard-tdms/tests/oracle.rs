@@ -709,7 +709,10 @@ fn the_reader_agrees_with_nptdms() {
     let shipped = shipped.trim().to_owned();
     let have_shipped = Path::new(&shipped).is_dir();
 
-    let mut sources = vec![generated.text(), written.text()];
+    // The real file in the repository.
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/zenodo-7758683");
+    let fixtures = fixtures.to_str().expect("a UTF-8 path");
+    let mut sources = vec![generated.text(), written.text(), fixtures];
     if have_scenarios {
         sources.push(scenarios.text());
     }
