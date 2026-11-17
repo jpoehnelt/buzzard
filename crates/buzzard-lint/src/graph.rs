@@ -26,7 +26,8 @@ use crate::workspace::{identity_from, normalize, Workspace};
 pub enum EdgeKind {
     /// `a` references `b` in its link info (caller -> callee).
     Uses,
-    /// `a` is a project, library or class that lists `b` as a member.
+    /// `a` is a project, library or class that lists `b` as a member, or
+    /// an `.llb` archive that holds `b`.
     Contains,
     /// `a` is a class whose parent class is `b`.
     Inherits,
@@ -342,6 +343,12 @@ impl DependencyGraph {
                 if let Some(parent) = &project.parent_class {
                     let target = lookup.parent(from, path, parent);
                     targets.extend(target.map(|to| (to, EdgeKind::Inherits)));
+                }
+            }
+            if let Some(archive) = state.archive() {
+                for name in archive.opened() {
+                    let target = lookup.path(&crate::archive::member_path(path, name));
+                    targets.extend(target.map(|to| (to, EdgeKind::Contains)));
                 }
             }
             let links = state.metadata().map_or(&[][..], |meta| &meta.links);

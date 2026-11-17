@@ -3,8 +3,9 @@
 A fast, cross-platform static analyzer and language server for LabVIEW™
 projects, written in Rust.
 
-`buzzard` reads binary `.vi` and `.ctl` files and the XML of `.lvproj`,
-`.lvlib` and `.lvclass` files directly from disk. It does not need the
+`buzzard` reads binary `.vi` and `.ctl` files, the `.llb` archives that hold
+them, and the XML of `.lvproj`, `.lvlib` and `.lvclass` files directly from
+disk. It does not need the
 LabVIEW IDE or runtime, so it runs on Linux, macOS and Windows CI runners
 alike.
 
@@ -82,6 +83,64 @@ problems, 2 for an error. A report that could not be written (a full disk,
 for example) is an error, so a CI step never passes with an empty or
 truncated report. A reader that closes the pipe early, as in
 `buzzard check | head`, is not.
+
+## LLB archives
+
+An `.llb` file is one file that holds many VIs and controls. buzzard opens
+it: every member that is a VI or a control is a file of the workspace, named
+by the path of the archive followed by the member's name, which is how
+LabVIEW itself writes a link to it.
+
+```bash
+buzzard inspect lib/util.llb                      # the members: name, kind, version, sizes
+buzzard inspect lib/util.llb --format json
+buzzard inspect "lib/util.llb/Read Config.vi"     # one member, like any VI
+buzzard inspect "lib/util.llb/Read Config.vi" --format svg > read-config.svg
+buzzard check lib/util.llb                        # only the members of this archive
+buzzard diff old/util.llb/Init.vi new/util.llb/Init.vi
+```
+
+- `check`, `verify` and `deps` on a directory include the members of every
+  archive in it, and all rules run on them. A finding names the member path:
+  `lib/util.llb/Init.vi: warning[BZ001]: ...`.
+- `check`, `verify`, `deps`, `inspect` and either side of `diff` take a
+  member path where they take a file. A member name is matched as the editor
+  matches it: exactly, or without regard to letter case when only one member
+  fits.
+- Links run through an archive in both directions: a VI that calls
+  `util.llb/Init.vi` is a caller of that member, and a member's own links
+  are resolved from its place inside the archive.
+- A project member whose URL names a member the archive does not hold is a
+  `BZ006` finding, and `buzzard deps` lists it, and a link from a VI to such
+  a member, under the missing relative links. When the archive cannot be
+  read, nothing is known and neither reports the member.
+- `inspect` on the archive lists its members in the order of its directory,
+  as Markdown or JSON (`members`, each with `name`, `id`, `file_type`,
+  `kind`, `version`, `storage`, `stored_size` and `size`). An archive has no
+  block diagram: `--format svg`, `dot` and `mermaid` are an error that asks
+  for a member.
+
+What is not opened is reported, not skipped silently:
+
+| In the archive | Result |
+| --- | --- |
+| A member that does not parse, or whose zlib stream is damaged | `BZ000` on the member path; the other members are analyzed |
+| A directory that cannot be read, or none (an archive taken out of a built application holds a zipped program tree instead) | One `BZ000` on the `.llb` file |
+| A member whose name is not a file name (`..`, a name with `/` or `\`), or a second member with the name of an earlier one | `BZ000` on the `.llb` file; the member is not opened, so it can never stand for another file |
+| A member in the compression older than LabVIEW 6 (`CPRF`) | Listed by `inspect`; `BZ000` on the member path |
+| An archive inside an archive | Listed by `inspect`, never opened |
+| A member that is neither a VI nor a control | Listed by `inspect` only |
+
+A member that declares more than 128 MiB, or more than its compressed bytes
+could hold, is refused before anything is inflated. A directory that is
+merely called `something.llb` is a directory, as before.
+
+A member is not a file an editor or a code-scanning service can open, so
+the language server and `--format sarif` report a finding about a member at
+the `.llb` file, with the member's name at the start of the message:
+`Init.vi: compiled code is not separated ...`. In SARIF the result also has
+a logical location with the member's name and its member path. The human
+and JSON formats of `check`, and the MCP tools, print the member path.
 
 ## Semantic diff
 
@@ -291,10 +350,14 @@ Every file under a root has one of three statuses:
 | `missing` | The root was given a directory and the file is not in it |
 | `unchecked` | Nobody looked: the root was given no directory, the stored path has a component that is not a plain name (a parent step, for example), or the path is not stored as an absolute path |
 
-A path that leads into a file counts as found when that file exists: a VI
-inside `error.llb` is found when `error.llb` is there, and the private data
-control of a class when its `.lvclass` file is. The `.llb` is not opened, so
-a VI that was removed from it is still reported as found.
+A path that leads into an `.llb` archive is looked up in the archive: a VI
+inside `error.llb` is `found` only if the `error.llb` in the directory holds
+a member of that name, compared without regard to letter case and under the
+same code page readings as a file name. It is `missing` when the archive is
+there and has no such member, and `unchecked` when the archive cannot be
+read, because nobody could look. A path that leads into any other file
+counts as found when that file exists: the private data control of a class
+is found when its `.lvclass` file is.
 
 A name that is not in the directory as stored is looked for without regard
 to letter case, on every operating system, because the links were saved on
@@ -525,7 +588,7 @@ assumption.
 
 | Code | Severity | Meaning |
 | --- | --- | --- |
-| `BZ000` | error | File cannot be read, or is not a valid RSRC container or project XML file |
+| `BZ000` | error | File cannot be read, or is not a valid RSRC container, project XML file or LLB archive; or a member of an archive cannot be opened |
 | `BZ001` | warning | Compiled code is not separated from the source file |
 | `BZ002` | warning | Saved with a different version than most of the workspace |
 | `BZ003` | warning | Dependency linked by a machine-specific absolute path, or a path over the length limit |
@@ -565,7 +628,9 @@ it will be checked out into, lower `--max-path-length`.
 
 In SARIF output, a file given by a relative path is a relative URI reference
 and a file given by an absolute path is a `file:///` URI. Both are
-percent-encoded.
+percent-encoded. A finding about a member of an `.llb` archive is located at
+the archive, which is the file a code-scanning service has; see
+[LLB archives](#llb-archives).
 
 `BZ006` skips what it cannot check: installation paths such as
 `/<vilib>/...`, items stored inside the XML file itself, and the
@@ -594,6 +659,12 @@ accepted as well.
 - A file that fails to parse right after it was written is read again a few
   times (for about 0.4 s in total) before `BZ000` is reported, so a file
   caught in the middle of a save does not flash up as broken.
+- The members of an `.llb` archive are analyzed like files, but an editor
+  cannot open one. Their diagnostics are published for the archive's URI,
+  each with the member's name at the start of its message, and symbols and
+  references that are members are located at the archive. A change to the
+  archive re-reads its members. The custom requests take the URI of a
+  member (`file:///.../util.llb/Init.vi`).
 - The process exits with status 0 when the client sends `shutdown` and then
   `exit`, and with status 1 when `exit` arrives without `shutdown`.
 
@@ -604,7 +675,7 @@ accepted as well.
 | `textDocument/hover` | Saved version, execution flags, dependency and caller counts; for a project, library or class: kind, version, member count and parent class |
 | `textDocument/references` | Every file in the workspace that uses the target file |
 | `buzzard/exportAst` | Custom request: `{ "uri": ..., "format": "json" or "markdown" }` returns the block diagram of one file, decoded from disk on request |
-| `buzzard/inspect` | Custom request: `{ "uri": ... }` returns metadata, callers, callees and owners as JSON; for a project, library or class: the parsed file, its members, owners, parent and child classes |
+| `buzzard/inspect` | Custom request: `{ "uri": ... }` returns metadata, callers, callees and owners as JSON; for a project, library or class: the parsed file, its members, owners, parent and child classes; for an `.llb` archive: its directory (`archive`) and the names of the members that are analyzed (`opened`) |
 
 ## Use with AI agents (MCP)
 
@@ -639,7 +710,10 @@ Or commit a `.mcp.json` at the root of the project to share it with a team:
 | `buzzard_rules` | none | The rule table |
 
 Every tool is read-only. Relative paths are resolved against the directory
-the server was started in. The parsed workspace is cached per root; each call
+the server was started in. Wherever a tool takes a file it takes the path of
+a member of an `.llb` archive (`lib/util.llb/Init.vi`), and results name
+members by such paths; `buzzard_inspect` on the archive itself lists its
+members and the path to pass for each. The parsed workspace is cached per root; each call
 compares file sizes and modification times with the cached scan and re-parses
 when anything differs, and `refresh: true` forces a re-parse. `buzzard_verify`,
 like `buzzard_inspect` and `buzzard_diagram`, reads its files on every call. A failed tool
@@ -720,7 +794,7 @@ and its tests cut and damage files at every byte.
 
 | Crate | Purpose |
 | --- | --- |
-| `crates/buzzard-rsrc` | Parser for the binary RSRC resource container |
+| `crates/buzzard-rsrc` | Parser for the binary RSRC resource container and reader for LLB archives |
 | `crates/buzzard-lint` | Lint rules, state machine verification, project file parser, dependency graph, the external dependency report, SARIF, the `ViInspector` backend trait |
 | `crates/buzzard-ls` | Language Server Protocol implementation |
 | `crates/buzzard-mcp` | Model Context Protocol server |
@@ -799,6 +873,12 @@ BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance
 
 Review the generated snapshot before committing it.
 
+The two `.llb` fixtures are an archive without members and an archive taken
+out of a built application, which has no directory. No archive with members
+is in the repository: those tests build their archives with
+`builder::LlbBuilder`, which writes the layout that was read off an archive
+saved by LabVIEW 2017.
+
 `crates/buzzard-lint/tests/fixtures/project` holds real `.lvproj`, `.lvlib`
 and `.lvclass` files; its README records where they come from and what they
 established about the format.
@@ -830,7 +910,8 @@ reader's speed on generated files.
 ### Dependency graph
 
 The graph has three kinds of edge. `Uses` is a VI referencing another file,
-`Contains` is a project, library or class listing a member, and `Inherits`
+`Contains` is a project, library or class listing a member, or an `.llb`
+archive holding one, and `Inherits`
 is a class naming its parent. Callers, callees and references follow `Uses`
 only. Cycle detection follows `Uses` and `Inherits`; `Contains` is left out
 because a member normally refers back to its owner.
@@ -895,8 +976,14 @@ does not lead to a workspace file:
 - The dataflow rules and the diagram's terminal directions were validated
   on files saved by versions 13 to 26. Files saved before version 8 use a
   different heap format and have no decoded diagram.
-- VIs inside `.llb` archives, packed libraries and installer packages are
-  not opened.
+- VIs inside packed libraries (`.lvlibp`) and installer packages are not
+  opened. Of `.llb` archives, the ones saved by the editor are opened (see
+  [LLB archives](#llb-archives)); an archive taken out of a built
+  application, a member in the compression older than LabVIEW 6, and an
+  archive inside an archive are not. The archive layout was read off one
+  archive saved by LabVIEW 2017 and the zlib storage off the format's
+  description; 20 bytes of each directory entry are not understood and are
+  not used.
 - `buzzard deps` does not list a link that stays inside the file holding it:
   a shared library called by name alone (`user32.dll`) and a generated
   instance of a malleable VI have no location to report.

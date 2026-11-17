@@ -5,6 +5,7 @@ use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use buzzard_lint::archive::ArchiveFile;
 use buzzard_lint::workspace::{is_analyzable, normalize};
 use buzzard_lint::{
     lint, summary, DependencyGraph, Diagnostic, FileState, LintConfig, ProjectFile, ProjectKind,
@@ -21,7 +22,7 @@ pub enum SymbolKind {
     Control,
     /// A `.lvclass` class.
     Class,
-    /// A `.lvlib` library.
+    /// A `.lvlib` library, or an `.llb` archive.
     Library,
     /// A `.lvproj` project.
     Project,
@@ -34,11 +35,20 @@ pub struct Symbol {
     pub name: String,
     /// What kind of file it is.
     pub kind: SymbolKind,
-    /// Path of the file, as the workspace stores it.
+    /// Path of the file, as the workspace stores it. For a member of an
+    /// `.llb` archive this is the path of the archive followed by the
+    /// member's name, which is not a file an editor can open; see
+    /// [`Snapshot::document`].
     pub path: PathBuf,
 }
 
 /// Diagnostics to publish for one file; an empty list clears them.
+///
+/// The path is always a file on disk. The findings about the members of
+/// an `.llb` archive are published for the archive, each with the
+/// member's name at the start of its message
+/// ([`Diagnostic::on_disk`]): an editor cannot open a member, and would
+/// show diagnostics for a document it cannot open nowhere.
 pub type Update = (PathBuf, Vec<Diagnostic>);
 
 /// An immutable view of the analyzed workspace. Readers (hover, references,
@@ -102,7 +112,9 @@ impl Engine {
     /// Record freshly loaded states for changed files (`None` = deleted) and
     /// return only the diagnostics that differ from what was last published.
     /// Project-level XML files are handled like any other file: pass the
-    /// state from [`FileState::load`].
+    /// state from [`FileState::load`]. For an `.llb` archive pass every
+    /// entry of [`FileState::load_all`], the archive first: storing an
+    /// archive drops the members it had before, and so does deleting it.
     ///
     /// The next state is built beside the current one and swapped in at the
     /// end; snapshots handed out earlier are not affected.
@@ -123,10 +135,14 @@ impl Engine {
         let graph = DependencyGraph::build(&workspace);
         let mut current: BTreeMap<PathBuf, Vec<Diagnostic>> = BTreeMap::new();
         for diagnostic in lint(&workspace, &graph, &self.config) {
+            let (diagnostic, _) = diagnostic.on_disk(&workspace);
             current
                 .entry(diagnostic.path.clone())
                 .or_default()
                 .push(diagnostic);
+        }
+        for diagnostics in current.values_mut() {
+            diagnostics.sort();
         }
         let mut updates = Vec::new();
         for (path, diagnostics) in &current {
@@ -170,6 +186,22 @@ impl Snapshot {
             .take_while(|path| path.starts_with(&dir))
             .cloned()
             .collect()
+    }
+
+    /// The file an editor can open for `path`: the archive for a member
+    /// of an `.llb` archive, and `path` itself for anything else.
+    pub fn document(&self, path: &Path) -> PathBuf {
+        self.workspace.file_on_disk(path).to_path_buf()
+    }
+
+    /// True if `path` is a member of an `.llb` archive of the workspace.
+    pub fn is_member(&self, path: &Path) -> bool {
+        self.workspace.archive_of(path).is_some()
+    }
+
+    /// The directory of the `.llb` archive at `path`.
+    pub fn archive(&self, path: &Path) -> Option<&ArchiveFile> {
+        self.workspace.get(path)?.archive()
     }
 
     /// The metadata of the binary file at `path`, if it parsed.
@@ -232,6 +264,7 @@ impl Snapshot {
                 };
                 Some(summary::project_to_markdown(&title, project, Some(usage)))
             }
+            FileState::Archive(archive) => Some(summary::archive_to_markdown(&title, archive)),
             FileState::Failed(reason) => {
                 Some(format!("### {title}\n\nCannot analyze file: {reason}\n"))
             }
@@ -247,6 +280,7 @@ impl Snapshot {
                 .map(|p| p.kind)
                 .or_else(|| ProjectKind::from_path(path));
             let kind = match (project, state.metadata().map(|m| m.kind)) {
+                _ if state.archive().is_some() => SymbolKind::Library,
                 (Some(ProjectKind::Class), _) => SymbolKind::Class,
                 (Some(ProjectKind::Library), _) => SymbolKind::Library,
                 (Some(ProjectKind::Project), _) => SymbolKind::Project,

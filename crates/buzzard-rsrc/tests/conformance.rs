@@ -15,8 +15,10 @@ use std::path::{Path, PathBuf};
 
 use buzzard_rsrc::blocks::heap::{Heap, HeapNode};
 use buzzard_rsrc::blocks::zlib;
+use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 use buzzard_rsrc::{
-    BlockDiagram, DataType, Direction, FileKind, Reentrancy, RsrcFile, Stage, ViMetadata,
+    BlockDiagram, DataType, Direction, FileKind, Llb, Reentrancy, RsrcFile, Stage, Storage,
+    ViMetadata,
 };
 
 fn root() -> PathBuf {
@@ -464,6 +466,153 @@ fn llb_archives_parse_as_libraries() {
         fixture("pylabview/empty_libfile.llb").kind,
         FileKind::Library
     );
+}
+
+const ARCHIVES: [&str; 2] = [
+    "pylabview/empty_libfile.llb",
+    "pylabview/blank_project1_extr_from_exe_lv14f1.llb",
+];
+
+/// What the archive reader makes of each `.llb` fixture: its members, or
+/// the reason it is not opened.
+#[test]
+fn archive_snapshots_match() {
+    let mut failures = Vec::new();
+    for name in ARCHIVES {
+        let bytes = fs::read(root().join("fixtures").join(name)).unwrap();
+        let listing = match Llb::parse(&bytes) {
+            Ok(llb) => serde_json::json!({
+                "members": llb.members(),
+                "unlisted": llb.unlisted(),
+            }),
+            Err(error) => serde_json::json!({ "error": error.to_string() }),
+        };
+        let snapshot = root()
+            .join("snapshots")
+            .join(format!("{name}.archive.json"));
+        let actual = serde_json::to_string_pretty(&listing).unwrap() + "\n";
+        check(&snapshot, actual, &mut failures);
+    }
+    assert!(
+        failures.is_empty(),
+        "snapshot mismatch (re-run with BUZZARD_BLESS=1 and review the diff): {failures:#?}"
+    );
+}
+
+#[test]
+fn the_real_archives_are_what_they_are() {
+    // Saved by the editor with nothing in it: a directory of no entries.
+    let bytes = fs::read(root().join("fixtures").join(ARCHIVES[0])).unwrap();
+    let llb = Llb::parse(&bytes).unwrap();
+    assert_eq!(llb.members().len(), 0);
+    assert_eq!(llb.unlisted(), 0);
+    // Taken out of a built application: no directory, and its files are
+    // in a zipped program tree that is not opened. That is an error, not
+    // an archive without members.
+    let bytes = fs::read(root().join("fixtures").join(ARCHIVES[1])).unwrap();
+    let error = Llb::parse(&bytes).unwrap_err().to_string();
+    assert!(error.contains("zipped program tree"), "{error}");
+}
+
+/// An archive of every kind of member the builder writes.
+fn synthetic_archive() -> Vec<u8> {
+    let vi = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0, 0x400])
+        .build();
+    let inner = LlbBuilder::default().member("Deep.vi", &vi).build();
+    LlbBuilder::default()
+        .version(0x2300_8000)
+        .member("Stored.vi", &vi)
+        .compressed("Packed.vi", &vi)
+        .compressed("inner.llb", &inner)
+        .member_bytes(b"../\x83\x65.vi", &vi)
+        .member("not a file", b"plain text")
+        .build()
+}
+
+/// Everything the workspace does with an archive: list it, read every
+/// member, and summarize what was read.
+fn open_archive(bytes: &[u8]) -> usize {
+    let Ok(llb) = Llb::parse(bytes) else {
+        return 0;
+    };
+    let mut read = 0;
+    for member in llb.members() {
+        if let Ok(file) = llb.read(member) {
+            read += 1;
+            let _ = ViMetadata::from_bytes(&file);
+        }
+    }
+    read
+}
+
+#[test]
+fn a_synthetic_archive_reads_back() {
+    let bytes = synthetic_archive();
+    let llb = Llb::parse(&bytes).unwrap();
+    let storages: Vec<Storage> = llb.members().iter().map(|m| m.storage).collect();
+    assert_eq!(
+        storages,
+        [
+            Storage::Stored,
+            Storage::Zlib,
+            Storage::Zlib,
+            Storage::Stored,
+            Storage::Stored
+        ]
+    );
+    assert_eq!(open_archive(&bytes), 5);
+    assert_eq!(llb.members()[2].kind, FileKind::Library);
+    // Listing is deterministic.
+    assert_eq!(llb.members(), Llb::parse(&bytes).unwrap().members());
+}
+
+/// An archive cut at any length, or with any one byte changed, gives an
+/// error or a value: never a panic, a hang or a huge allocation.
+#[test]
+fn hostile_archives_never_panic() {
+    let mut archives = vec![synthetic_archive()];
+    for name in ARCHIVES {
+        archives.push(fs::read(root().join("fixtures").join(name)).unwrap());
+    }
+    for bytes in archives {
+        for len in 0..bytes.len() {
+            open_archive(&bytes[..len]);
+        }
+        for pos in 0..bytes.len() {
+            for value in [0x00, 0x7f, 0xff] {
+                if bytes[pos] == value {
+                    continue;
+                }
+                let mut copy = bytes.clone();
+                copy[pos] = value;
+                open_archive(&copy);
+            }
+        }
+    }
+}
+
+/// Damage to the content of one member leaves the others readable.
+#[test]
+fn damage_to_one_member_does_not_hide_the_others() {
+    let bytes = synthetic_archive();
+    let llb = Llb::parse(&bytes).unwrap();
+    let packed = llb.read(&llb.members()[1]).unwrap();
+    assert_ne!(packed.len(), 0);
+    // The zlib stream of `Packed.vi` starts with its `u32` size and the
+    // two bytes 0x78 0x9c; break the stream behind them.
+    let stream = bytes
+        .windows(2)
+        .position(|pair| pair == [0x78, 0x9c])
+        .unwrap();
+    let mut damaged = bytes.clone();
+    for byte in &mut damaged[stream + 2..stream + 12] {
+        *byte ^= 0xff;
+    }
+    let llb = Llb::parse(&damaged).unwrap();
+    assert_eq!(llb.members().len(), 5);
+    assert!(llb.read(&llb.members()[1]).is_err());
+    assert_eq!(open_archive(&damaged), 4);
 }
 
 // State machine facts. The files live with the tests that use them most,

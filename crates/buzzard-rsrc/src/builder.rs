@@ -4,8 +4,13 @@
 //! This is test support, and it is public on purpose: the other crates of
 //! buzzard build their test files with it, and a program built on this
 //! crate can do the same. It writes the resources buzzard's tests need
-//! (any raw resource, a save record, link lists); it is not a general
-//! writer and cannot produce a file the editor would open.
+//! (any raw resource, a save record, link lists, and with [`LlbBuilder`]
+//! an archive of such files); it is not a general writer and cannot
+//! produce a file the editor would open.
+
+use std::io::Write as _;
+
+use flate2::{write::ZlibEncoder, Compression};
 
 use crate::blocks::path::{LvPath, PathKind};
 use crate::fourcc::FourCc;
@@ -208,6 +213,140 @@ impl RsrcBuilder {
         out.extend(lists);
         out.extend(names);
         out
+    }
+}
+
+/// One entry of an archive directory for [`encode_adir`]: the id, the
+/// file type, the packed version and the name as raw bytes.
+pub type AdirEntry<'a> = (i32, FourCc, u32, &'a [u8]);
+
+/// Encode the `ADir` directory of an LLB archive (see [`crate::llb`]).
+///
+/// # Panics
+///
+/// If a name is longer than 255 bytes.
+pub fn encode_adir(entries: &[AdirEntry<'_>]) -> Vec<u8> {
+    let mut out = vec![0; 4];
+    out.extend_from_slice(b"adir");
+    out.extend_from_slice(&2u32.to_be_bytes());
+    out.extend_from_slice(&[0; 8]);
+    out.extend_from_slice(&u32_field(entries.len()).to_be_bytes());
+    for (id, file_type, version, name) in entries {
+        out.extend_from_slice(&id.to_be_bytes());
+        out.extend_from_slice(file_type.as_bytes());
+        out.extend_from_slice(&version.to_be_bytes());
+        out.extend_from_slice(&[0; 20]);
+        push_pstr(&mut out, name);
+        while !out.len().is_multiple_of(4) {
+            out.push(0);
+        }
+    }
+    out
+}
+
+#[derive(Debug)]
+struct LlbEntry {
+    name: Vec<u8>,
+    data: Vec<u8>,
+    compressed: bool,
+}
+
+/// Collects files and lays them out as an LLB archive with
+/// [`build`](Self::build): an `ADir` directory and one content resource
+/// per member, numbered from 1 in the order they were added.
+///
+/// Like [`RsrcBuilder`] this is test support. The archive has none of the
+/// palette and icon resources the editor writes.
+#[derive(Debug, Default)]
+pub struct LlbBuilder {
+    version: u32,
+    entries: Vec<LlbEntry>,
+}
+
+impl LlbBuilder {
+    /// The packed version the directory states for every member, e.g.
+    /// `0x1700_8000`. Zero, the default, states none.
+    #[must_use]
+    pub fn version(mut self, version: u32) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Add a member that is stored as it is (`UCRF`).
+    #[must_use]
+    pub fn member(self, name: &str, data: &[u8]) -> Self {
+        self.member_bytes(name.as_bytes(), data)
+    }
+
+    /// Like [`member`](Self::member), with the name given as raw bytes:
+    /// names are text of the saving machine's code page.
+    #[must_use]
+    pub fn member_bytes(mut self, name: &[u8], data: &[u8]) -> Self {
+        self.entries.push(LlbEntry {
+            name: name.to_vec(),
+            data: data.to_vec(),
+            compressed: false,
+        });
+        self
+    }
+
+    /// Add a member that is stored as a zlib stream (`ZCRF`).
+    #[must_use]
+    pub fn compressed(mut self, name: &str, data: &[u8]) -> Self {
+        self.entries.push(LlbEntry {
+            name: name.as_bytes().to_vec(),
+            data: data.to_vec(),
+            compressed: true,
+        });
+        self
+    }
+
+    /// Lay out the archive.
+    ///
+    /// # Panics
+    ///
+    /// If a name is longer than 255 bytes, there are more than `i32::MAX`
+    /// members, or the file would not fit the 32-bit offsets of the
+    /// format.
+    pub fn build(self) -> Vec<u8> {
+        let ids: Vec<i32> = (1..=self.entries.len())
+            .map(|id| i32::try_from(id).expect("an archive holds at most i32::MAX members"))
+            .collect();
+        let directory: Vec<AdirEntry<'_>> = self
+            .entries
+            .iter()
+            .zip(&ids)
+            .map(|(entry, &id)| {
+                // The directory states the type the member's own header has.
+                let file_type = RsrcHeader::parse(&entry.data)
+                    .map_or(FourCc::new(b"\0\0\0\0"), |header| header.file_type);
+                (id, file_type, self.version, entry.name.as_slice())
+            })
+            .collect();
+        let mut builder = RsrcBuilder::new(file_type::LIBRARY).resource(
+            b"ADir",
+            0,
+            None,
+            encode_adir(&directory),
+        );
+        for (entry, &id) in self.entries.iter().zip(&ids) {
+            let name = String::from_utf8_lossy(&entry.name);
+            // A resource name is a Pascal string; the directory is what
+            // the reader takes names from.
+            let name = (name.len() <= 255).then_some(&*name);
+            builder = if entry.compressed {
+                let size = u32_field(entry.data.len()).to_be_bytes().to_vec();
+                let mut encoder = ZlibEncoder::new(size, Compression::default());
+                encoder
+                    .write_all(&entry.data)
+                    .expect("writing to a vector cannot fail");
+                let stream = encoder.finish().expect("writing to a vector cannot fail");
+                builder.resource(b"ZCRF", id, name, stream)
+            } else {
+                builder.resource(b"UCRF", id, name, entry.data.clone())
+            };
+        }
+        builder.build()
     }
 }
 

@@ -16,15 +16,17 @@ pub struct Inspection {
 }
 
 impl Inspection {
-    /// Parse a binary file from disk, reading and decoding it once.
+    /// Parse a binary file from disk, reading and decoding it once. `path`
+    /// may name a member of an `.llb` archive, as in `util.llb/Helper.vi`
+    /// (see [`crate::archive`]).
     ///
     /// # Errors
     ///
     /// Returns the reason as text when the file cannot be read, is too
-    /// large, or does not parse (see [`Inspection::from_bytes`]).
+    /// large, or does not parse (see [`Inspection::from_bytes`]), or when
+    /// the archive of a member cannot be read or has no such member.
     pub fn from_path(path: &Path) -> Result<Self, String> {
-        let bytes = buzzard_rsrc::read_file(path).map_err(|e| e.to_string())?;
-        Self::from_bytes(&bytes)
+        Self::from_bytes(&crate::archive::read(path)?)
     }
 
     /// Parse a binary file that is already in memory.

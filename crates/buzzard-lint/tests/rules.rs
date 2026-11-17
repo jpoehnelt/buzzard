@@ -459,7 +459,7 @@ fn sarif_output_is_well_formed() {
     let dir = TempDir::new("sarif");
     dir.vi("a.vi", V23, &CLEAN, &["b.vi"]);
     dir.vi("b.vi", V23, &[0; 6], &["a.vi"]);
-    let sarif = buzzard_lint::sarif::to_sarif(&dir.diagnostics(), "9.9.9");
+    let sarif = buzzard_lint::sarif::to_sarif(&Workspace::default(), &dir.diagnostics(), "9.9.9");
     assert_eq!(sarif["version"], "2.1.0");
     let run = &sarif["runs"][0];
     assert_eq!(run["tool"]["driver"]["name"], "buzzard");

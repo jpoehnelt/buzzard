@@ -113,8 +113,22 @@ impl Backend {
     fn inspect_now(&self, uri: &Url) -> Result<Value> {
         let path = to_path(uri)?;
         let engine = self.state.view();
-        let uris =
-            |paths: Vec<PathBuf>| -> Vec<Url> { paths.iter().filter_map(|p| to_url(p)).collect() };
+        // A member of an archive is shown as the archive: that is the
+        // file a client can open.
+        let uris = |paths: Vec<PathBuf>| -> Vec<Url> {
+            let mut out: Vec<Url> = paths
+                .iter()
+                .filter_map(|p| to_url(&engine.document(p)))
+                .collect();
+            out.dedup();
+            out
+        };
+        if let Some(archive) = engine.archive(&path) {
+            return Ok(json!({
+                "archive": archive,
+                "opened": archive.opened(),
+            }));
+        }
         if let Some(project) = engine.project(&path) {
             return Ok(json!({
                 "project": project,
@@ -245,7 +259,13 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let path = to_path(&params.text_document_position.text_document.uri)?;
-        let callers = self.state.view().callers(&path);
+        let view = self.state.view();
+        let mut callers: Vec<PathBuf> = view
+            .callers(&path)
+            .iter()
+            .map(|caller| view.document(caller))
+            .collect();
+        callers.dedup();
         Ok(Some(
             callers.iter().filter_map(|p| file_location(p)).collect(),
         ))
@@ -255,7 +275,8 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
-        let symbols = self.state.view().symbols(&params.query, MAX_SYMBOLS);
+        let view = self.state.view();
+        let symbols = view.symbols(&params.query, MAX_SYMBOLS);
         let out = symbols
             .into_iter()
             .filter_map(|symbol| {
@@ -271,11 +292,19 @@ impl LanguageServer for Backend {
                         engine::SymbolKind::Library => SymbolKind::MODULE,
                         engine::SymbolKind::Project => SymbolKind::PACKAGE,
                     },
-                    location: file_location(&symbol.path)?,
+                    // A member of an archive is found in the archive.
+                    location: file_location(&view.document(&symbol.path))?,
+                    container_name: view.is_member(&symbol.path).then(|| {
+                        let archive = view.document(&symbol.path);
+                        archive
+                            .file_name()
+                            .unwrap_or(archive.as_os_str())
+                            .to_string_lossy()
+                            .into_owned()
+                    }),
                     name: symbol.name,
                     tags: None,
                     deprecated: None,
-                    container_name: None,
                 })
             })
             .collect();

@@ -6,7 +6,7 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use buzzard_mcp::{Server, MAX_LINE_BYTES};
-use buzzard_rsrc::builder::RsrcBuilder;
+use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 use buzzard_rsrc::LvPath;
 use serde_json::{json, Value};
 
@@ -1331,11 +1331,14 @@ fn linked_workspace(name: &str) -> TempDir {
     fs::write(dir.0.join("ws/main.vi"), bytes).expect("write the test workspace");
     fs::write(dir.0.join("ws/broken.vi"), b"RSRC").expect("write the test workspace");
     fs::create_dir_all(dir.0.join("install/vi.lib/Utility")).expect("write the test workspace");
-    fs::write(dir.0.join("install/vi.lib/Utility/error.llb"), b"x")
-        .expect("write the test workspace");
     let helper = RsrcBuilder::default()
         .save_record(0x2300_8000, &[0, 0x400, 0, 0, 0, 0])
         .build();
+    let archive = LlbBuilder::default()
+        .member("Clear Errors.vi", &helper)
+        .build();
+    fs::write(dir.0.join("install/vi.lib/Utility/error.llb"), archive)
+        .expect("write the test workspace");
     fs::write(dir.0.join("ws/helper.vi"), helper).expect("write the test workspace");
     dir
 }
@@ -1585,4 +1588,152 @@ fn deps_checks_its_arguments() {
         let message = session.fails("buzzard_deps", arguments);
         assert!(message.contains(expected), "{message}");
     }
+}
+
+// ----------------------------------------------------------------- archives
+
+/// A workspace with an archive: `Main.vi` calls `lib.llb/add.vi`, which is
+/// a real VI with a block diagram.
+fn archive_workspace(name: &str) -> TempDir {
+    let dir = TempDir::new(name);
+    let add = fs::read(fixtures().join("pylavi/add.vi")).expect("read the fixture");
+    let inline = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0; 6])
+        .links(&[("add.vi", LvPath::sibling("add.vi"))])
+        .build();
+    let archive = LlbBuilder::default()
+        .member("Inline.vi", &inline)
+        .compressed("add.vi", &add)
+        .member("notes.txt", b"text")
+        .build();
+    fs::write(dir.0.join("lib.llb"), archive).expect("write the archive");
+    let link = LvPath {
+        components: vec![String::new(), "lib.llb".to_owned(), "add.vi".to_owned()],
+        ..LvPath::sibling("x")
+    };
+    let main = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0, 0x400, 0, 0, 0, 0])
+        .links(&[("add.vi", link)])
+        .build();
+    fs::write(dir.0.join("Main.vi"), main).expect("write the VI");
+    fs::write(dir.0.join("add.vi"), add).expect("write the VI");
+    dir
+}
+
+#[test]
+fn tools_take_the_path_of_a_member_of_an_archive() {
+    let dir = archive_workspace("archive");
+    let mut session = Session::new(dir.0.clone());
+
+    // The archive itself: its members, and the path to pass for each.
+    let (text, structured) = session.ok("buzzard_inspect", json!({ "path": "lib.llb" }));
+    assert!(text.contains("| Kind | LLB archive (`LVAR`) |"), "{text}");
+    assert!(text.contains("| add.vi | VI (`LVIN`) |"), "{text}");
+    assert_eq!(structured["path"], "lib.llb");
+    assert_eq!(
+        structured["member_paths"],
+        json!(["lib.llb/Inline.vi", "lib.llb/add.vi"])
+    );
+    assert_eq!(
+        structured["archive"]["members"].as_array().unwrap().len(),
+        3
+    );
+    assert_eq!(structured["archive"]["members"][1]["storage"], "zlib");
+    let message = session.fails("buzzard_diagram", json!({ "path": "lib.llb" }));
+    assert!(
+        message.contains("pass one of its members as `lib.llb/<member name>`"),
+        "{message}"
+    );
+
+    // A member answers like the same file on disk.
+    let (member, structured) = session.ok("buzzard_inspect", json!({ "path": "lib.llb/add.vi" }));
+    let (loose, on_disk) = session.ok("buzzard_inspect", json!({ "path": "add.vi" }));
+    assert_eq!(member, loose);
+    assert_eq!(structured["path"], "lib.llb/add.vi");
+    assert_eq!(structured["metadata"], on_disk["metadata"]);
+    assert_eq!(structured["has_block_diagram"], true);
+    for format in ["markdown", "json", "mermaid", "dot", "svg"] {
+        let member = session.ok(
+            "buzzard_diagram",
+            json!({ "path": "lib.llb/add.vi", "format": format }),
+        );
+        let loose = session.ok(
+            "buzzard_diagram",
+            json!({ "path": "add.vi", "format": format }),
+        );
+        assert_eq!(member, loose, "{format}");
+    }
+    assert_eq!(
+        session.fails("buzzard_inspect", json!({ "path": "lib.llb/Absent.vi" })),
+        "lib.llb/Absent.vi: the archive has no member `Absent.vi`"
+    );
+    assert_eq!(
+        session.fails("buzzard_inspect", json!({ "path": "absent.llb/add.vi" })),
+        "file does not exist: absent.llb/add.vi"
+    );
+
+    // The members are checked, and reported under their member paths.
+    let (text, checked) = session.ok("buzzard_check", json!({ "paths": ["."] }));
+    assert_eq!(checked["summary"]["files"], 5);
+    let on_member: Vec<&Value> = checked["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|d| d["path"] == "lib.llb/Inline.vi")
+        .collect();
+    assert_eq!(on_member.len(), 1);
+    assert_eq!(on_member[0]["code"], "BZ001");
+    assert!(text.contains("lib.llb/Inline.vi"), "{text}");
+    let (_, one) = session.ok("buzzard_check", json!({ "paths": ["lib.llb/Inline.vi"] }));
+    assert_eq!(one["summary"]["files"], 1);
+    assert_eq!(one["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        session.fails("buzzard_check", json!({ "paths": ["lib.llb/Absent.vi"] })),
+        "path does not exist: lib.llb/Absent.vi"
+    );
+
+    // The graph runs through the archive.
+    let (_, callers) = session.ok(
+        "buzzard_callers",
+        json!({ "path": "lib.llb/add.vi", "root": "." }),
+    );
+    assert_eq!(callers["callers"], json!(["Main.vi", "lib.llb/Inline.vi"]));
+    let (_, used) = session.ok("buzzard_callees", json!({ "path": "Main.vi", "root": "." }));
+    assert_eq!(used["callees"], json!(["lib.llb/add.vi"]));
+    let (_, found) = session.ok("buzzard_symbols", json!({ "root": ".", "query": "llb" }));
+    assert_eq!(found["symbols"][0]["kind"], "archive");
+
+    let (_, verified) = session.ok(
+        "buzzard_verify",
+        json!({ "paths": ["lib.llb/add.vi"], "format": "json" }),
+    );
+    assert_eq!(verified["summary"]["files"], 1);
+    let (_, deps) = session.ok(
+        "buzzard_deps",
+        json!({ "paths": ["lib.llb"], "format": "json", "detail": "files" }),
+    );
+    assert_eq!(deps["files"], 3);
+}
+
+#[test]
+fn the_cache_follows_a_change_to_an_archive() {
+    let dir = archive_workspace("archive-cache");
+    let mut session = Session::new(dir.0.clone());
+    let files = |session: &mut Session, paths: Value| {
+        session.ok("buzzard_check", json!({ "paths": paths })).1["summary"]["files"].clone()
+    };
+    assert_eq!(files(&mut session, json!(["."])), 5);
+    assert_eq!(files(&mut session, json!(["lib.llb/Inline.vi"])), 1);
+    let clean = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0, 0x400, 0, 0, 0, 0])
+        .build();
+    fs::write(
+        dir.0.join("lib.llb"),
+        LlbBuilder::default().member("Inline.vi", &clean).build(),
+    )
+    .expect("write the archive");
+    assert_eq!(files(&mut session, json!(["."])), 4);
+    // A member given by its own path changes with its archive.
+    let (_, one) = session.ok("buzzard_check", json!({ "paths": ["lib.llb/Inline.vi"] }));
+    assert_eq!(one["diagnostics"], json!([]));
 }

@@ -59,6 +59,18 @@ pub enum FileKind {
     Other,
 }
 
+impl FileKind {
+    /// The kind a file type code from a header stands for.
+    pub fn of(file_type: FourCc) -> Self {
+        match file_type {
+            t if t == file_type::VI => FileKind::Vi,
+            t if t == file_type::CONTROL => FileKind::Control,
+            t if t == file_type::LIBRARY => FileKind::Library,
+            _ => FileKind::Other,
+        }
+    }
+}
+
 /// Summary of one file: its kind, version, settings, owning libraries and
 /// links to other files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -140,12 +152,7 @@ impl ViMetadata {
         links.sort();
         links.dedup();
 
-        let kind = match file.file_type() {
-            t if t == file_type::VI => FileKind::Vi,
-            t if t == file_type::CONTROL => FileKind::Control,
-            t if t == file_type::LIBRARY => FileKind::Library,
-            _ => FileKind::Other,
-        };
+        let kind = FileKind::of(file.file_type());
 
         Ok(Self {
             kind,

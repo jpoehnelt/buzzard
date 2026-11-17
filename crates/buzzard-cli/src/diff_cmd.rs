@@ -50,6 +50,18 @@ fn load(path: &str) -> Result<Side, String> {
     if is_null_device(path) {
         return Ok((None, None));
     }
+    // A member of an archive that is not in it is like a file that is not
+    // on disk: the other side was added or deleted.
+    if let Some((archive, name)) = buzzard_lint::archive::split(Path::new(path)) {
+        return match buzzard_lint::archive::read_member(&archive, &name) {
+            Ok(Some(bytes)) => match Inspection::from_bytes(&bytes) {
+                Ok(inspection) => Ok((Some(inspection), None)),
+                Err(err) => Err(format!("{path}: {err}")),
+            },
+            Ok(None) => Ok((None, None)),
+            Err(err) => Err(format!("{path}: {err}")),
+        };
+    }
     let bytes = match buzzard_rsrc::read_file(Path::new(path)) {
         Ok(bytes) => bytes,
         Err(RsrcError::Io(err)) if err.kind() == ErrorKind::NotFound => return Ok((None, None)),

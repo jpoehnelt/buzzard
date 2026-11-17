@@ -3,6 +3,8 @@
 //!
 //! Start with [`ViMetadata::from_path`] for a summary of one file, or
 //! [`RsrcFile::parse`] for raw access to the resource directory.
+//! [`Llb::parse`] lists the members of an `.llb` archive and
+//! [`Llb::read`] gives the bytes of one, which are an RSRC file again.
 
 pub mod blocks;
 pub mod builder;
@@ -11,6 +13,7 @@ pub mod diagram;
 pub mod error;
 pub mod fourcc;
 pub mod header;
+pub mod llb;
 pub mod metadata;
 mod reader;
 pub mod version;
@@ -28,6 +31,7 @@ pub use diagram::{
 pub use error::{Result, RsrcError};
 pub use fourcc::FourCc;
 pub use header::RsrcHeader;
+pub use llb::{Llb, LlbMember, Storage};
 pub use metadata::{read_file, FileKind, ViMetadata};
 pub use version::{Stage, Version};
 
@@ -36,6 +40,10 @@ pub use version::{Stage, Version};
 ///
 /// A slice, not an array, so that a new extension does not change the type.
 pub const RSRC_EXTENSIONS: &[&str] = &["vi", "ctl", "vit", "ctt", "vim"];
+
+/// The file extension (lowercase, without the dot) of an LLB archive,
+/// which [`Llb`] reads.
+pub const LLB_EXTENSION: &str = "llb";
 
 /// Compiles the examples of the crate's `README.md` as doctests.
 #[cfg(doctest)]

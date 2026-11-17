@@ -510,6 +510,95 @@ fn directory_rename_and_delete_are_followed() {
     assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
 }
 
+/// A member of an `.llb` archive is not a document an editor can open.
+/// Everything the server says about one names the archive: diagnostics
+/// are published for the archive's URI with the member's name in the
+/// message, and symbols and references are located at the archive.
+#[test]
+fn members_of_an_archive_are_shown_at_the_archive() {
+    use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
+    use buzzard_rsrc::LvPath;
+
+    let dir = TempDir::new("lsp-archive");
+    let member = |words: &[u32], calls: &[&str]| {
+        let links: Vec<(&str, LvPath)> = calls.iter().map(|n| (*n, LvPath::sibling(n))).collect();
+        RsrcBuilder::default()
+            .save_record(V23, words)
+            .links(&links)
+            .build()
+    };
+    let archive = |words: &[u32]| {
+        LlbBuilder::default()
+            .member("Entry.vi", &member(words, &["Helper.vi"]))
+            .compressed("Helper.vi", &member(&CLEAN, &[]))
+            .build()
+    };
+    std::fs::write(dir.0.join("lib.llb"), archive(&INLINE_CODE)).unwrap();
+    let archive_uri = file_uri(&dir.0.join("lib.llb"));
+
+    let mut session = Session::open(&dir.0);
+    let found = session.diagnostics_for("/lib.llb", |d| !d.is_empty());
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0]["code"], "BZ001");
+    assert!(
+        found[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Entry.vi: compiled code is not separated"),
+        "{found:?}"
+    );
+    // Nothing was published for a URI that names no file.
+    assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
+
+    // The archive and its two members, all found in the archive.
+    assert_eq!(
+        session.symbol_uris(""),
+        [
+            archive_uri.clone(),
+            archive_uri.clone(),
+            archive_uri.clone()
+        ]
+    );
+    let symbols = session.request("workspace/symbol", json!({ "query": "Helper" }));
+    assert_eq!(symbols[0]["name"], "Helper.vi");
+    assert_eq!(symbols[0]["containerName"], "lib.llb");
+    let hover = session.hover(&dir.0.join("lib.llb"));
+    let text = hover["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("| Members | 2 |"), "{text}");
+    assert!(text.contains("| Helper.vi | VI (`LVIN`) |"), "{text}");
+
+    // The custom requests take the URI of a member.
+    let helper = file_uri(&dir.0.join("lib.llb").join("Helper.vi"));
+    let inspected = session.request("buzzard/inspect", json!({ "uri": helper }));
+    assert!(inspected["metadata"].is_object(), "{inspected}");
+    assert_eq!(inspected["callers"], json!([archive_uri]));
+    let listing = session.request("buzzard/inspect", json!({ "uri": archive_uri }));
+    assert_eq!(listing["opened"], json!(["Entry.vi", "Helper.vi"]));
+    assert_eq!(listing["archive"]["members"][1]["storage"], "zlib");
+    let references = session.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": helper },
+            "position": { "line": 0, "character": 0 },
+            "context": { "includeDeclaration": false },
+        }),
+    );
+    assert_eq!(references[0]["uri"], archive_uri);
+
+    // A change to the archive re-reads its members.
+    std::fs::write(dir.0.join("lib.llb"), archive(&CLEAN)).unwrap();
+    session.changed(&[&dir.0.join("lib.llb")]);
+    session.diagnostics_for("/lib.llb", <[Value]>::is_empty);
+    std::fs::remove_file(dir.0.join("lib.llb")).unwrap();
+    session.changed(&[&dir.0.join("lib.llb")]);
+    let deadline = Instant::now() + TIMEOUT;
+    while !session.symbol_uris("").is_empty() {
+        assert!(Instant::now() < deadline, "the members were not dropped");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
+}
+
 /// The initial scan skips hidden directories and everything outside the
 /// roots. Later events must not bring such files in, or the results would
 /// depend on what happened while the server ran.

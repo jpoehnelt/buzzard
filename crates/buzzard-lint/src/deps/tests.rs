@@ -1,6 +1,6 @@
 use std::fs;
 
-use buzzard_rsrc::builder::RsrcBuilder;
+use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 
 use super::*;
 use crate::inspector::Inspection;
@@ -83,6 +83,20 @@ impl TempDir {
         let path = self.0.join(rel);
         fs::create_dir_all(path.parent().expect("a file has a parent")).expect("create parents");
         fs::write(path, b"x").expect("write the file");
+    }
+
+    /// An `.llb` archive that holds a VI under each of the names.
+    fn archive(&self, rel: &str, members: &[&[u8]]) {
+        let vi = RsrcBuilder::default()
+            .save_record(V23, &[0, 0x400, 0, 0, 0, 0])
+            .build();
+        let mut builder = LlbBuilder::default();
+        for name in members {
+            builder = builder.member_bytes(name, &vi);
+        }
+        let path = self.0.join(rel);
+        fs::create_dir_all(path.parent().expect("a file has a parent")).expect("create parents");
+        fs::write(path, builder.build()).expect("write the archive");
     }
 }
 
@@ -630,7 +644,7 @@ fn unparsed_files_are_listed_with_their_reason() {
 #[test]
 fn a_root_with_a_directory_is_looked_up_on_disk() {
     let dir = TempDir::new("status");
-    dir.file("vi.lib/Utility/error.llb");
+    dir.archive("vi.lib/Utility/error.llb", &[b"Clear Errors.vi"]);
     dir.file("vi.lib/Utility/High Resolution Relative Seconds.vi");
     dir.file("vi.lib/Base/Base.lvclass");
     let mut roots = Roots::default();
@@ -687,6 +701,68 @@ fn a_root_with_a_directory_is_looked_up_on_disk() {
     assert_eq!(found.unused_roots, Vec::<String>::new());
 }
 
+/// A target inside an `.llb` is found only if the archive on disk holds
+/// that member. An archive that cannot be read says nothing.
+#[test]
+fn a_target_inside_an_archive_is_looked_up_in_the_archive() {
+    let dir = TempDir::new("archive-status");
+    // "テスト.vi" as a machine with the Shift-JIS code page stores it.
+    let legacy: &[u8] = b"\x83\x65\x83\x58\x83\x67.vi";
+    dir.archive(
+        "vi.lib/Utility/error.llb",
+        &[b"Clear Errors.vi", b"simple error handler.VI", legacy],
+    );
+    dir.file("vi.lib/Utility/broken.llb");
+    let mut roots = Roots::default();
+    roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
+    let stored: String = legacy.iter().map(|&b| char::from(b)).collect();
+    let found = report(
+        vec![(
+            at("main.vi"),
+            vi(&[
+                symbolic("<vilib>/Utility/error.llb"),
+                symbolic("<vilib>/Utility/error.llb/Clear Errors.vi"),
+                symbolic("<vilib>/Utility/error.llb/Simple Error Handler.vi"),
+                symbolic("<vilib>/Utility/error.llb/Gone.vi"),
+                symbolic("<vilib>/Utility/error.llb/sub/Clear Errors.vi"),
+                symbolic(&format!("<vilib>/Utility/error.llb/{stored}")),
+                symbolic("<vilib>/Utility/error.llb/テスト.vi"),
+                symbolic("<vilib>/utility/ERROR.LLB/clear errors.vi"),
+                symbolic("<vilib>/Utility/broken.llb"),
+                symbolic("<vilib>/Utility/broken.llb/Any.vi"),
+                symbolic("<vilib>/Utility/absent.llb/Any.vi"),
+            ]),
+        )],
+        &roots,
+    );
+    let found: Vec<(String, Status)> = statuses(&found)
+        .into_iter()
+        .map(|(path, status)| (path.replace(&stored, "(legacy)"), status))
+        .collect();
+    let found: Vec<(&str, Status)> = found.iter().map(|(p, s)| (p.as_str(), *s)).collect();
+    assert_eq!(
+        found,
+        [
+            ("<vilib>/Utility/absent.llb/Any.vi", Status::Missing),
+            ("<vilib>/Utility/broken.llb", Status::Found),
+            ("<vilib>/Utility/broken.llb/Any.vi", Status::Unchecked),
+            ("<vilib>/Utility/error.llb", Status::Found),
+            ("<vilib>/Utility/error.llb/Clear Errors.vi", Status::Found),
+            ("<vilib>/Utility/error.llb/Gone.vi", Status::Missing),
+            (
+                "<vilib>/Utility/error.llb/Simple Error Handler.vi",
+                Status::Found
+            ),
+            (
+                "<vilib>/Utility/error.llb/sub/Clear Errors.vi",
+                Status::Missing
+            ),
+            ("<vilib>/Utility/error.llb/(legacy)", Status::Found),
+            ("<vilib>/Utility/error.llb/テスト.vi", Status::Found),
+        ]
+    );
+}
+
 fn statuses(found: &DepsReport) -> Vec<(&str, Status)> {
     found
         .roots
@@ -701,7 +777,10 @@ fn statuses(found: &DepsReport) -> Vec<(&str, Status)> {
 fn a_file_under_another_letter_case_is_found() {
     let dir = TempDir::new("case");
     dir.file("vi.lib/Utility/Real.vi");
-    dir.file("vi.lib/addons/_JKI Toolkits/_JKI_lib_State_Machine.llb");
+    dir.archive(
+        "vi.lib/addons/_JKI Toolkits/_JKI_lib_State_Machine.llb",
+        &[b"ADD.vi"],
+    );
     dir.file("vi.lib/Platform/TimedLoop/a.vi");
     let mut roots = Roots::default();
     roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
@@ -747,7 +826,7 @@ fn stored_in(encoding: &'static encoding_rs::Encoding, text: &str) -> String {
 fn a_target_stored_in_a_legacy_code_page_is_found() {
     let dir = TempDir::new("code-page");
     dir.file("vi.lib/日本ysis/NI_AALBase.lvlib");
-    dir.file("vi.lib/日本ysis/1siggen.llb");
+    dir.archive("vi.lib/日本ysis/1siggen.llb", &[b"Noise.vi"]);
     let mut roots = Roots::default();
     roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
     let folder = stored_in(encoding_rs::SHIFT_JIS, "日本ysis");
@@ -1059,7 +1138,10 @@ fn mapping_paths_keeps_stored_paths_and_sorts_again() {
 #[test]
 fn the_overview_counts_what_the_report_lists() {
     let dir = TempDir::new("overview");
-    dir.file("vi.lib/Utility/error.llb");
+    dir.archive(
+        "vi.lib/Utility/error.llb",
+        &[b"Clear Errors.vi", b"Other.vi"],
+    );
     let mut roots = Roots::default();
     roots.add("vilib", &dir.0.join("vi.lib")).unwrap();
     let mut found = report(

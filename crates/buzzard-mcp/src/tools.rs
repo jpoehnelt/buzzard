@@ -11,6 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use buzzard_lint::archive;
 use buzzard_lint::deps::{self as dependencies, Roots};
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::verify::report::{self, Verified};
@@ -122,7 +123,9 @@ impl State {
         let stamps: Vec<(PathBuf, Stamp)> = discover(&roots)
             .into_iter()
             .map(|path| {
-                let stamp = fs::metadata(&path)
+                // A member changes when its archive does.
+                let on_disk = archive::split(&path).map_or_else(|| path.clone(), |(file, _)| file);
+                let stamp = fs::metadata(on_disk)
                     .ok()
                     .map(|meta| (meta.len(), meta.modified().ok()));
                 (path, stamp)
@@ -286,7 +289,7 @@ fn check(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, St
             return Err("argument `paths` contains an empty path".to_owned());
         }
         let root = state.resolve(raw);
-        if !root.exists() {
+        if !archive::exists(&root) {
             return Err(format!("path does not exist: {}", state.show(&root)));
         }
         roots.push(root);
@@ -391,7 +394,7 @@ fn verify(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, S
             return Err("argument `paths` contains an empty path".to_owned());
         }
         let root = state.resolve(raw);
-        if !root.exists() {
+        if !archive::exists(&root) {
             return Err(format!("path does not exist: {}", state.show(&root)));
         }
         roots.push(root);
@@ -514,7 +517,7 @@ fn deps(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, Str
             return Err("argument `paths` contains an empty path".to_owned());
         }
         let root = state.resolve(raw);
-        if !root.exists() {
+        if !archive::exists(&root) {
             return Err(format!("path does not exist: {}", state.show(&root)));
         }
         scan_roots.push(root);
@@ -570,7 +573,9 @@ fn diagnostic_json(state: &State, diagnostic: &Diagnostic) -> Value {
     })
 }
 
-/// Resolve the `path` argument to an existing regular file.
+/// Resolve the `path` argument to an existing regular file, or to the
+/// path of a member of an `.llb` archive that is one. Whether the archive
+/// has that member is found out when it is read.
 fn existing_file(state: &State, args: &Args<'_>) -> Result<PathBuf, String> {
     let path = state.resolve(args.path("path")?);
     if path.is_dir() {
@@ -579,7 +584,7 @@ fn existing_file(state: &State, args: &Args<'_>) -> Result<PathBuf, String> {
             state.show(&path)
         ));
     }
-    if !path.is_file() {
+    if !path.is_file() && archive::split(&path).is_none() {
         return Err(format!("file does not exist: {}", state.show(&path)));
     }
     Ok(path)
@@ -612,6 +617,22 @@ fn inspect(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, 
             structured: Some(json!({ "path": shown, "project": to_value(&project)? })),
         });
     }
+    if archive::is_archive(&path) && path.is_file() {
+        let listing = archive::list(&path).map_err(|err| format!("{shown}: {err}"))?;
+        let members: Vec<String> = listing
+            .opened()
+            .into_iter()
+            .map(|name| state.show(&archive::member_path(&path, name)))
+            .collect();
+        return Ok(Output {
+            text: summary::archive_to_markdown(&title(&path), &listing),
+            structured: Some(json!({
+                "path": shown,
+                "archive": to_value(&listing)?,
+                "member_paths": members,
+            })),
+        });
+    }
     let inspection = Inspection::from_path(&path).map_err(|err| format!("{shown}: {err}"))?;
     Ok(Output {
         text: summary::to_markdown(&title(&path), &inspection.metadata, None),
@@ -640,6 +661,12 @@ fn diagram(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, 
     let shown = state.show(&path);
     if is_project_file(&path) {
         return Err(format!("{shown}: a project file has no block diagram"));
+    }
+    if archive::is_archive(&path) && path.is_file() {
+        return Err(format!(
+            "{shown}: an archive has no block diagram; pass one of its members as \
+             `{shown}/<member name>` (buzzard_inspect lists them)"
+        ));
     }
     let inspection = Inspection::from_path(&path).map_err(|err| format!("{shown}: {err}"))?;
     let Some(diagram) = &inspection.diagram else {
@@ -747,6 +774,7 @@ fn symbol_kind(path: &Path, state: &FileState) -> &'static str {
         (Some(ProjectKind::Class), _) => "class",
         (Some(ProjectKind::Library), _) => "library",
         (Some(ProjectKind::Project), _) => "project",
+        _ if state.archive().is_some() => "archive",
         (None, Some(FileKind::Control)) => "control",
         (None, _) => "vi",
     }

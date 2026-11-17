@@ -13,6 +13,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use buzzard_lint::archive;
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::verify::report::{self, Verified};
 use buzzard_lint::Inspection;
@@ -134,6 +135,9 @@ fn main() -> ExitCode {
         Command::Inspect { file, format } if is_project_file(&file) => {
             inspect_project(&file, format)
         }
+        Command::Inspect { file, format } if archive::is_archive(&file) && file.is_file() => {
+            inspect_archive(&file, format)
+        }
         Command::Inspect { file, format } => inspect_binary(&file, format),
         Command::Verify { paths, format } => verify(&paths, format),
         Command::Deps(args) => match deps_cmd::run(&args) {
@@ -184,7 +188,7 @@ fn check(
         eprintln!("error: unknown rule code(s): {unknown:?}");
         return ExitCode::from(2);
     }
-    if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+    if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
         eprintln!("error: path does not exist: {}", missing.display());
         return ExitCode::from(2);
     }
@@ -198,7 +202,11 @@ fn check(
     let rendered = match format {
         CheckFormat::Human => render_human(&diagnostics, workspace.files().len()),
         CheckFormat::Json => to_json(&diagnostics),
-        CheckFormat::Sarif => to_json(&sarif::to_sarif(&diagnostics, env!("CARGO_PKG_VERSION"))),
+        CheckFormat::Sarif => to_json(&sarif::to_sarif(
+            &workspace,
+            &diagnostics,
+            env!("CARGO_PKG_VERSION"),
+        )),
     };
     let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
     let status = if failed && !exit_zero {
@@ -211,7 +219,7 @@ fn check(
 
 /// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
 fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
-    if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+    if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
         eprintln!("error: path does not exist: {}", missing.display());
         return ExitCode::from(2);
     }
@@ -254,8 +262,57 @@ fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
     }
 }
 
+/// JSON shape of `inspect` on an `.llb` archive: what the file is, and its
+/// directory.
+#[derive(serde::Serialize)]
+struct ArchiveOutput<'a> {
+    kind: buzzard_rsrc::FileKind,
+    file_type: &'static str,
+    #[serde(flatten)]
+    archive: &'a archive::ArchiveFile,
+}
+
+/// `buzzard inspect` on an `.llb` archive: the list of its members. A
+/// member is inspected by the path of the archive followed by its name.
+fn inspect_archive(file: &Path, format: InspectFormat) -> ExitCode {
+    let opened = match archive::list(file) {
+        Ok(listing) => listing,
+        Err(err) => {
+            eprintln!("error: {}: {err}", file.display());
+            return ExitCode::from(2);
+        }
+    };
+    let rendered = match format {
+        InspectFormat::Json => to_json(&ArchiveOutput {
+            kind: buzzard_rsrc::FileKind::Library,
+            file_type: "LVAR",
+            archive: &opened,
+        }),
+        InspectFormat::Markdown => {
+            let title = file
+                .file_name()
+                .unwrap_or(file.as_os_str())
+                .to_string_lossy();
+            summary::archive_to_markdown(&title, &opened)
+        }
+        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+            let example = opened.opened().first().map_or_else(
+                || "<member>".to_owned(),
+                |name| archive::member_path(file, name).display().to_string(),
+            );
+            eprintln!(
+                "error: {}: an archive has no block diagram; name one of its members, as in \
+                 `buzzard inspect \"{example}\"`",
+                file.display()
+            );
+            return ExitCode::from(2);
+        }
+    };
+    print(&rendered, ExitCode::SUCCESS)
+}
+
 /// `buzzard inspect` on a binary file: its metadata and block diagram, or a
-/// picture of the diagram.
+/// picture of the diagram. `file` may name a member of an archive.
 fn inspect_binary(file: &Path, format: InspectFormat) -> ExitCode {
     let inspection = match Inspection::from_path(file) {
         Ok(inspection) => inspection,
