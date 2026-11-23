@@ -1,7 +1,7 @@
-//! The diagram exports show case labels, and the outline constant values
-//! (a constant has no position of its own in the decoded diagram, so the
-//! pictures do not draw it). Checked on a
-//! real file; `tests/fixtures/verify/README.md` records its source.
+//! The diagram exports show case labels, and the outline also shows
+//! constant values. A constant has no position of its own in the decoded
+//! diagram, so the pictures do not draw it. The tests use a real file, and
+//! `tests/fixtures/verify/README.md` records its source.
 
 use std::path::Path;
 

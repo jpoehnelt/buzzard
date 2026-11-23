@@ -1,6 +1,6 @@
-// The VS Code glue: starts `buzzard lsp`, and adds commands and a
-// read-only viewer on top of it. The logic that can be tested without an
-// editor lives in the other modules.
+// Connects the extension to VS Code. It starts `buzzard lsp` and adds
+// commands and a read-only viewer. The logic that can be tested without an
+// editor is in the other modules.
 
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -99,7 +99,7 @@ async function stopClient(): Promise<void> {
 async function startClient(): Promise<void> {
   await stopClient();
   if ((vscode.workspace.workspaceFolders ?? []).length === 0) {
-    // The server analyzes workspace folders; without one it has nothing to
+    // The server analyzes workspace folders. Without one it has nothing to
     // do. The viewer and the previews still work on single files.
     setStatus('$(circle-slash) Buzzard', 'No folder is open, so the buzzard language server is not running.');
     problem = 'no folder is open';
@@ -111,16 +111,17 @@ async function startClient(): Promise<void> {
     return;
   }
   const serverOptions: ServerOptions = {
-    // No `transport`: an executable then talks over stdin and stdout, and
-    // nothing is added to its arguments. Naming the stdio transport would
-    // append `--stdio`, which `buzzard lsp` does not accept.
+    // No `transport` is set, so the client talks to the executable over
+    // stdin and stdout and adds nothing to its arguments. Naming the stdio
+    // transport would append `--stdio`, which `buzzard lsp` does not accept.
     command: resolution.path,
     args: ['lsp'],
   };
   const clientOptions: LanguageClientOptions = {
-    // The files are binary and never opened as text documents: nothing is
-    // synchronized. Diagnostics arrive by `publishDiagnostics` for the
-    // files the server finds in the workspace folders.
+    // The files are binary and are never opened as text documents, so the
+    // client synchronizes nothing. Diagnostics arrive by
+    // `publishDiagnostics` for the files the server finds in the workspace
+    // folders.
     documentSelector: [],
     diagnosticCollectionName: 'buzzard',
     ...(output === undefined ? {} : { outputChannel: output }),
@@ -191,7 +192,7 @@ function position(uri: vscode.Uri, running: LanguageClient): { textDocument: { u
   return { textDocument: { uri: running.code2ProtocolConverter.asUri(uri) }, position: { line: 0, character: 0 } };
 }
 
-/** The summary of a file: from the server if it runs (it knows the callers), else from the tool. */
+/** The summary of a file. It comes from the server when the server runs, because the server knows the callers, and from `buzzard inspect` otherwise. */
 async function summarySection(uri: vscode.Uri, binary: string | undefined): Promise<Section> {
   const running = runningClient();
   if (running !== undefined) {
@@ -351,7 +352,7 @@ class ViewerProvider implements vscode.CustomReadonlyEditorProvider {
         panel.webview.html = html;
       }
     };
-    // The file is saved by another program; show the new state when it is.
+    // Another program saves the file. The viewer shows the new state after each save.
     const watcher = vscode.workspace.createFileSystemWatcher(
       new vscode.RelativePattern(vscode.Uri.joinPath(uri, '..'), name.replace(/[\\*?[\]{}]/g, '?')),
     );

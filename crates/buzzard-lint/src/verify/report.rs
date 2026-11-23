@@ -1,7 +1,7 @@
 //! Running the verification over files and printing what it found.
 //!
-//! Every output is deterministic: files are in path order, machines in
-//! diagram order, and states, transitions and findings in the order the
+//! Every output is deterministic. Files are in path order, machines in
+//! diagram order, and states, transitions, and findings in the order the
 //! model gives them.
 
 use std::collections::BTreeMap;
@@ -18,10 +18,10 @@ use crate::project::is_project_file;
 use crate::workspace::discover;
 
 /// One finding as it is shown: the issue plus its rule code, how much it
-/// claims and why it holds.
+/// claims, and why it holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ShownIssue {
-    /// The lint rule that reports the issue, e.g. `BZ201`.
+    /// The lint rule that reports the issue, for example `BZ201`.
     pub code: &'static str,
     /// How much the finding claims.
     pub confidence: Confidence,
@@ -54,7 +54,7 @@ pub struct FileMachines {
     /// Classic state machines: the model, what was derived from it, and
     /// whether the model is exact.
     pub machines: Vec<Report>,
-    /// String/queue machines, which are recognised but not modelled.
+    /// String/queue machines, which are recognized but not modeled.
     pub queue_machines: Vec<QueueMachine>,
     /// Every finding about the machines of the file, sorted.
     pub findings: Vec<ShownIssue>,
@@ -63,11 +63,11 @@ pub struct FileMachines {
 /// Counts over every file of a [`Verified`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct Summary {
-    /// Files with a block diagram that were analysed.
+    /// Files with a block diagram that were analyzed.
     pub files: usize,
     /// Files with at least one state machine of either kind.
     pub files_with_machines: usize,
-    /// Analysed files in which no state machine was found.
+    /// Analyzed files in which no state machine was found.
     pub files_without_machines: usize,
     /// Classic state machines found.
     pub machines: usize,
@@ -78,11 +78,11 @@ pub struct Summary {
     pub incomplete: usize,
     /// Findings of every confidence.
     pub findings: usize,
-    /// Findings labelled [`Confidence::Proven`].
+    /// Findings labeled [`Confidence::Proven`].
     pub proven: usize,
-    /// Findings labelled [`Confidence::Structural`].
+    /// Findings labeled [`Confidence::Structural`].
     pub structural: usize,
-    /// Findings labelled [`Confidence::Heuristic`].
+    /// Findings labeled [`Confidence::Heuristic`].
     pub heuristic: usize,
 }
 
@@ -101,8 +101,8 @@ pub struct Verified {
 }
 
 impl Verified {
-    /// Collect per-file results. `results` holds every analysed file,
-    /// whether it has a machine or not; `None` is a file without a block
+    /// Collect per-file results. `results` holds every analyzed file,
+    /// whether it has a machine or not. `None` is a file without a block
     /// diagram.
     pub fn new(results: Vec<(PathBuf, Result<Option<Verification>, String>)>) -> Self {
         let mut out = Self::default();
@@ -156,7 +156,7 @@ impl Verified {
 
     /// Verify every binary file under the given files and directories,
     /// and every VI inside an `.llb` archive among them. A member is
-    /// listed under the path of its archive followed by its name; an
+    /// listed under the path of its archive followed by its name. An
     /// archive that cannot be opened, or that has a member that cannot
     /// be, is listed as unreadable.
     pub fn scan(roots: &[PathBuf]) -> Self {
@@ -264,7 +264,7 @@ pub fn to_text(verified: &Verified) -> String {
         for machine in &file.queue_machines {
             let _ = writeln!(
                 out,
-                "  string/queue state machine at {} (recognised, not modelled)",
+                "  string/queue state machine at {} (recognized, not modeled)",
                 machine.location
             );
             let _ = writeln!(
@@ -332,7 +332,7 @@ fn machine_text(out: &mut String, report: &Report) {
     let _ = writeln!(out, "    states ({}): {}", names.len(), list(&names));
     let initial = match &machine.initial {
         Some(initial) => list(&initial.iter().map(String::as_str).collect::<Vec<_>>()),
-        None => "unknown (the state register is not initialised with a constant)".to_owned(),
+        None => "unknown (the state register is not initialized with a constant)".to_owned(),
     };
     let _ = writeln!(out, "    initial state: {initial}");
     let _ = writeln!(

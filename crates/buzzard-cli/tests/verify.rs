@@ -1,7 +1,7 @@
 //! Black-box tests of `buzzard verify`, and of the state machine rules in
 //! `buzzard check`, on the real files under
 //! `crates/buzzard-lint/tests/fixtures/verify` (its README records their
-//! sources and licences).
+//! sources and licenses).
 
 mod common;
 
@@ -72,13 +72,13 @@ fn findings_are_labelled_justified_and_exit_one() {
     };
     let expected = format!(
         "new-support-vis-examples.vi\n\
-         \x20 string/queue state machine at while loop #70, case structure #177 (recognised, \
-         not modelled)\n\
+         \x20 string/queue state machine at while loop #70, case structure #177 (recognized, \
+         not modeled)\n\
          \x20   cases: 21, default case Default; 13 enqueued names found in constants\n\
          {}{}{}\n\
          queued-state-machine-template.vi\n\
-         \x20 string/queue state machine at while loop #117, case structure #5 (recognised, \
-         not modelled)\n\
+         \x20 string/queue state machine at while loop #117, case structure #5 (recognized, \
+         not modeled)\n\
          \x20   cases: 21, default case Default; 9 enqueued names found in constants\n\
          \n\
          Checked 3 files: 2 with a state machine (0 state machines, 2 string/queue machines), \
@@ -90,7 +90,8 @@ fn findings_are_labelled_justified_and_exit_one() {
     );
     assert_eq!(stdout, expected);
 
-    // One file given by name: the file without a machine is only counted.
+    // With one file given by name, the file without a machine is only
+    // counted.
     let (code, stdout, _) = run(&["verify", "parse-state-queue-performance-test.vi"], &dir);
     assert_eq!(code, 0);
     assert_eq!(
@@ -292,9 +293,10 @@ fn check_reports_the_state_machine_rules() {
     assert_eq!(found, 3);
 }
 
-/// Run over a large body of real files: no panic, and the same bytes on
-/// every run. `BUZZARD_CORPUS=<dir> cargo test -p buzzard-cli --test verify
-/// -- --ignored`.
+/// Runs `verify` over a large directory of real files and checks that it
+/// exits with status 0 or 1 and prints the same bytes on every run. Run it
+/// with `BUZZARD_CORPUS=<dir> cargo test -p buzzard-cli --test verify --
+/// --ignored`.
 #[test]
 #[ignore = "needs BUZZARD_CORPUS to point at a directory of real files"]
 fn corpus_run_is_deterministic() {

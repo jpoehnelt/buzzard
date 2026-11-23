@@ -28,8 +28,8 @@ use crate::worker::{self, Job, Publisher, State};
 
 const MAX_SYMBOLS: usize = 500;
 
-/// The protocol front end. It never changes the analyzed state itself:
-/// handlers read the current snapshot, and anything that may change the
+/// The protocol front end. It never changes the analyzed state itself.
+/// Handlers read the current snapshot, and anything that may change the
 /// state is queued for the worker (see [`crate::worker`]).
 struct Backend {
     state: Arc<State>,
@@ -96,12 +96,13 @@ impl Publisher for ClientPublisher {
 }
 
 impl Backend {
-    /// `buzzard/inspect`: metadata and graph neighbours of one file as JSON.
-    /// A project, library or class answers with `project` instead of
-    /// `metadata`.
+    /// `buzzard/inspect` returns the metadata and graph neighbors of one
+    /// file as JSON. For a project, library, or class the answer has
+    /// `project` in place of `metadata`. For an `.llb` archive it has
+    /// `archive` and `opened`.
     ///
-    /// tower-lsp wants a future, but the answer comes straight from the
-    /// current snapshot, so the future is ready at once.
+    /// tower-lsp requires a future, but the answer comes from the current
+    /// snapshot, so the future is ready at once.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "tower-lsp passes the deserialized params by value"
@@ -113,7 +114,7 @@ impl Backend {
     fn inspect_now(&self, uri: &Url) -> Result<Value> {
         let path = to_path(uri)?;
         let engine = self.state.view();
-        // A member of an archive is shown as the archive: that is the
+        // A member of an archive is shown as the archive, which is the
         // file a client can open.
         let uris = |paths: Vec<PathBuf>| -> Vec<Url> {
             let mut out: Vec<Url> = paths
@@ -152,9 +153,9 @@ impl Backend {
 }
 
 impl Backend {
-    /// `buzzard/exportAst`: the block diagram of one file as a graph of
-    /// nodes, terminals and wires, for tools and AI agents. The diagram is
-    /// decoded from disk on request; it is not kept in memory.
+    /// `buzzard/exportAst` returns the block diagram of one file as a graph
+    /// of nodes, terminals, and wires, for tools and AI agents. The diagram
+    /// is decoded from disk on each request and is not kept in memory.
     async fn export_ast(&self, params: ExportAstParams) -> Result<Value> {
         let path = to_path(&params.uri)?;
         let markdown = match params.format.as_deref() {
@@ -206,8 +207,8 @@ impl LanguageServer for Backend {
             .iter()
             .filter_map(|folder| folder.uri.to_file_path().ok())
             .collect();
-        // `rootUri` is superseded by workspace folders; it is the fallback
-        // for clients that send none.
+        // Workspace folders supersede `rootUri`. It is the fallback for
+        // clients that send no folders.
         if roots.is_empty() {
             roots.extend(params.root_uri.and_then(|uri| uri.to_file_path().ok()));
         }
@@ -292,7 +293,7 @@ impl LanguageServer for Backend {
                         engine::SymbolKind::Library => SymbolKind::MODULE,
                         engine::SymbolKind::Project => SymbolKind::PACKAGE,
                     },
-                    // A member of an archive is found in the archive.
+                    // The location of a member of an archive is the archive.
                     location: file_location(&view.document(&symbol.path))?,
                     container_name: view.is_member(&symbol.path).then(|| {
                         let archive = view.document(&symbol.path);
@@ -321,21 +322,22 @@ struct Lifecycle {
 }
 
 impl Lifecycle {
-    /// The process status the protocol asks for after `exit`: 0 if the
-    /// client sent `shutdown` first, else 1.
+    /// The process status that the protocol specifies after `exit`: 0 if
+    /// the client sent `shutdown` first, and 1 otherwise.
     fn status_after_exit(&self) -> i32 {
         i32::from(!self.shutdown.load(Ordering::SeqCst))
     }
 }
 
 /// Wraps the LSP service to follow the handshakes at both ends of a
-/// session, where the underlying server does not tell enough:
+/// session. The underlying server does not report enough about either one:
 ///
-/// - `shutdown` / `exit`: it keeps running until stdin is closed, and does
-///   not say whether `shutdown` came first.
-/// - `initialize` / `initialized`: it drops an `initialized` that arrives
-///   before `initialize` has been answered, which a client that sends both
-///   in one write can cause. The workspace would never be scanned.
+/// - `shutdown` and `exit`. The underlying server keeps running until stdin
+///   is closed, and does not say whether `shutdown` came first.
+/// - `initialize` and `initialized`. The underlying server drops an
+///   `initialized` that arrives before `initialize` has been answered. A
+///   client that sends both in one write can cause that, and the workspace
+///   would never be scanned.
 struct Handshake<S> {
     inner: S,
     lifecycle: Arc<Lifecycle>,
@@ -380,12 +382,13 @@ where
     }
 }
 
-/// Serve the language server over stdin/stdout until the client sends
+/// Serve the language server over stdin and stdout until the client sends
 /// `exit` or closes the connection.
 ///
 /// Returns the status the process should exit with: 1 if `exit` arrived
 /// without a preceding `shutdown`, as the protocol requires, and 0
-/// otherwise (including when the client just closes the connection).
+/// otherwise (including when the client closes the connection without
+/// `exit`).
 pub async fn run_stdio() -> i32 {
     let inspector: Arc<dyn ViInspector> = Arc::new(RsrcInspector);
     let state = Arc::new(State::new(Arc::clone(&inspector)));

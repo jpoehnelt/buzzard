@@ -1,7 +1,7 @@
 //! Dataflow checks over a decoded block diagram.
 //!
-//! These run once per file when it is loaded; only the findings are kept,
-//! so the diagram itself does not stay in memory.
+//! The checks run once per file when it is loaded. Only the findings are
+//! kept, so the diagram itself does not stay in memory.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -67,7 +67,7 @@ fn must_be_closed(kind: RefKind) -> bool {
 }
 
 /// Name of the built-in function a node is, when the node has a function id
-/// and the vendored table knows it. The name is not unique and, for ids the
+/// and the vendored table has it. The name is not unique and, for ids the
 /// table marks unverified, may be wrong.
 pub fn function_name(node: &Node) -> Option<&'static str> {
     Some(buzzard_rsrc::primitive_name(node.primitive?)?.name)
@@ -76,7 +76,7 @@ pub fn function_name(node: &Node) -> Option<&'static str> {
 /// Human-readable description of a node for use in messages.
 ///
 /// A built-in function is named when its id is in the vendored table
-/// (``built-in function `Add` ``); otherwise it is only `built-in function`.
+/// (``built-in function `Add` ``). Otherwise it is only `built-in function`.
 pub fn describe(node: &Node) -> String {
     let what = match node.class.as_str() {
         "prim" => "built-in function",
@@ -123,7 +123,7 @@ pub fn analyze(diagram: &BlockDiagram) -> Vec<Finding> {
     findings
 }
 
-/// Error handlers sit at the end of an error chain by design; their own
+/// Error handlers sit at the end of an error chain by design, so their own
 /// error output is normally left unwired.
 fn ends_error_chain(node: &Node) -> bool {
     node.name
@@ -170,7 +170,7 @@ fn unclosed_references(diagram: &BlockDiagram) -> Vec<Finding> {
 
     let mut findings = Vec::new();
     // Only built-in functions are treated as openers. A subVI that returns
-    // a reference is far more often an accessor handing out one that
+    // a reference is far more often an accessor returning one that
     // already exists than a wrapper that opens a new one.
     for node in nodes.iter().filter(|n| n.class == "prim") {
         for created in &node.terminals {
@@ -181,7 +181,7 @@ fn unclosed_references(diagram: &BlockDiagram) -> Vec<Finding> {
                 continue;
             }
             // A node that also takes a reference of this kind passes it
-            // through; only a node that produces one from nothing opens it.
+            // through. Only a node that produces one from nothing opens it.
             let takes_one = node
                 .terminals
                 .iter()
@@ -266,7 +266,8 @@ mod tests {
         assert_eq!(describe(&function(Some(999_999))), "built-in function");
         assert_eq!(function_name(&function(Some(999_999))), None);
         assert_eq!(describe(&function(None)), "built-in function");
-        // The linked name of a call wins, and other classes are not renamed.
+        // The linked name of a call is used first, and other classes are not
+        // renamed.
         let call = Node {
             primitive: Some(1050),
             ..node(1, "iUse", Some("Sum.vi"), vec![])
@@ -399,7 +400,7 @@ mod tests {
             Some("Simple Error Handler.vi"),
             vec![terminal(11, Input, ERROR), terminal(12, Output, ERROR)],
         );
-        // A subVI that hands out a queue it does not own.
+        // A subVI that returns a queue it does not own.
         let accessor = node(
             20,
             "iUse",
@@ -467,7 +468,7 @@ mod tests {
 
     #[test]
     fn reference_that_dead_ends_is_reported() {
-        // Never wired at all.
+        // The terminal is never wired.
         assert_eq!(analyze(&diagram(vec![obtain(10)], &[])), leak());
         // Used, but the last node's output goes nowhere.
         let bd = diagram(

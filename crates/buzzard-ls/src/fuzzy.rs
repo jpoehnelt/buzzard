@@ -1,7 +1,8 @@
-//! Small, allocation-light fuzzy matcher for workspace symbol search.
+//! A fuzzy matcher for workspace symbol search. It allocates nothing.
 
-/// Score `candidate` against `query` (case-insensitive subsequence match).
-/// Returns `None` when the query does not match. Higher is better.
+/// Score `candidate` against `query`. The query matches as a subsequence,
+/// without regard to ASCII letter case. Returns `None` when the query does
+/// not match. A higher score is a better match.
 pub fn score(query: &str, candidate: &str) -> Option<i32> {
     if query.is_empty() {
         return Some(0);

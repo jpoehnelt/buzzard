@@ -1,7 +1,7 @@
 # Security
 
 buzzard reads untrusted files. Report a vulnerability through GitHub private
-vulnerability reporting: open the repository's "Security" tab and choose
+vulnerability reporting. Open the repository's "Security" tab and choose
 "Report a vulnerability". Do not open a public issue for it.
 
 A crafted `.vi`, `.ctl`, `.llb`, project, or `.tdms` file that makes buzzard

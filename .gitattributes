@@ -1,4 +1,4 @@
-# Binary conformance fixtures must never be line-ending converted.
+# Git must never convert the line endings of the binary conformance fixtures.
 *.vi binary
 *.ctl binary
 *.llb binary

@@ -262,7 +262,8 @@ fn dependencies_are_compared_by_path_and_name() {
     let mut old = sample();
     let mut new = sample();
     old.metadata.links = vec![link("Kept.vi"), link("Gone.vi")];
-    // The same file linked twice, from other heap objects: still one.
+    // The same file linked twice, from other heap objects, is still one
+    // dependency.
     let mut again = link("Kept.vi");
     again.link_type = Some(FourCc::new(b"VIVI"));
     again.heap_uids = vec![40, 41];
@@ -333,7 +334,8 @@ fn changes_to_a_matched_node_are_listed() {
     // One terminal more, and one of another type.
     inner(&mut new).nodes[2].terminals =
         vec![terminal(31, ERR), terminal(32, STR), terminal(33, STR)];
-    // The loop gains a frame (not possible in the editor; counts are shown).
+    // The loop gains a frame. The editor cannot do that, and the report
+    // shows the counts.
     let root = &mut new.diagram.as_mut().unwrap().root;
     root.nodes[1].diagrams.push(frame(99, Vec::new(), &[]));
     assert_eq!(
@@ -403,7 +405,7 @@ fn reordered_frames_do_not_relocate_their_contents() {
     let first = || frame(51, vec![function(70, 1, Vec::new())], &[]);
     let second = || frame(52, vec![function(80, 2, Vec::new())], &[]);
     let old = cases(vec![first(), second()]);
-    // A case is inserted in front; frames keep their ids.
+    // A case is inserted in front, and the frames keep their ids.
     let new = cases(vec![frame(53, Vec::new(), &[]), first(), second()]);
     assert_eq!(
         text(&old, &new),
@@ -423,7 +425,8 @@ fn moves_are_separate_and_can_be_ignored() {
         bottom: 48,
         right: 94,
     });
-    // A boundary only mirrors its structure and is never "moved".
+    // A boundary's bounds follow its structure, so it is never reported as
+    // moved.
     inner(&mut new).nodes[0].bounds = Some(rect(-5, -5));
     assert_eq!(
         text(&old, &new),
@@ -474,7 +477,7 @@ fn wiring(wires: &[(i32, &[i32])]) -> Inspection {
 #[test]
 fn wires_are_compared_as_connections() {
     let old = wiring(&[(11, &[21]), (12, &[23])]);
-    // A branch is added to the first wire; the second wire is deleted.
+    // A branch is added to the first wire, and the second wire is deleted.
     let new = wiring(&[(11, &[21, 31])]);
     assert_eq!(
         text(&old, &new),
@@ -505,7 +508,7 @@ fn a_connection_that_changes_terminal_is_one_changed_wire() {
 
 #[test]
 fn rewiring_the_same_wire_object_is_not_a_change() {
-    // Wire ids differ, the connections are the same.
+    // The wire ids differ and the connections are the same.
     let old = wiring(&[(11, &[21]), (12, &[23])]);
     let new = wiring(&[(12, &[23]), (11, &[21])]);
     assert!(diff(Some(&old), Some(&new), DiffOptions::default()).identical);
@@ -541,7 +544,8 @@ fn signature_matches_report_changes_and_leave_the_rest_unmatched() {
 
 #[test]
 fn signature_does_not_match_across_structures_or_names() {
-    // Same function, same ids nowhere: one at the top level, one in a loop.
+    // The same function with no id in common: one at the top level, one in
+    // a loop.
     let old = file(vec![function(10, 5, Vec::new())], &[]);
     let new = file(
         vec![structure(
@@ -573,7 +577,7 @@ fn equal_signatures_are_paired_in_order_of_position() {
         ..function(uid, 5, Vec::new())
     };
     let old = file(vec![at(1, 100), at(2, 200), at(3, 300)], &[]);
-    // Renumbered in another order; the middle one is gone.
+    // Renumbered in another order, and the middle one is gone.
     let new = file(vec![at(31, 300), at(11, 100)], &[]);
     let result = diff(Some(&old), Some(&new), DiffOptions::default());
     assert_eq!(
@@ -822,8 +826,9 @@ fn names_cannot_break_the_line_format() {
 
 #[test]
 fn hostile_diagrams_do_not_panic() {
-    // Duplicate node, terminal and frame ids; wires to terminals no node
-    // owns, to themselves and with extreme ids; nesting 200 deep.
+    // The diagram has duplicate node, terminal, and frame ids. Its wires
+    // lead to terminals no node owns, to themselves, and to extreme ids.
+    // It is nested 200 deep.
     let mut deep = frame(1, vec![function(10, 5, vec![terminal(11, NUM)])], &[]);
     for level in 0..200 {
         deep = frame(
@@ -840,7 +845,8 @@ fn hostile_diagrams_do_not_panic() {
             ],
         );
         if level > 6 {
-            // Keep the doubling above from exploding: one child from here.
+            // This stops the doubling above. Every node has one child from
+            // here on.
             deep.nodes[0].diagrams.truncate(1);
         }
     }

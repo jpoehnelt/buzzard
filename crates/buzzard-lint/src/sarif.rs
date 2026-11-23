@@ -19,7 +19,7 @@ fn level(severity: Severity) -> &'static str {
 }
 
 /// Append one path segment, percent-encoding every byte outside the RFC 3986
-/// unreserved set. That covers spaces, `#`, `?` and `%`, and also `:`, which
+/// unreserved set. That covers spaces, `#`, `?`, and `%`, and also `:`, which
 /// may not appear unencoded in the first segment of a relative reference.
 fn push_segment(out: &mut String, segment: &OsStr) {
     #[cfg(unix)]
@@ -37,8 +37,8 @@ fn push_segment(out: &mut String, segment: &OsStr) {
     }
 }
 
-/// The path as an RFC 3986 URI reference: a relative path stays a relative
-/// reference (`sub/my%20file.vi`), an absolute path becomes a `file` URI
+/// The path as an RFC 3986 URI reference. A relative path stays a relative
+/// reference (`sub/my%20file.vi`), and an absolute path becomes a `file` URI
 /// (`file:///home/u/a.vi`, `file:///C:/p/a.vi`, `file://server/share/a.vi`).
 fn uri(path: &Path) -> String {
     let mut authority = String::new();
@@ -97,7 +97,7 @@ const MEMBER_FINGERPRINT: &str = "buzzardMember/v1";
 ///
 /// An artifact location must name a file a consumer can open, and a
 /// member of an `.llb` archive is not one. A finding about a member is
-/// therefore located at its archive: the message starts with the
+/// therefore located at its archive. The message starts with the
 /// member's name (see [`Diagnostic::on_disk`]), and a logical location
 /// names the member. Such a result also has a partial fingerprint made of
 /// the rule code and the member's path, because nothing else tells the
@@ -125,7 +125,7 @@ pub fn to_sarif(workspace: &Workspace, diagnostics: &[Diagnostic], tool_version:
             if let Some(member) = member {
                 let qualified = virtual_path.to_string_lossy().replace('\\', "/");
                 // The findings of all members of an archive have one
-                // artifact and no region; this tells them apart.
+                // artifact and no region. The fingerprint tells them apart.
                 fingerprint = Some(format!("{}:{qualified}", d.code));
                 place["logicalLocations"] = json!([{
                     "name": member,
@@ -177,7 +177,7 @@ mod tests {
         );
         assert_eq!(uri(Path::new("../x.vi")), "../x.vi");
         assert_eq!(uri(Path::new("./x.vi")), "./x.vi");
-        // Characters a consumer would read as query, fragment or escape.
+        // Characters a consumer would read as query, fragment, or escape.
         assert_eq!(
             uri(Path::new("a#1/50%20done?.vi")),
             "a%231/50%2520done%3F.vi"

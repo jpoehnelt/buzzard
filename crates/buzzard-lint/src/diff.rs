@@ -1,16 +1,17 @@
 //! Semantic diff of two revisions of one file: settings, dependencies, and
 //! the nodes and wires of the block diagram.
 //!
-//! The result is text-first, sorted and deterministic, so it can be posted
-//! as a review comment or used as a `git diff` driver.
+//! The result is text-first, sorted, and deterministic, so it can be
+//! posted as a review comment or used as a `git diff` driver.
 //!
 //! # Matching nodes between revisions
 //!
 //! Every heap object carries a unique id ([`Node::uid`], `Terminal::uid`,
 //! `Wire::uid`). Whether those ids survive a save decides how hard matching
 //! is, so it was measured on 1,340 pairs of consecutive git revisions of
-//! real files (385 from the JKI State Machine repository, 955 from
-//! grpc-labview; 768 of the pairs also cross an editor version upgrade):
+//! real files: 385 from the JKI State Machine repository and 955 from
+//! grpc-labview. 768 of the pairs also cross an editor version upgrade.
+//! The results are:
 //!
 //! * 95.9% of the nodes of a new revision (23,088 of 24,078) have the id
 //!   and class of a node in the old revision. For terminals the figure is
@@ -18,8 +19,8 @@
 //!   The rate is the same with and without a version upgrade in between.
 //! * In 1,054 of the 1,340 pairs every node id is kept.
 //! * Of 23,093 node ids present in both revisions, 5 name an object of a
-//!   different class in the new revision: ids of deleted objects are
-//!   occasionally reused.
+//!   different class in the new revision, because ids of deleted objects
+//!   are occasionally reused.
 //! * In 13 of 958 pairs whose nodes are otherwise the same, some ids were
 //!   renumbered.
 //!
@@ -36,9 +37,9 @@
 //!    equal signatures are paired in order of position.
 //!
 //! Anything still unmatched is reported as added or removed. The second
-//! pass is deliberately strict: with ids this stable, most leftovers are
-//! real additions and removals, and a looser match would invent "changed"
-//! nodes out of unrelated ones.
+//! pass is strict on purpose. With ids this stable, most leftovers are
+//! real additions and removals, and a looser match would report unrelated
+//! nodes as "changed".
 //!
 //! Terminals of matched nodes are matched the same way (by id, then by
 //! data type and data object class in list order). A wire is compared as
@@ -47,11 +48,11 @@
 //! connection that moved to another terminal of the same two nodes is
 //! reported as one changed wire, not as a removal and an addition.
 //!
-//! A matched node whose bounds differ is reported as *moved* (which
+//! A matched node whose bounds differ is reported as moved (which
 //! includes resized), separately from real changes, because rearranging a
 //! diagram is the most common noise in a review. [`DiffOptions`] can drop
-//! those entries. Diagram boundaries are never reported as moved: their
-//! bounds only mirror the structure around them.
+//! those entries. Diagram boundaries are never reported as moved, because
+//! their bounds follow those of the structure around them.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
@@ -78,7 +79,7 @@ pub struct DiffOptions {
 pub enum MatchKind {
     /// Same object id and same class.
     Uid,
-    /// Same class, linked name, function id, terminal types and nesting
+    /// Same class, linked name, function id, terminal types, and nesting
     /// path, for a node whose id did not match.
     Signature,
 }
@@ -110,12 +111,13 @@ pub struct Summary {
     pub wires_changed: usize,
 }
 
-/// One setting of the file that differs, e.g. `automatic error handling`.
+/// One setting of the file that differs, for example
+/// `automatic error handling`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SettingChange {
-    /// Name of the setting, e.g. `reentrancy`.
+    /// Name of the setting, for example `reentrancy`.
     pub setting: String,
-    /// Value in the old revision, e.g. `on`, `off` or `unknown`.
+    /// Value in the old revision, for example `on`, `off`, or `unknown`.
     pub old: String,
     /// Value in the new revision.
     pub new: String,
@@ -145,11 +147,11 @@ pub struct DependencyChanges {
 pub struct NodeRef {
     /// Object id in the revision the node is from.
     pub uid: i32,
-    /// Object class, e.g. `prim` or `iUse`.
+    /// Object class, for example `prim` or `iUse`.
     pub class: String,
-    /// What the node is, e.g. ``subVI `Close.vi` `` or `for loop`.
+    /// What the node is, for example ``subVI `Close.vi` `` or `for loop`.
     pub description: String,
-    /// Enclosing structures, outermost first; empty at the top level.
+    /// Enclosing structures, outermost first. Empty at the top level.
     pub location: Vec<String>,
 }
 
@@ -162,7 +164,7 @@ pub struct NodeChange {
     pub old_uid: i32,
     /// How the two were paired.
     pub matched_by: MatchKind,
-    /// One phrase per difference, e.g. `frames 2 -> 3`.
+    /// One phrase per difference, for example `frames 2 -> 3`.
     pub details: Vec<String>,
 }
 
@@ -190,7 +192,7 @@ pub struct NodeChanges {
     pub removed: Vec<NodeRef>,
     /// Matched nodes that changed in more than position or size.
     pub changed: Vec<NodeChange>,
-    /// Matched nodes that moved or were resized; empty with
+    /// Matched nodes that moved or were resized. Empty with
     /// [`DiffOptions::ignore_moves`].
     pub moved: Vec<NodeMove>,
 }
@@ -200,9 +202,9 @@ pub struct NodeChanges {
 pub struct WireEnd {
     /// Object id of the terminal.
     pub terminal: i32,
-    /// The node that owns the terminal, described with its id, e.g.
-    /// ``subVI `Close.vi` #40``. `None` when no node in the diagram owns
-    /// the terminal.
+    /// The node that owns the terminal, described with its id, for
+    /// example ``subVI `Close.vi` #40``. `None` when no node in the
+    /// diagram owns the terminal.
     pub node: Option<String>,
 }
 
@@ -250,21 +252,21 @@ pub struct ViDiff {
     pub identical: bool,
     /// How many entries each list holds.
     pub summary: Summary,
-    /// Things the reader must know to interpret the rest, e.g. that one
-    /// side does not exist.
+    /// Things the reader must know to interpret the rest, for example
+    /// that one side does not exist.
     pub notes: Vec<String>,
     /// Settings that differ, always in the same order.
     pub settings: Vec<SettingChange>,
     /// Links added and removed.
     pub dependencies: DependencyChanges,
-    /// Block diagram nodes added, removed, changed and moved.
+    /// Block diagram nodes added, removed, changed, and moved.
     pub nodes: NodeChanges,
-    /// Block diagram connections added, removed and re-attached.
+    /// Block diagram connections added, removed, and re-attached.
     pub wires: WireChanges,
 }
 
 /// Compare two revisions of a file. `None` stands for a revision that does
-/// not exist: everything in the other one is then added or removed.
+/// not exist. Everything in the other one is then added or removed.
 pub fn diff(old: Option<&Inspection>, new: Option<&Inspection>, options: DiffOptions) -> ViDiff {
     let mut out = ViDiff::default();
     match (old, new) {
@@ -420,8 +422,8 @@ fn dependency(link: &LinkRef) -> Dependency {
 
 fn dependencies(old: &[LinkRef], new: &[LinkRef]) -> DependencyChanges {
     // A dependency is a path and a name. The link type and the heap ids of
-    // the users of a link are left out: one file is often linked several
-    // times, and its users belong to the block diagram comparison.
+    // the users of a link are left out, because one file is often linked
+    // several times, and its users belong to the block diagram comparison.
     let old: BTreeSet<Dependency> = old.iter().map(dependency).collect();
     let new: BTreeSet<Dependency> = new.iter().map(dependency).collect();
     DependencyChanges {
@@ -443,7 +445,7 @@ fn clean(text: &str) -> String {
 pub fn describe_node(node: &Node) -> String {
     let text = match (node.class.as_str(), &node.name, node.primitive) {
         ("sRN", _, _) => "diagram boundary".to_owned(),
-        // Structures are named by `label`; it falls back to `describe`.
+        // `label` names the structures and falls back to `describe`.
         (_, None, None) => label(node),
         // A function the table does not name is told apart by its id.
         ("prim", None, Some(id)) if function_name(node).is_none() => {
@@ -456,7 +458,7 @@ pub fn describe_node(node: &Node) -> String {
 
 fn type_name(data_type: Option<DataType>) -> Option<String> {
     Some(match data_type? {
-        // Says nothing a reader could use.
+        // These types say nothing a reader could use.
         DataType::Other | DataType::Void => return None,
         DataType::ErrorCluster => "error cluster".to_owned(),
         DataType::Reference(kind) => format!("{kind:?} reference").to_lowercase(),
@@ -474,7 +476,7 @@ struct FlatNode<'a> {
 
 struct FlatDiagram<'a> {
     diagram: &'a Diagram,
-    /// Owning structure and frame index; `None` for the top level.
+    /// Owning structure and frame index. `None` for the top level.
     parent: Option<(usize, usize)>,
 }
 
@@ -503,7 +505,8 @@ impl<'a> Flat<'a> {
             diagram: &diagram.root,
             parent: None,
         });
-        // The list grows while it is walked: breadth first, no recursion.
+        // The list grows while it is walked, which gives a breadth-first
+        // order without recursion.
         let mut next = 0;
         while next < flat.diagrams.len() {
             let current = flat.diagrams[next].diagram;
@@ -539,7 +542,7 @@ impl<'a> Flat<'a> {
     /// Enclosing structures of a diagram, outermost first.
     fn location(&self, mut diagram: usize) -> Vec<String> {
         let mut out = Vec::new();
-        // A parent's diagram always has a lower index, so this terminates.
+        // A parent's diagram always has a lower index, so the loop ends.
         while let Some((parent, frame)) = self.diagrams[diagram].parent {
             let node = self.nodes[parent].node;
             let mut text = format!("{} #{}", describe_node(node), node.uid);
@@ -573,7 +576,7 @@ impl<'a> Flat<'a> {
         }
     }
 
-    /// Type of the data on a connection, from whichever end knows it.
+    /// Type of the data on a connection, from whichever end has it.
     fn wire_type(&self, (source, sink, _): Edge) -> Option<String> {
         let type_of = |uid: i32| {
             let node = self.nodes[*self.owner.get(&uid)?].node;
@@ -708,7 +711,8 @@ fn match_nodes<'a>(old: &Flat<'a>, new: &Flat<'a>) -> Vec<(usize, usize, MatchKi
 }
 
 /// Pair the terminals of two matched nodes: by id, then by data type and
-/// data object class in list order. Yields `(old uid, new uid)`.
+/// data object class in list order. Calls `matched` with
+/// `(old uid, new uid)` for each pair.
 fn match_terminals(old: &Node, new: &Node, mut matched: impl FnMut(i32, i32)) {
     type Key<'a> = (Option<DataType>, Option<&'a str>);
     let new_uids: HashSet<i32> = new.terminals.iter().map(|t| t.uid).collect();
@@ -733,7 +737,8 @@ fn match_terminals(old: &Node, new: &Node, mut matched: impl FnMut(i32, i32)) {
 }
 
 /// Pair the frames of two matched structures: by id, then the rest in
-/// order. Records `old diagram index -> new diagram index`.
+/// order. Records the new diagram index of each old diagram index in
+/// `same`.
 fn match_frames(
     old: &Flat<'_>,
     old_node: &FlatNode<'_>,
@@ -770,7 +775,8 @@ fn match_frames(
     }
 }
 
-/// `+1 numeric, -2 string`: how the terminal types of a node changed.
+/// How the terminal types of a node changed, for example
+/// `+1 numeric, -2 string`.
 fn terminal_delta(old: &Node, new: &Node) -> String {
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     let name = |t: Option<DataType>| match t {
@@ -803,7 +809,8 @@ fn case_labels(node: &Node) -> Vec<String> {
 }
 
 /// Values of the constants on a diagram boundary that were removed and
-/// added, as a multiset difference, e.g. `constants -"Init" +"Idle"`.
+/// added, as a multiset difference, for example
+/// `constants -"Init" +"Idle"`.
 fn constant_delta(old: &Node, new: &Node) -> Option<String> {
     let values = |node: &Node| {
         let mut counts: BTreeMap<String, i64> = BTreeMap::new();
@@ -843,7 +850,7 @@ fn place(location: &[String]) -> String {
 /// revisions can be compared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum End {
-    /// Present in both revisions; the id is the one in the new revision.
+    /// Present in both revisions. The id is the one in the new revision.
     Both(i32),
     OldOnly(i32),
     NewOnly(i32),
@@ -898,7 +905,7 @@ fn diagrams(
                 details,
             });
         }
-        // A boundary has no position of its own: its bounds follow those of
+        // A boundary has no position of its own. Its bounds follow those of
         // the structure around it, which is reported itself.
         if old_node.bounds != new_node.bounds && new_node.class != "sRN" {
             if options.ignore_moves {
@@ -970,7 +977,7 @@ fn node_details(
         ));
     }
     if old_node.primitive != new_node.primitive {
-        // The id stays in the text: two ids can share a name.
+        // The id stays in the text, because two ids can share a name.
         let id = |p: Option<u32>| match p {
             None => "none".to_owned(),
             Some(p) => match buzzard_rsrc::primitive_name(p) {
@@ -1125,7 +1132,7 @@ fn wires(
 // --------------------------------------------------------------- rendering
 
 impl NodeRef {
-    /// `subVI `Close.vi` #40 in for loop #12`.
+    /// For example ``subVI `Close.vi` #40 in for loop #12``.
     pub fn text(&self) -> String {
         let mut text = format!("{} #{}", self.description, self.uid);
         if !self.location.is_empty() {
@@ -1145,7 +1152,7 @@ impl WireEnd {
 }
 
 impl WireRef {
-    /// `error cluster wire from A #1 to B #2 in for loop #12`.
+    /// For example `error cluster wire from A #1 to B #2 in for loop #12`.
     pub fn text(&self) -> String {
         let mut text = match &self.data_type {
             Some(data_type) => format!("{data_type} wire"),
@@ -1163,7 +1170,6 @@ impl Dependency {
     /// ``dependency `path` ``, or ``dependency `name` at `path` `` when the
     /// path does not end in the item name.
     pub fn text(&self) -> String {
-        // The name is only worth showing when the path does not end in it.
         let item = self.name.rsplit(':').next().unwrap_or("");
         if item.is_empty() || self.path.ends_with(item) {
             format!("dependency `{}`", self.path)
@@ -1182,7 +1188,8 @@ fn rect_text(rect: Option<Rect>, with_size: bool) -> String {
 }
 
 impl NodeMove {
-    /// `X #5 (120,40 -> 150,40)`; sizes are shown when they differ.
+    /// For example `X #5 (120,40 -> 150,40)`. Sizes are shown when they
+    /// differ.
     pub fn text(&self) -> String {
         let size = |r: Option<Rect>| r.map(|r| (r.width(), r.height()));
         let resized = size(self.from) != size(self.to);

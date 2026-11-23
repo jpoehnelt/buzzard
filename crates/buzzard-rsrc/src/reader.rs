@@ -79,8 +79,9 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Decode text stored in the platform code page. Non-UTF-8 bytes are mapped
-/// through Latin-1 so the result is always lossless for ASCII and stable.
+/// Decode text stored in the platform code page. Text that is not valid
+/// UTF-8 is read as Latin-1, so ASCII is kept and the result is the same on
+/// every platform.
 pub(crate) fn decode_text(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
         Ok(s) => s.to_owned(),

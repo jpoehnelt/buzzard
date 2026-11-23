@@ -213,7 +213,7 @@ fn a_file_never_differs_from_itself_and_output_is_deterministic() {
         assert!(same.identical);
         assert_eq!(to_text(&same), "no differences\n");
     }
-    // Every file against every other, twice.
+    // Compare every file with every other, twice.
     for old in &files {
         for new in &files {
             let first = diff(Some(old), Some(new), DiffOptions::default());
@@ -240,7 +240,7 @@ fn damaged_files_never_panic() {
             }
         }
     };
-    // One byte changed at a time, across the whole file.
+    // Change one byte at a time, at every seventh offset of the file.
     for at in (0..bytes.len()).step_by(7) {
         let mut damaged = bytes.clone();
         damaged[at] ^= 0xa5;

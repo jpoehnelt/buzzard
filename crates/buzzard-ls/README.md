@@ -8,7 +8,7 @@ from one worker.
 This crate is an internal part of the buzzard tool. Its API may change in
 any 0.x release, including patch releases. It is published so that
 `cargo install buzzard-cli` works. To use the server, run `buzzard lsp`. The
-protocol it speaks is the supported interface.
+protocol is the supported interface.
 
 ```rust,no_run
 let runtime = tokio::runtime::Runtime::new().expect("the runtime starts");

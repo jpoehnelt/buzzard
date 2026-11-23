@@ -1,5 +1,5 @@
 // Bundles the extension (default) or the tests (--tests) with esbuild.
-// Type checking is done separately by `tsc --noEmit`.
+// `tsc --noEmit` checks the types separately.
 import { build } from 'esbuild';
 import { readdirSync } from 'node:fs';
 

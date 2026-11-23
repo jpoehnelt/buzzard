@@ -3,7 +3,7 @@
 //!
 //! `VCTP` is zlib-compressed. Inflated, it is a `u32` count of flat type
 //! descriptors followed by a list of "top-level" indices into that flat
-//! list. Each descriptor is `len, flags, code, body`; containers such as
+//! list. Each descriptor is `len, flags, code, body`. Containers such as
 //! clusters refer to their elements by flat index. A heap object's
 //! `typeDesc` value is 1-based within the `DTHP` slice of the top-level list.
 
@@ -38,7 +38,7 @@ enum Body {
     /// An enumeration: the item names, in value order.
     Enum(Arc<[String]>),
     /// A named type definition wrapping another descriptor. The names are
-    /// the qualified name, outermost first; the last is the `.ctl` file.
+    /// the qualified name, outermost first. The last is the `.ctl` file.
     TypeDef(Vec<String>, Box<TypeDesc>),
     Other,
 }
@@ -50,7 +50,7 @@ struct TypeDesc {
 }
 
 /// What a reference refers to. Only kinds that hold an operating-system or
-/// runtime resource are named; the rest are grouped as `Other`.
+/// runtime resource are named. The rest are grouped as `Other`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -67,7 +67,7 @@ pub enum RefKind {
     Tcp,
     /// ActiveX automation object (kind 7).
     Automation,
-    /// VI Server reference to an application, VI or control (kind 8).
+    /// VI Server reference to an application, VI, or control (kind 8).
     ViServer,
     /// DataSocket connection (kind 13).
     DataSocket,
@@ -83,7 +83,7 @@ pub enum RefKind {
     Queue,
     /// IrDA connection (kind 19).
     Irda,
-    /// User-defined refnum (kinds 20, 21 and 29).
+    /// User-defined refnum (kinds 20, 21, and 29).
     UserDefined,
     /// Event registration (kind 23).
     EventRegistration,
@@ -144,7 +144,7 @@ pub enum DataType {
     Reference(RefKind),
     /// Boolean (type codes `0x20` and `0x21`).
     Boolean,
-    /// Number of any representation (type codes `0x01` to `0x1E`, `0x5E`
+    /// Number of any representation (type codes `0x01` to `0x1E`, `0x5E`,
     /// and `0x5F`).
     Numeric,
     /// String (type codes `0x30` and `0x31`).
@@ -180,9 +180,10 @@ impl TypeTable {
     ///
     /// # Errors
     ///
-    /// If either block is truncated, a count is too large for the data that
-    /// follows it, or a descriptor is shorter than its own header. A
-    /// descriptor whose body does not parse is kept as an opaque type.
+    /// Returns an error if either block is truncated, a count is too large for
+    /// the data that follows it, or a descriptor is shorter than its own
+    /// header. A descriptor whose body does not parse is kept as an opaque
+    /// type.
     pub fn parse(vctp: &[u8], dthp: Option<&[u8]>) -> Result<Self> {
         let mut r = Reader::new(vctp, "VCTP");
         let count = r.u32()? as usize;
@@ -389,7 +390,7 @@ fn string_constant(bytes: &[u8]) -> Option<Value> {
     surplus_ok.then(|| Value::String(decode_text(text)))
 }
 
-/// How a number is stored. Looks through type definitions.
+/// How a number is stored, after looking through type definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -482,7 +483,7 @@ pub enum Value {
     /// An enumeration value: the 0-based index into the item list and the
     /// item's name. The name is `None` when the value is outside the list.
     ///
-    /// The item list is the copy the file stored when it was saved; if the
+    /// The item list is the copy the file stored when it was saved. If the
     /// type definition changed afterwards and the file was not saved
     /// again, the name is the old one.
     Enum {
@@ -517,7 +518,8 @@ impl std::fmt::Display for Value {
     }
 }
 
-/// Text on one line: control characters, quotes and backslashes escaped.
+/// Text on one line, with control characters, quotes, and backslashes
+/// escaped.
 pub(crate) fn printable(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -541,13 +543,13 @@ pub(crate) fn printable(text: &str) -> String {
 pub struct TypeInfo {
     /// The class of the type, after looking through type definitions.
     pub data_type: DataType,
-    /// Storage of a numeric type; `None` for anything else.
+    /// Storage of a numeric type, or `None` for anything else.
     pub numeric: Option<NumericType>,
     /// Item names of an enumeration, in value order. The list is the
     /// type table's own, shared by every [`TypeInfo`] of the type.
     #[serde(serialize_with = "serialize_optional_items")]
     pub enum_items: Option<Arc<[String]>>,
-    /// File name of the type definition the type is an instance of, e.g.
+    /// File name of the type definition the type is an instance of, such as
     /// `State.ctl`.
     pub type_definition: Option<String>,
 }
@@ -618,11 +620,11 @@ fn parse_desc(r: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
 /// The descriptor a type definition wraps. It is stored inline and is the
 /// last thing in the type definition's body.
 ///
-/// Its declared length is 4 bytes larger than the bytes it occupies: in
-/// 8,399 of 8,399 type definitions in 1,750 real files (versions 13 to 25)
+/// Its declared length is 4 bytes larger than the bytes it occupies. In
+/// 8,399 of 8,399 type definitions in 1,750 real files (versions 13 to 25),
 /// the declared length is exactly the rest of the parent body plus 4. The
-/// length is therefore capped at what the parent has left, which also
-/// accepts a nested descriptor that declares its true length.
+/// parser therefore caps the length at what the parent has left. The cap
+/// also accepts a nested descriptor that declares its true length.
 fn parse_nested_desc(parent: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
     let start = parent.pos();
     let len = var_u2p2(parent)? as usize;
@@ -638,12 +640,13 @@ fn parse_nested_desc(parent: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> 
     parse_body(&mut body, depth)
 }
 
-/// Parse `flags, code, body` of a descriptor whose length is consumed.
+/// Parse `flags, code, body` of a descriptor. The caller has read its
+/// length.
 fn parse_body(body: &mut Reader<'_>, depth: usize) -> Result<TypeDesc> {
     let _flags = body.u8()?;
     let code = body.u8()?;
-    // A descriptor whose body does not parse is kept as opaque; its length
-    // is known, so the table stays in step.
+    // A descriptor whose body does not parse is kept as opaque. Its length
+    // is known, so the descriptors after it are read at the right offsets.
     let parsed = match code {
         CODE_CLUSTER => parse_cluster(body).unwrap_or(Body::Other),
         CODE_REFNUM => body.u16().map_or(Body::Other, Body::Refnum),
@@ -728,7 +731,7 @@ mod tests {
                 desc(CODE_TYPEDEF, &typedef_body),             // 6 typedef'd error cluster
                 desc(0x0A, &[]),                               // 7 double
             ],
-            // Top-level list; the heap uses the last five entries.
+            // The top-level list. The heap uses the last five entries.
             &[0, 1, 3, 4, 5, 6, 7],
         );
         // Five heap types starting at top-level index 3 (1-based).
@@ -767,11 +770,11 @@ mod tests {
 
     /// Descriptors copied byte for byte from files saved by the editor. A
     /// descriptor nested in a type definition declares a length 4 bytes
-    /// larger than it occupies; before that was handled every type
-    /// definition classified as `Other`.
+    /// larger than it occupies. A parser that trusts the declared length
+    /// classifies every type definition as `Other`.
     #[test]
     fn real_type_definitions_are_looked_through() {
-        // `State.ctl`, an enum of three items, as saved by version 13: the
+        // `State.ctl`, an enum of three items, as saved by version 13. The
         // nested descriptor declares 0x29 = 41 bytes and occupies 37.
         let state_enum = hex("003b00f1 00000000 00000001 0953746174652e63746c \
              0029 4016 0003 0741637175697265 07416e616c797a65 05416c61726d 00 06537461746573 00");
@@ -781,7 +784,7 @@ mod tests {
              002d 4016 0003 0741637175697265 07416e616c797a65 05416c61726d 00 0a4e657874205374617465 00",
         );
         // `Stored Packet -- cluster.ctl` in a class in a library, as saved
-        // by version 13: a cluster of flat types 5, 6 and 7, declaring
+        // by version 13: a cluster of flat types 5, 6, and 7, declaring
         // 0x1e = 30 bytes and occupying 26.
         let stored_packet = hex("006b00f1 00000000 00000003 \
              114d515454205365727665722e6c766c6962 \
@@ -797,8 +800,8 @@ mod tests {
     #[test]
     fn real_typedef_of_an_error_cluster_is_an_error_cluster() {
         // The three element types and the plain cluster are copied from a
-        // version 13 file; the type definition wraps the same cluster body
-        // with the editor's length quirk (declared 0x1a, occupying 22).
+        // version 13 file. The type definition wraps the same cluster body,
+        // and its nested descriptor declares 0x1a = 26 bytes and occupies 22.
         let status = hex("000c 4021 06737461747573 00");
         let code = hex("000b 4003 00 04636f6465 00");
         let source = hex("0010 4030 ffffffff 06736f75726365 00");
@@ -811,7 +814,7 @@ mod tests {
         assert_eq!(t.heap_type(5), Some(DataType::ErrorCluster));
     }
 
-    /// Enumerations copied from files saved by versions 13, 25 and 17: a
+    /// Enumerations copied from files saved by versions 13, 25, and 17: a
     /// plain one, one whose item list needs a pad byte, and one with a
     /// label after the items.
     #[test]
@@ -894,19 +897,19 @@ mod tests {
         let first = t.heap_type_info(1).unwrap().enum_items.unwrap();
         assert_eq!(first.len(), 65_535);
         assert_eq!(first[65_534], "Item 65534");
-        // Every lookup hands out the table's own list. A copy of all
-        // 65,535 names would take about 3 ms a time.
+        // Every lookup returns the table's own list. A copy of all 65,535
+        // names would take about 3 ms each time.
         let again = t.heap_type_info(1).unwrap().enum_items.unwrap();
         assert!(Arc::ptr_eq(&first, &again));
     }
 
     #[test]
     fn looking_up_many_terminals_of_a_huge_enumeration_is_quick() {
-        // What decoding a diagram does: one lookup per terminal, which
-        // only needs the class of the type, and one per case structure.
-        // A copy of the item list per lookup would take about 3 ms each,
-        // so ten minutes for the terminals below. The limit is generous
-        // to stay clear of slow machines.
+        // Decoding a diagram does one lookup per terminal, which only
+        // needs the class of the type, and one per case structure. A copy
+        // of the item list per lookup would take about 3 ms each, so ten
+        // minutes for the terminals below. The limit is generous so that
+        // a slow machine passes.
         let t = huge_enumeration();
         let started = std::time::Instant::now();
         for _ in 0..200_000 {
@@ -926,8 +929,9 @@ mod tests {
 
     #[test]
     fn enumeration_item_lists_are_bounded() {
-        // A count far beyond the body, an item running past the end, and
-        // no count at all: the type stays numeric without items.
+        // The bodies hold a count far beyond the body, an item that runs
+        // past the end, and no count at all. Each time the type stays
+        // numeric without items.
         for body in ["ffff 0141", "0002 0141 09", ""] {
             let t = raw_table(&[desc(0x16, &hex(body))]);
             let info = t.heap_type_info(1).unwrap();
@@ -1039,9 +1043,10 @@ mod tests {
 
     #[test]
     fn nested_descriptor_lengths_are_bounded() {
-        // A nested descriptor that claims far more than its parent holds,
-        // one that claims less than a header, and one cut off mid-header:
-        // the type definition stays opaque or is read from what is there.
+        // The nested descriptors declare far more than their parent holds,
+        // declare less than a header, or are cut off inside the header.
+        // Each time the type definition stays opaque or is read from the
+        // bytes that are there.
         for nested in ["ffff 4016 0001 0141 00", "0003 4016", "00", ""] {
             let mut body = hex("00000000 00000001 0161");
             body.extend(hex(nested));
@@ -1068,9 +1073,9 @@ mod tests {
     #[test]
     fn rejects_malformed_tables() {
         assert!(TypeTable::parse(&[0xff, 0xff, 0xff, 0xff], None).is_err());
-        // Descriptor length shorter than its own header.
+        // The descriptor length is shorter than its own header.
         assert!(TypeTable::parse(&[0, 0, 0, 1, 0, 2, 0, 0], None).is_err());
-        // Descriptor runs past the end.
+        // The descriptor runs past the end.
         assert!(TypeTable::parse(&[0, 0, 0, 1, 0, 40, 0, 0], None).is_err());
         // Out-of-range indices resolve to nothing rather than panicking.
         let vctp = table(&[desc(CODE_CLUSTER, &[0, 1, 0, 99])], &[0, 77]);

@@ -23,11 +23,11 @@ buzzard-ls = { path = "crates/buzzard-ls", version = "0.1.0" }
 buzzard-mcp = { path = "crates/buzzard-mcp", version = "0.1.0" }
 buzzard-tdms = { path = "crates/buzzard-tdms", version = "0.1.0" }
 
-# Binary parsing & decompression
+# Binary parsing and decompression
 binrw = "0.15"
 flate2 = "1"
 
-# LSP / async
+# Language server and async runtime
 tower-lsp = "0.20"
 tower-service = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "time"] }
@@ -36,13 +36,13 @@ async-trait = "0.1"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# Concurrency & file watching
+# Concurrency and file watching
 rayon = "1"
 notify = "8"
 notify-debouncer-mini = "0.7"
 walkdir = "2"
 
-# Graph & diagnostics
+# Graph, serialization, and errors
 petgraph = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -57,18 +57,19 @@ encoding_rs = "0.8"
 # TDMS reader: safe casts between byte buffers and sample slices
 bytemuck = { version = "1.25", features = ["derive"] }
 # Parquet export, behind the `parquet` feature of buzzard-tdms
-parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
-arrow-array = { version = "60", default-features = false }
-arrow-schema = { version = "60", default-features = false }
+parquet = { version = "60.2", default-features = false, features = ["arrow", "snap"] }
+arrow-array = { version = "60.2", default-features = false }
+arrow-schema = { version = "60.2", default-features = false }
 # Property-based tests
 proptest = { version = "1", default-features = false, features = ["std"] }
 
-# Lint policy for every crate; each one opts in with `[lints] workspace = true`.
-# Lints are warnings here so work in progress still builds; CI runs clippy and
-# rustdoc with `-D warnings`. An exception in code uses
-# `#[expect(lint, reason = "...")]`, which fails once it is no longer needed.
+# The lint policy for every crate. Each crate opts in with
+# `[lints] workspace = true`. Lints are warnings here so that work in progress
+# still builds. CI runs clippy and rustdoc with `-D warnings`. An exception in
+# code uses `#[expect(lint, reason = "...")]`, which fails once it is no longer
+# needed.
 [workspace.lints.rust]
-# The parser must stay safe on hostile input; nothing here needs `unsafe`.
+# The parser reads hostile input, and nothing in the workspace needs `unsafe`.
 unsafe_code = "forbid"
 missing_docs = "warn"
 missing_debug_implementations = "warn"
@@ -90,23 +91,23 @@ unescaped_backticks = "warn"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
-# Would put `#[must_use]` on nearly every getter and constructor.
+# This lint would put `#[must_use]` on nearly every getter and constructor.
 must_use_candidate = "allow"
-# Duplicates come from third-party crates; cargo-deny reports them instead.
+# Duplicates come from third-party crates. cargo-deny reports them.
 multiple_crate_versions = "allow"
 
 # Selected `restriction` lints.
-# Output must not depend on hash order (see "Deterministic" in the README).
+# Output is byte-identical across runs, so it must not depend on hash order.
 iter_over_hash_type = "warn"
-# Panics: an `expect` must state the invariant it relies on. Tests may
-# unwrap (see clippy.toml).
+# An `expect` must state the invariant it relies on. Tests may unwrap (see
+# clippy.toml).
 unwrap_used = "warn"
 get_unwrap = "warn"
 # Leftovers and debugging aids.
 dbg_macro = "warn"
 todo = "warn"
 unimplemented = "warn"
-# Only the binary and examples may print; libraries return data.
+# Only the binary and examples may print. Libraries return data.
 print_stdout = "warn"
 print_stderr = "warn"
 exit = "warn"
@@ -139,8 +140,8 @@ unneeded_field_pattern = "warn"
 unused_result_ok = "warn"
 verbose_file_reads = "warn"
 
-# The conformance suite corrupts real files tens of thousands of times;
-# optimizing the parser and its dependencies keeps `cargo test` quick.
+# The conformance suite corrupts real files tens of thousands of times.
+# Optimizing the parser and its dependencies keeps `cargo test` short.
 [profile.dev.package.buzzard-rsrc]
 opt-level = 2
 

@@ -1,11 +1,11 @@
-//! The block diagram as a dataflow graph: nodes, terminals and wires.
+//! The block diagram as a dataflow graph: nodes, terminals, and wires.
 //!
-//! Built from the `BDHb` object heap. In the heap every object is defined
-//! once, with a class and a unique id, and is referred to elsewhere by that
-//! id. A diagram lists its nodes and its signals (wires); a node lists its
-//! terminals; a signal lists the terminals it connects, source first.
-//! Structures such as loops and case structures are nodes that own nested
-//! diagrams.
+//! The graph is built from the `BDHb` object heap. In the heap every object
+//! is defined once, with a class and a unique id, and is referred to
+//! elsewhere by that id. A diagram lists its nodes and its signals (wires).
+//! A node lists its terminals. A signal lists the terminals it connects,
+//! source first. Structures such as loops and case structures are nodes
+//! that own nested diagrams.
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -23,11 +23,11 @@ use crate::reader::decode_text;
 
 /// Bit of a data object's `objFlags` that marks it as an output.
 ///
-/// Checked against 1,100 real diagrams: on node parameters (`parm`,
-/// `iUseDCO`, `hGrowCItem`, ...) the bit agrees with the direction implied
+/// Checked against 1,100 real diagrams. On node parameters (such as `parm`,
+/// `iUseDCO`, and `hGrowCItem`) the bit agrees with the direction implied
 /// by wires in all but 3 of over 30,000 wired terminals. Tunnels and other
-/// structure objects use the bit differently; see
-/// [`Terminal::direction_is_reliable`].
+/// structure objects use the bit differently, which
+/// [`Terminal::direction_is_reliable`] accounts for.
 const DCO_IS_OUTPUT: u32 = 0x1;
 
 /// Data object classes whose output flag has been verified on real files.
@@ -53,11 +53,11 @@ const RELIABLE_DIRECTION: [&str; 16] = [
 /// Bit of a loop condition terminal's `objFlags` that is set for "Stop if
 /// True" and clear for "Continue if True".
 ///
-/// Checked on 290 loops saved by versions 13 to 25: the flags are `0x10001`
-/// (274) or `0x1` (16); see [`LTST_ALWAYS_SET`]. All seven loops whose
-/// terminal is fed by a constant True have the bit set and the one fed by
-/// a constant False has it clear; the opposite reading would make all
-/// eight loops run forever.
+/// Checked on 290 loops saved by versions 13 to 25. The flags are `0x10001`
+/// (274 loops) or `0x1` (16 loops). [`LTST_ALWAYS_SET`] is the bit that
+/// both values share. All seven loops whose terminal is fed by a constant
+/// True have the bit set, and the one fed by a constant False has it
+/// clear. The opposite reading would make all eight loops run forever.
 const STOP_IF_TRUE: u32 = 0x1_0000;
 
 /// Bit of a loop condition terminal's `objFlags` that is set on every one
@@ -92,7 +92,7 @@ const SELECT_FIELDS: [&str; 17] = [
 /// Bit of an output tunnel's `objFlags` that is set when at least one frame
 /// leaves the tunnel unwired and the type's default value is used there.
 ///
-/// Checked on 3,761 output tunnels of case structures: the bit is set on
+/// Checked on 3,761 output tunnels of case structures. The bit is set on
 /// all 637 with an unwired frame and on none of the others.
 const DEFAULT_IF_UNWIRED: u32 = 0x10_0000;
 
@@ -114,7 +114,7 @@ pub enum Direction {
     /// The terminal takes data in.
     #[default]
     Input,
-    /// The terminal produces data; a wire attached to it starts there.
+    /// The terminal produces data. A wire attached to it starts there.
     Output,
 }
 
@@ -137,8 +137,8 @@ pub enum TunnelMode {
 /// A terminal that is one side of a tunnel through a structure's border.
 ///
 /// The two sides of a tunnel are separate terminals with the same
-/// [`Terminal::dco`]: the outer one belongs to the structure node, the inner
-/// ones (one per frame) to the first node of each nested diagram.
+/// [`Terminal::dco`]. The outer one belongs to the structure node. The inner
+/// ones (one per frame) belong to the first node of each nested diagram.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct Tunnel {
     /// Whether the value leaves the structure.
@@ -176,12 +176,12 @@ pub enum SelectorKind {
 #[serde(rename_all = "snake_case")]
 pub enum SelectorMatch {
     /// A value, or an inclusive range of values, of a Boolean (0 is False,
-    /// 1 is True), integer, enumeration or error code selector. A missing
-    /// end is open: `start: Some(2), end: None` is the label `2..`.
+    /// 1 is True), integer, enumeration, or error code selector. A missing
+    /// end is open, so `start: Some(2), end: None` is the label `2..`.
     Range {
-        /// First value of the range; `None` for a range open below.
+        /// First value of the range, or `None` for a range open below.
         start: Option<i32>,
-        /// Last value of the range; `None` for a range open above.
+        /// Last value of the range, or `None` for a range open above.
         end: Option<i32>,
     },
     /// A string the selector is compared with.
@@ -201,7 +201,7 @@ pub struct CaseSelector {
     )]
     pub enum_items: Arc<[String]>,
     /// File name of the type definition the selector's type is an
-    /// instance of, e.g. `State.ctl`. The item names above are then the
+    /// instance of, such as `State.ctl`. The item names above are then the
     /// copy this file stored when it was saved, which the type definition
     /// may no longer agree with.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -217,8 +217,8 @@ pub struct CaseSelector {
 }
 
 impl CaseSelector {
-    /// The frame's label as the editor draws it, e.g. `"Idle", Default`,
-    /// `1, 3..5`, `True` or `No Error`.
+    /// The frame's label as the editor draws it, such as `"Idle", Default`,
+    /// `1, 3..5`, `True`, or `No Error`.
     pub fn label(&self, frame: usize) -> String {
         let mut parts: Vec<String> = self
             .frames
@@ -253,9 +253,9 @@ impl CaseSelector {
             SelectorMatch::Range { start, end } => (*start, *end),
         };
         if self.kind == SelectorKind::ErrorCluster {
-            // Two stored forms: plain values 0 and 1, or an open range up
-            // to the smallest code for "No Error" and a fully open range
-            // for "Error".
+            // There are two stored forms. One is the plain values 0 and 1.
+            // The other is an open range up to the smallest code for "No
+            // Error" and a fully open range for "Error".
             match (start, end) {
                 (Some(0), Some(0)) | (None, Some(i32::MIN)) => return "No Error".to_owned(),
                 (Some(1), Some(1)) | (None, None) => return "Error".to_owned(),
@@ -276,7 +276,7 @@ impl CaseSelector {
 /// The condition terminal of a loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct StopTerminal {
-    /// Data object of the terminal; the terminal itself is the one with
+    /// Data object of the terminal. The terminal itself is the one with
     /// this [`Terminal::dco`] on the first node of the loop's diagram.
     pub dco: i32,
     /// True for "Stop if True", false for "Continue if True".
@@ -289,12 +289,12 @@ pub struct StopTerminal {
 /// on the first node of the loop's diagram, both with the side's data
 /// object as their [`Terminal::dco`]. The inner left terminal supplies the
 /// value at the start of an iteration and the inner right terminal takes
-/// the value for the next one; the outer left terminal takes the initial
+/// the value for the next one. The outer left terminal takes the initial
 /// value.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct ShiftRegister {
     /// Left sides. More than one means a stacked register, which holds the
-    /// values of several earlier iterations; their order is not verified.
+    /// values of several earlier iterations. Their order is not verified.
     pub left: Vec<i32>,
     /// Data object of the right side, which takes the value for the next
     /// iteration.
@@ -348,12 +348,14 @@ impl Rect {
 /// A point on a node where a wire can attach.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Terminal {
-    /// Unique id of the terminal object; wires refer to terminals by it.
+    /// Unique id of the terminal object. Wires refer to terminals by it.
     pub uid: i32,
-    /// Position: relative to the owning node's top-left corner, except for
+    /// Position relative to the owning node's top-left corner, except for
     /// front-panel terminals, which are positioned in their diagram.
     pub bounds: Option<Rect>,
-    /// Which way data flows; see [`direction_is_reliable`](Self::direction_is_reliable).
+    /// Which way data flows.
+    /// [`direction_is_reliable`](Self::direction_is_reliable) says whether to
+    /// trust it.
     pub direction: Direction,
     /// Whether any wire attaches to the terminal.
     pub wired: bool,
@@ -362,7 +364,7 @@ pub struct Terminal {
     /// Id of the data object behind the terminal. The two sides of a tunnel
     /// are separate terminals that share one data object.
     pub dco: Option<i32>,
-    /// Class of that data object, e.g. `parm`, `selTun`, `lSR`.
+    /// Class of that data object, such as `parm`, `selTun`, or `lSR`.
     pub dco_class: Option<String>,
     /// How a numeric terminal's value is stored.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -385,8 +387,8 @@ pub struct Terminal {
 
 impl Terminal {
     /// Whether [`Terminal::direction`] can be trusted. It always can for a
-    /// wired terminal; for an unwired one only when its data object is of a
-    /// class whose direction flag has been verified.
+    /// wired terminal. For an unwired terminal it can only when the data
+    /// object is of a class whose direction flag has been verified.
     pub fn direction_is_reliable(&self) -> bool {
         self.wired
             || self
@@ -396,20 +398,20 @@ impl Terminal {
     }
 }
 
-/// An object on a diagram: a function, subVI call, structure or the
+/// An object on a diagram: a function, subVI call, structure, or the
 /// diagram's boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Node {
     /// Unique id of the node object in the heap.
     pub uid: i32,
-    /// Object class, e.g. `prim` (built-in function), `iUse` (subVI call),
+    /// Object class, such as `prim` (built-in function), `iUse` (subVI call),
     /// `whileLoop`, `select` (case structure), `sRN` (the diagram's own
     /// boundary: front-panel terminals or the inner side of tunnels).
     pub class: String,
     /// Name of the called file for subVI calls and similar linked nodes.
     pub name: Option<String>,
     /// Resource id of a built-in function. The ids are stable across
-    /// versions. The file does not name the function;
+    /// versions. The file does not name the function.
     /// [`primitive_name`](crate::primitive_name) looks the id up in a
     /// vendored table.
     pub primitive: Option<u32>,
@@ -421,7 +423,7 @@ pub struct Node {
     /// Nested diagrams of a structure, one per frame or case.
     pub diagrams: Vec<Diagram>,
     /// The selector table of a case structure whose selector is a Boolean,
-    /// an integer, an enumeration, a string or an error cluster.
+    /// an integer, an enumeration, a string, or an error cluster.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector: Option<CaseSelector>,
     /// Condition terminal and shift registers of a while or for loop.
@@ -444,11 +446,10 @@ pub struct Wire {
 /// Something the heap holds that the decoded [`Diagram`] does not carry
 /// over faithfully.
 ///
-/// The decoder is tolerant: it skips what it cannot resolve so that the
-/// rest of a damaged or unfamiliar file stays usable. That makes the
-/// *absence* of a wire or a node evidence only in a diagram without a
-/// recorded loss. No loss is recorded for any of the 1,773 real files the
-/// decoder was checked on.
+/// The decoder skips what it cannot resolve, so that the rest of a damaged
+/// or unfamiliar file stays usable. The absence of a wire or a node is
+/// therefore evidence only in a diagram without a recorded loss. No loss is
+/// recorded for any of the 1,773 real files the decoder was checked on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -456,7 +457,7 @@ pub enum Loss {
     /// An element of the node list that names no object or an object
     /// without an id, or a node list that does not hold as many elements
     /// as it states. A node that no list names at all is noticed through
-    /// its terminals; one without terminals is not noticed.
+    /// its terminals. One without terminals is not noticed.
     Node,
     /// A node listed a second time, here or in another diagram.
     RepeatedNode,
@@ -485,7 +486,7 @@ pub enum Loss {
     /// are ambiguous.
     RepeatedObject,
     /// An object with a field whose tag is not known, or with two fields
-    /// of one tag. A field that is absent has a meaning (zero; frame 0
+    /// of one tag. A field that is absent has a meaning (zero, or frame 0
     /// for the default case), so a field hidden behind a damaged tag
     /// changes what the object says without leaving a gap. None of the
     /// 572,878 objects in the diagram heaps of 1,773 real files has
@@ -494,8 +495,8 @@ pub enum Loss {
     Field,
     /// The heap's byte stream is irregular
     /// ([`Heap::irregular`](crate::blocks::heap::Heap::irregular)), in
-    /// the diagram heap or the front panel heap: nodes may have been
-    /// swallowed without leaving any trace in the tree.
+    /// the diagram heap or the front panel heap. Nodes may be missing
+    /// without any trace in the tree.
     Stream,
 }
 
@@ -510,11 +511,11 @@ pub struct Diagram {
     /// Wires from the diagram's `signalList`, in order.
     pub wires: Vec<Wire>,
     /// The kinds of loss met while decoding this diagram, sorted and
-    /// without repeats; empty for a diagram that decoded completely.
-    /// Losses that cannot be placed (an object nothing lists, an id
-    /// defined twice) are recorded on the root diagram. Losses inside a
-    /// nested diagram are recorded there, not here; see
-    /// [`BlockDiagram::is_complete`].
+    /// without repeats. The list is empty for a diagram that decoded
+    /// completely. Losses that cannot be placed (an object nothing lists,
+    /// an id defined twice) are recorded on the root diagram. Losses inside
+    /// a nested diagram are recorded on the nested diagram, so
+    /// [`BlockDiagram::is_complete`] checks the whole tree.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub losses: Vec<Loss>,
 }
@@ -522,7 +523,7 @@ pub struct Diagram {
 /// The block diagram of a VI as a tree of diagrams.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlockDiagram {
-    /// The top-level diagram; structures on it hold the nested ones.
+    /// The top-level diagram. Structures on it hold the nested ones.
     pub root: Diagram,
 }
 
@@ -532,9 +533,9 @@ impl BlockDiagram {
     ///
     /// # Errors
     ///
-    /// If the `BDHb` block does not decompress or parse. The type table and
-    /// front-panel heap are optional: when they are missing or do not parse,
-    /// terminals lack types or front-panel objects.
+    /// Returns an error when the `BDHb` block does not decompress or parse.
+    /// The type table and front-panel heap are optional. When they are missing
+    /// or do not parse, terminals lack types or front-panel objects.
     pub fn from_rsrc(file: &RsrcFile<'_>) -> Result<Option<Self>> {
         let Some(raw) = file.first(b"BDHb") else {
             return Ok(None);
@@ -553,7 +554,8 @@ impl BlockDiagram {
     pub fn from_inflated_heap(file: &RsrcFile<'_>, data: &[u8]) -> Result<Option<Self>> {
         let heap = Heap::parse(data)?;
 
-        // Types are best-effort: a diagram without them is still useful.
+        // A type table that is missing or does not parse is left out, because
+        // a diagram without types is still useful.
         let types = file
             .first(b"VCTP")
             .and_then(|vctp| zlib::decompress(vctp).ok())
@@ -617,7 +619,8 @@ impl BlockDiagram {
         for root in &heap.roots {
             builder.index(root);
         }
-        // Diagram objects take precedence; the panel only fills in the rest.
+        // Diagram objects take precedence. The panel heap only adds the ids
+        // that the diagram heap does not define.
         for root in panel.iter().flat_map(|panel| &panel.roots) {
             builder.index_objects(root);
         }
@@ -627,9 +630,10 @@ impl BlockDiagram {
             .flat_map(|root| std::iter::once(root).chain(&root.children))
             .find(|node| node.class_name() == Some("diag"))?;
         let mut root = builder.diagram(root);
-        // What the heap defines must all have arrived somewhere: a list
-        // whose field tag is damaged takes its elements out of sight
-        // without leaving an element that fails to resolve.
+        // Every terminal, diagram, and signal that the heap defines must
+        // have been built. A list whose field tag is damaged is not read
+        // as that list, so its elements go missing without an element
+        // that fails to resolve.
         let (counted, built) = (builder.heap, builder.built);
         let unplaced = [
             (counted.terminals != built.terminals, Loss::Terminal),
@@ -757,9 +761,9 @@ impl<'h, 'a> Builder<'h, 'a> {
     fn index(&mut self, node: &'h HeapNode<'a>) {
         if node.class().is_some() {
             Self::count(&mut self.heap, node);
-            // Only objects of a known class: the fields of an unknown
-            // one cannot be judged. Field 0 is the first field of the
-            // classes that number their own.
+            // Only objects of a known class are checked, because the
+            // fields of an unknown class cannot be judged. Field 0 is the
+            // first field of the classes that number their own fields.
             if node.class_name().is_some() && !self.odd_field {
                 let mut tags = HashSet::new();
                 self.odd_field = node.children.iter().any(|field| {
@@ -804,7 +808,7 @@ impl<'h, 'a> Builder<'h, 'a> {
         }
     }
 
-    /// Elements of a named list child, e.g. `nodeList`.
+    /// Elements of a named list child, such as `nodeList`.
     fn list(
         node: &'h HeapNode<'a>,
         name: &str,
@@ -815,9 +819,9 @@ impl<'h, 'a> Builder<'h, 'a> {
     }
 
     /// Whether a named list child, if there is one, holds as many
-    /// elements as it says it does. Every list states its length: all
-    /// 112,335 node, signal, terminal, frame and selector lists of 1,773
-    /// real files agree with theirs. A list that does not has lost or
+    /// elements as it says it does. Every list states its length, and all
+    /// 112,335 node, signal, terminal, frame, and selector lists of 1,773
+    /// real files agree with theirs. A list that disagrees has lost or
     /// gained elements in a way that left the heap readable.
     fn counted(node: &HeapNode<'_>, name: &str) -> bool {
         node.child_named(name).is_none_or(|list| {
@@ -1020,8 +1024,9 @@ impl<'h, 'a> Builder<'h, 'a> {
             // The five fields are private to the entry's class and number
             // 0 to 4. Each of the 3,982 entries in 1,773 real files has
             // every field exactly once and nothing else, so an entry of
-            // any other shape is damaged: a missing frame index would
-            // otherwise read as frame 0 and move a value to another case.
+            // any other shape is damaged. Without this check a missing
+            // frame index would read as frame 0 and move a value to
+            // another case.
             let complete = entry.children.len() == 5
                 && (0..5).all(|tag| entry.children.iter().filter(|c| c.tag == tag).count() == 1);
             if !complete {
@@ -1038,15 +1043,16 @@ impl<'h, 'a> Builder<'h, 'a> {
             let (start_type, end_type) = (field(2)?, field(3)?);
             let frame = usize::try_from(field(4)?).ok()?;
             let matched = if kind == SelectorKind::String {
-                // Strings are indices into the string list; no string
-                // range has been seen, so one is not guessed at.
+                // A string entry is an index into the string list. No
+                // string range has been seen, so the decoder does not
+                // guess at one.
                 if (start_type, end_type) != (0, 0) || start != end {
                     return None;
                 }
                 SelectorMatch::Text(strings.get(usize::try_from(start).ok()?)?.clone())
             } else {
-                // 0 is a single value, 1 the closed end of a range and 3
-                // an open end, whose stored value is filler.
+                // Type 0 is a single value, 1 is the closed end of a range,
+                // and 3 is an open end, whose stored value means nothing.
                 let bound = |value: i32, range_type: i32| match range_type {
                     0 | 1 => Some(Some(value)),
                     3 => Some(None),
@@ -1065,10 +1071,10 @@ impl<'h, 'a> Builder<'h, 'a> {
         let default_frame = match kind {
             SelectorKind::Boolean | SelectorKind::ErrorCluster => None,
             _ => match object.child_named("SelectDefaultCase") {
-                // An absent field is frame 0. That reading is only safe
-                // when the field cannot be hiding under another name: a
+                // An absent field is frame 0. That reading is safe only
+                // when the field is not present under another tag. A
                 // damaged tag that happens to be a known one leaves the
-                // object with a field no case structure has.
+                // object with a field that no case structure has.
                 None if Self::only_fields(object, &SELECT_FIELDS) => Some(0),
                 None => return None,
                 Some(field) => match field.uint()? {
@@ -1083,7 +1089,7 @@ impl<'h, 'a> Builder<'h, 'a> {
         }
         // A frame that no value selects and that is not the default
         // cannot occur in a file the editor saved (0 of 287 enumeration,
-        // integer and string tables), so such a table contradicts the
+        // integer, and string tables), so such a table contradicts the
         // frame list. Boolean and error cluster selectors have no default
         // and are left as they are.
         let has_default = !matches!(kind, SelectorKind::Boolean | SelectorKind::ErrorCluster);
@@ -1164,7 +1170,7 @@ impl<'h, 'a> Builder<'h, 'a> {
 
         let is_source = self.sources.contains(&uid);
         let is_sink = self.sinks.contains(&uid);
-        // A wire states the direction outright; the flag decides otherwise.
+        // A wire gives the direction. Without a wire, the flag decides.
         let direction = if is_source {
             Direction::Output
         } else if is_sink || flags & DCO_IS_OUTPUT == 0 {

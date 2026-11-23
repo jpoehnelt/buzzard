@@ -139,9 +139,10 @@ fn members_are_files_of_the_workspace_and_every_rule_runs_on_them() {
         ]
     );
     let FileState::Archive(listing) = workspace.get(&dir.at("lib/util.llb")).unwrap() else {
-        panic!("the archive is an archive")
+        panic!("`lib/util.llb` was not read as an archive")
     };
-    // Directory order, and what is not a VI or control is listed only.
+    // The listing is in directory order. A member that is not a VI or a
+    // control is listed and not opened.
     let listed: Vec<&str> = listing.members.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(listed, ["Inline.vi", "Clean.ctl", "Old.vi", "readme.txt"]);
     assert_eq!(listing.opened(), ["Inline.vi", "Clean.ctl", "Old.vi"]);
@@ -169,7 +170,7 @@ fn members_are_files_of_the_workspace_and_every_rule_runs_on_them() {
 #[test]
 fn links_run_through_an_archive_in_both_directions() {
     let dir = TempDir::new("links");
-    // Main calls a member; the member calls a sibling in the archive and
+    // Main calls a member. The member calls a sibling in the archive and
     // a file beside the archive.
     dir.write("Main.vi", &vi(&CLEAN, &["/lib.llb/Entry.vi"]));
     dir.write("Outside.vi", &clean());
@@ -304,8 +305,8 @@ fn a_member_the_archive_does_not_hold_is_missing_once_for_check_and_for_deps() {
         "lib.llb/Gone.vi",
         "lib.llb/sub/Present.vi",
     ];
-    // With the archive in the workspace, and with only the project file
-    // scanned so that the archive is looked up on disk.
+    // The first roots put the archive in the workspace. The second are
+    // only the project file, so that the archive is looked up on disk.
     for roots in [vec![dir.0.clone()], vec![dir.at("App.lvproj")]] {
         let (flagged, missing) = missing_members(&dir, &roots);
         assert_eq!(flagged, expected_flags, "{roots:?}");
@@ -340,8 +341,9 @@ fn a_link_from_a_vi_to_an_absent_member_is_a_missing_relative_link() {
         let workspace = Workspace::scan(&roots);
         let graph = DependencyGraph::build(&workspace);
         let report = deps::scan(&workspace, &graph, &Roots::default());
-        // One target, however many files link to it. The archive that
-        // cannot be read says nothing about its members.
+        // A target is reported once, however many files link to it.
+        // Nothing is known about the members of the archive that cannot
+        // be read.
         assert_eq!(report.missing.len(), 1, "{:?}", report.missing);
         assert_eq!(
             dir.rel(Path::new(&report.missing[0].target)),
@@ -403,7 +405,7 @@ fn an_archive_whose_directory_cannot_be_read_is_one_finding() {
     cut.truncate(cut.len() - 40);
     dir.write("cut.llb", &cut);
     // An archive of a built application has no directory to read. It is
-    // a resource file like any other: nothing about it is a problem.
+    // a resource file like any other, and nothing about it is a problem.
     dir.write(
         "built.llb",
         &RsrcBuilder::new(file_type::LIBRARY)
@@ -477,8 +479,8 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     let workspace = Workspace::scan(&[dir.at("ws")]);
     // Only names that are one path component became files, each inside
     // the archive.
-    // On Windows a name with a colon is not a file name either: appended
-    // to a path it would name a drive.
+    // On Windows a name with a colon is not a file name either, because
+    // appended to a path it would name a drive.
     let mut keys = vec!["ws/a.llb", "ws/a.llb/Same.vi", "ws/sub/x.vi"];
     if !cfg!(windows) {
         keys.insert(1, "ws/a.llb/C:drive.vi");
@@ -487,7 +489,8 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     for key in workspace.files().keys() {
         assert!(key.starts_with(dir.at("ws")), "{}", key.display());
     }
-    // The real files are what they were: clean, not the hostile member.
+    // The real files are unchanged and clean. The hostile member did not
+    // replace them.
     let graph = DependencyGraph::build(&workspace);
     let found = lint(&workspace, &graph, &LintConfig::default());
     let shown: Vec<(String, &str)> = found.iter().map(|d| (dir.rel(&d.path), d.code)).collect();
@@ -508,8 +511,8 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     assert!(found.iter().all(|d| !d.message.contains('\0')));
     assert!(workspace.get(&dir.at("victim.vi")).is_none());
 
-    // Asking for such a member by its path reads the file on disk, or
-    // nothing: never the member.
+    // Asking for such a member by its path reads the file on disk or
+    // nothing, and never the member.
     for path in ["ws/a.llb/../sub/x.vi", "ws/a.llb/../../victim.vi"] {
         assert!(
             archive::read(&dir.at(path)).map_or(true, |bytes| bytes == clean()),
@@ -521,8 +524,8 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     assert!(archive::read(&dir.at("ws/a.llb/..")).is_err());
     assert_eq!(archive::read(&dir.at("ws/a.llb/Same.vi")).unwrap(), hostile);
     assert_eq!(archive::split(&dir.at("ws/a.llb/sub/x.vi")), None);
-    // A name the scan refuses is refused as a path too, on a system
-    // where a backslash is not a separator as well.
+    // A name that the scan refuses is also refused as a path, including
+    // on a system where a backslash is not a separator.
     let backslash = dir.at("ws/a.llb").join("sub\\x.vi");
     assert_eq!(archive::split(&backslash), None);
     assert!(archive::read(&backslash).is_err());
@@ -537,9 +540,10 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     );
 }
 
-/// A name is printed on one line and as the archive spells it: its
-/// control characters are escaped, and nothing else is. A name with one
-/// is not the name of a file, so it never starts a line of a report.
+/// A name is printed on one line and as the archive spells it. Its
+/// control characters are escaped, and nothing else is. A name with a
+/// control character is not the name of a file, so it never starts a line
+/// of a report.
 #[test]
 fn a_member_name_is_printed_on_one_line() {
     let dir = TempDir::new("one-line");
@@ -636,7 +640,7 @@ fn an_archive_inside_an_archive_is_listed_and_not_opened() {
     assert_eq!(listing.members.len(), 2);
     assert_eq!(dir.codes().len(), 0);
     assert!(archive::read(&dir.at("outer.llb/inner.llb/Deep.vi")).is_err());
-    // Asked for by its path, the inner archive is a resource file: it is
+    // Asked for by its path, the inner archive is a resource file. It is
     // parsed as one, and its members are not listed.
     let inner = FileState::load_all(&dir.at("outer.llb/inner.llb"));
     assert_eq!(inner.len(), 1);
@@ -752,7 +756,7 @@ fn a_link_into_an_archive_in_an_archive_is_not_known_to_be_missing() {
 }
 
 /// What the directory says a member is does not decide whether it is
-/// analyzed: one changed type code must not hide a VI.
+/// analyzed, so one changed type code cannot hide a VI.
 #[test]
 fn the_type_in_the_directory_does_not_hide_a_member() {
     let dir = TempDir::new("type");
@@ -764,16 +768,19 @@ fn the_type_in_the_directory_does_not_hide_a_member() {
     dir.write(
         "odd.llb",
         &LlbBuilder::default()
-            // The directory says archive, the name and the content say VI.
+            // The directory says archive. The name and the content say VI.
             .member_typed("x.vi", FourCc::new(b"LVAR"), &inline)
             .member_typed("y.vi", FourCc::new(b"TEXT"), &inline)
-            // A control by its type alone, and one by its name alone.
+            // One member is a control by its type alone, and one by its
+            // name alone.
             .member("Cluster typedef", &control)
             .member_typed("z.ctl", FourCc::new(b"????"), &control)
-            // The directory says VI, the content is an archive: it is
-            // parsed as the resource file it is, and not opened.
+            // The directory says VI and the content is an archive. The
+            // member is parsed as the resource file it is, and its members
+            // are not opened.
             .member_typed("fake.vi", FourCc::new(b"LVIN"), &inner)
-            // A real archive in the archive, under either type.
+            // These two are real archives in the archive, one under each
+            // type.
             .member("inner.llb", &inner)
             .member_typed("other.llb", FourCc::new(b"TEXT"), &inner)
             .build(),
@@ -818,7 +825,7 @@ fn library(urls: &[&str]) -> Vec<u8> {
 }
 
 /// A project library or class in an archive is a file of the workspace
-/// like one on disk: the same rules, the same links.
+/// like one on disk, with the same rules and the same links.
 #[test]
 fn project_files_in_an_archive_are_analyzed_like_files_on_disk() {
     let dir = TempDir::new("project-member");
@@ -957,7 +964,8 @@ fn a_member_asked_for_in_another_letter_case_is_the_same_file() {
         .collect();
     assert_eq!(gone.len(), 1);
     assert_eq!(gone[0].referrers.len(), 1);
-    // The workspace answers for either spelling, with its own.
+    // The workspace finds the member under either spelling and returns
+    // its own spelling.
     assert_eq!(
         workspace.stored_path(&typed),
         Some(dir.at("lib/util.llb/Helper.vi"))
@@ -1107,7 +1115,7 @@ fn scanning_an_archive_is_deterministic() {
         .get(&dir.at("big.llb"))
         .and_then(FileState::archive)
         .unwrap();
-    // The listing keeps the order of the archive; the files are sorted.
+    // The listing keeps the order of the archive, and the files are sorted.
     assert_eq!(listing.members[0].name, "Member 39.vi");
     assert_eq!(dir.keys(&first)[1], "big.llb/Member 00.vi");
     let diagnostics = dir.diagnostics();
@@ -1186,7 +1194,7 @@ fn sarif_locates_a_member_finding_at_its_archive() {
 }
 
 /// The findings of several members of one archive have one artifact and
-/// no region: a fingerprint tells them apart. The same holds when the
+/// no region, and a fingerprint tells them apart. The same holds when the
 /// members were given by their own paths and the archive is not a file
 /// of the workspace.
 #[test]
@@ -1320,7 +1328,7 @@ fn verify_checks_the_state_machines_of_members() {
         .map(|(path, _)| dir.rel(path))
         .collect();
     assert_eq!(unreadable, ["packed.llb/Broken.vi"]);
-    // And the rules of `check` report the same findings on the member.
+    // The rules of `check` also report the same findings on the member.
     let codes = dir.codes();
     let on = |path: &str| -> Vec<&str> {
         codes

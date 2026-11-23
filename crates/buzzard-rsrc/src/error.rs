@@ -6,12 +6,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum RsrcError {
-    /// The input is shorter than the 32-byte header; holds its length.
+    /// The input is shorter than the 32-byte header. Holds the input's length.
     #[error("file is too small to be an RSRC container ({0} bytes)")]
     TooSmall(usize),
     /// The file is larger than
-    /// [`MAX_FILE_BYTES`](crate::metadata::MAX_FILE_BYTES); holds its size
-    /// and that limit.
+    /// [`MAX_FILE_BYTES`](crate::metadata::MAX_FILE_BYTES). Holds the file's
+    /// size and that limit.
     #[error("file is {0} bytes, over the limit of {1}")]
     TooLarge(u64, u64),
     /// The input does not start with `RSRC\r\n`.
@@ -28,7 +28,7 @@ pub enum RsrcError {
     /// An offset or length points outside the buffer being read.
     #[error("{what} at offset {offset} (+{len} bytes) is outside the {size}-byte buffer")]
     OutOfBounds {
-        /// What was being read, e.g. `type list` or `LIBN`.
+        /// What was being read, such as `type list` or `LIBN`.
         what: &'static str,
         /// Where the read started, counted from the start of the buffer.
         offset: u64,
@@ -40,7 +40,7 @@ pub enum RsrcError {
     /// A block's contents do not match its expected layout.
     #[error("malformed `{block}` block: {reason}")]
     MalformedBlock {
-        /// The block or structure being parsed, e.g. `LIBN` or `heap`.
+        /// The block or structure being parsed, such as `LIBN` or `heap`.
         block: &'static str,
         /// What was wrong with it.
         reason: String,

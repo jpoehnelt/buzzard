@@ -1,6 +1,6 @@
-//! A file written by real acquisition software, kept in `tests/fixtures`
-//! with its source and licence, and an opt-in run over a directory of
-//! files that are not in the repository.
+//! Tests of a file written by real acquisition software, which is kept in
+//! `tests/fixtures` with its source and license. An ignored test reads a
+//! directory of files that are not in the repository.
 
 mod common;
 
@@ -92,8 +92,8 @@ fn a_file_from_real_acquisition_software_reads() {
 }
 
 /// Reads every channel of every `.tdms` file in the directory that
-/// `BUZZARD_TDMS_SAMPLES` names: real files that cannot be redistributed,
-/// or that are too large for the repository.
+/// `BUZZARD_TDMS_SAMPLES` names. The directory is for real files that
+/// cannot be redistributed or that are too large for the repository.
 ///
 /// ```text
 /// BUZZARD_TDMS_SAMPLES=/data/hot-fire cargo test -p buzzard-tdms --release --test real -- --ignored --nocapture
@@ -117,7 +117,7 @@ fn real_files_outside_the_repository() {
             if channel.dtype() == DataType::Void {
                 continue;
             }
-            // In pieces, so that a channel of many gigabytes fits.
+            // Read in pieces, so that a channel of many gigabytes fits in memory.
             let mut at = 0;
             while at < channel.len() {
                 let end = channel.len().min(at + (1 << 22));

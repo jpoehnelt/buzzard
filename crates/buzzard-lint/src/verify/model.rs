@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
 
-/// Which states a state may hand over to.
+/// Which states a state may go to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Successors {
     /// Exactly these state names can be written as the next state. A name
-    /// that is not a state of the machine selects the default state; the
+    /// that is not a state of the machine selects the default state. The
     /// extraction never produces one and uses [`State::unmatched`] for
     /// values without a case instead.
     Known(BTreeSet<String>),
@@ -25,7 +25,7 @@ pub enum Stop {
     Never,
     /// The loop always stops.
     Always,
-    /// Depends on data, or could not be read.
+    /// The stop depends on data, or the condition could not be read.
     Maybe,
 }
 
@@ -34,12 +34,12 @@ pub enum Stop {
 pub struct State {
     /// Name of the state: the value that selects its case.
     pub name: String,
-    /// Which states it may hand over to.
+    /// Which states it may go to.
     pub successors: Successors,
     /// Values this state can write as the next state that no case is
-    /// labelled with, so the default state handles them. Kept apart from
-    /// the successor names so that such a value can never be mistaken for
-    /// a state whose name happens to read the same.
+    /// labeled with, so the default state handles them. They are kept
+    /// apart from the successor names so that such a value can never be
+    /// mistaken for a state whose name happens to read the same.
     pub unmatched: BTreeSet<String>,
     /// Whether the loop stops after an iteration in this state.
     pub stop: Stop,
@@ -49,29 +49,29 @@ pub struct State {
 /// structure.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct Machine {
-    /// Where the machine is on the diagram, e.g. `while loop #12`.
+    /// Where the machine is on the diagram, for example `while loop #12`.
     pub location: String,
     /// States in case-frame order. Names are unique.
     pub states: Vec<State>,
-    /// Possible first states; `None` when the initial value is not a
+    /// Possible first states. `None` when the initial value is not a
     /// constant the analysis could read.
     pub initial: Option<BTreeSet<String>>,
     /// The state that handles any value without a case of its own.
     pub default: Option<String>,
     /// File name of the type definition behind an enumeration selector,
-    /// e.g. `State.ctl`. The states are then the items of the copy of the
-    /// type that the file stored when it was saved; the type definition
-    /// itself is not read, so a later change to it is not seen.
+    /// for example `State.ctl`. The states are then the items of the copy
+    /// of the type that the file stored when it was saved. The type
+    /// definition itself is not read, so a later change to it is not seen.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_definition: Option<String>,
     /// Nodes on the block diagram that the model does not look into and
     /// that could end the program or abort the VI by other means than the
     /// loop's condition terminal: calls of subVIs, calls by reference,
-    /// invoke and property nodes, calls into libraries and nodes of
-    /// classes that are not known to be harmless. Sorted descriptions
-    /// without repeats; a long list ends in a count of the rest. While
-    /// there are any, a finding that the loop cannot stop is not labelled
-    /// as proven.
+    /// invoke and property nodes, calls into libraries, and nodes of
+    /// classes that are not known to be harmless. The descriptions are
+    /// sorted and not repeated, and a long list ends in a count of the
+    /// rest. While there are any, a finding that the loop cannot stop is
+    /// not labeled as proven.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub other_exits: Vec<String>,
 }
@@ -80,23 +80,24 @@ pub struct Machine {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Finding {
-    /// Proven: no execution reaches this state.
+    /// No execution reaches this state. The finding is proven.
     Unreachable {
         /// Name of the state.
         state: String,
     },
-    /// Proven: once in this state the loop's condition terminal can never
-    /// stop the loop.
+    /// Once in this state the loop's condition terminal can never stop
+    /// the loop. The finding is proven.
     CannotTerminate {
         /// Name of the state.
         state: String,
     },
-    /// A value that has no case can be handed over as the next state; the
-    /// default state would run for it. Usually a misspelled or deleted
-    /// state. Reported once per machine and value, and only for values
-    /// written by states that are not proven dead and that do not always
-    /// stop the loop. It is a fact about the diagram: whether the path
-    /// that carries the value ever runs is not determined.
+    /// A value that has no case can be written as the next state. The
+    /// default state would run for it. The value is usually a misspelled
+    /// or deleted state. It is reported once per machine and value, and
+    /// only for values written by states that are not proven dead and
+    /// that do not always stop the loop. It is a fact about the diagram.
+    /// Whether the path that carries the value ever runs is not
+    /// determined.
     UndefinedTarget {
         /// The value without a case.
         target: String,
@@ -104,8 +105,8 @@ pub enum Finding {
         /// selects nothing.
         handled_by: Option<String>,
     },
-    /// Proven: the condition terminal never stops the loop from any
-    /// starting state.
+    /// The condition terminal never stops the loop from any starting
+    /// state. The finding is proven.
     NeverTerminates,
 }
 
@@ -119,18 +120,18 @@ pub struct Report {
     /// reachability.
     pub reachable: Option<Vec<String>>,
     /// Resolved transitions `(from, to)`, sorted, for display and export.
-    /// A state whose successors are [`Successors::Unknown`] may hand over
-    /// to any state and has no entry here: listing those would take
+    /// A state whose successors are [`Successors::Unknown`] may go to any
+    /// state and has no entry here, because listing those would take
     /// space that grows with the square of the number of states.
     pub transitions: Vec<(String, String)>,
     /// Proven unreachable or non-terminating states and undefined targets,
     /// sorted.
     pub findings: Vec<Finding>,
-    /// True when the initial state, every successor set and every stop
+    /// True when the initial state, every successor set, and every stop
     /// condition was read from constants on the diagram, so that nothing
     /// in the model is a guess at data the analysis could not follow. The
-    /// transitions are still "may" transitions: which of several constants
-    /// a state writes can depend on data.
+    /// transitions are still "may" transitions, because which of several
+    /// constants a state writes can depend on data.
     pub exact: bool,
 }
 
@@ -152,8 +153,8 @@ impl Machine {
             .or_else(|| index.get(self.default.as_deref()?).copied())
     }
 
-    /// Successor state indices of each state in the model; `None` for a
-    /// state that may hand over to any state. That case is kept implicit
+    /// Successor state indices of each state in the model. `None` for a
+    /// state that may go to any state. That case is kept implicit
     /// so that the work stays linear in the size of the machine.
     fn edges(&self, index: &BTreeMap<&str, usize>) -> Vec<Option<BTreeSet<usize>>> {
         self.states
@@ -198,7 +199,7 @@ impl Machine {
             match &edges[at] {
                 Some(next) => queue.extend(next.iter().copied().filter(|&next| !seen[next])),
                 // The first state that may go anywhere reaches every
-                // state; a second one adds nothing.
+                // state. A second one adds nothing.
                 None if !anywhere => {
                     anywhere = true;
                     queue.extend((0..count).filter(|&next| !seen[next]));
@@ -545,8 +546,8 @@ mod tests {
             machine(
                 vec![
                     init,
-                    // Named exactly like the unmatched value: still not
-                    // the target.
+                    // This state is named exactly like the unmatched
+                    // value and is still not the target.
                     state("Run, Go", known(&["Exit"]), Stop::Never),
                     state("Exit", known(&[]), Stop::Always),
                     state("Other", known(&["Exit"]), Stop::Never),
@@ -588,7 +589,7 @@ mod tests {
 
     #[test]
     fn an_undefined_value_is_reported_once_and_never_for_a_stopping_state() {
-        // Three states write the same undefined value; one of them always
+        // Three states write the same undefined value. One of them always
         // stops the loop, so its value is never used to select a case.
         let m = machine(
             vec![
@@ -611,10 +612,11 @@ mod tests {
 
     #[test]
     fn unknown_successors_cost_nothing_per_pair_of_states() {
-        // Every state may go anywhere. Listing those pairs took space
-        // that grew with the square of the number of states: 16,000,000
-        // pairs of strings (3.4 GB) for 4,000 states. Here that would be
-        // 40,000,000,000 pairs, so the test only ends when none is made.
+        // Every state may go anywhere. Listing those pairs would take
+        // space that grows with the square of the number of states:
+        // 16,000,000 pairs of strings (3.4 GB) for 4,000 states. Here it
+        // would be 40,000,000,000 pairs, so the test ends only when none
+        // is made.
         const STATES: usize = 200_000;
         let states = |last: Stop| -> Vec<State> {
             (0..STATES)
@@ -625,23 +627,23 @@ mod tests {
                 .collect()
         };
         let started = std::time::Instant::now();
-        // One state may stop: every state can reach it, nothing is found.
+        // One state may stop. Every state can reach it, so nothing is found.
         let stoppable = machine(states(Stop::Maybe), Some(&["s0"]), None).check();
         assert_eq!(stoppable.findings, []);
         assert_eq!(stoppable.reachable.as_ref().map(Vec::len), Some(STATES));
         assert_eq!(stoppable.transitions, []);
-        // No state may stop: reported once, not once per state.
+        // No state may stop. That is reported once, not once per state.
         let endless = machine(states(Stop::Never), Some(&["s0"]), None).check();
         assert_eq!(endless.findings, [Finding::NeverTerminates]);
         assert_eq!(endless.transitions, []);
-        // Generous: both checks take well under a second in a debug
-        // build; the quadratic version would not end.
+        // The limit is generous. Both checks take well under a second in
+        // a debug build, and a quadratic version would not end.
         assert!(started.elapsed() < std::time::Duration::from_secs(60));
     }
 
     #[test]
     fn unknown_and_known_successors_mix_as_before() {
-        // "Hub" may go anywhere, so everything is reachable; "Trap" has a
+        // "Hub" may go anywhere, so everything is reachable. "Trap" has a
         // known successor set that never leaves it and never stops.
         let m = machine(
             vec![

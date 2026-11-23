@@ -25,7 +25,7 @@ fn run(args: &[&str]) -> (i32, String, String) {
     )
 }
 
-/// A small log: two segments, a waveform channel, a string channel and a
+/// A small log: two segments, a waveform channel, a string channel, and a
 /// channel that never has data.
 fn sample() -> Vec<u8> {
     let mut builder = FileBuilder::new();
@@ -87,7 +87,7 @@ fn info_prints_the_structure_as_text() {
          \x20 channel 'unused': void, 0 values\n"
     );
     assert_eq!(stdout, expected);
-    // The same bytes every time.
+    // A second run prints the same bytes.
     assert_eq!(run(&["tdms", "info", &path]).1, expected);
 }
 
@@ -205,7 +205,8 @@ fn export_writes_csv() {
     assert_eq!(rows[2], "2.5,\"b,c\"");
     assert_eq!(rows.len(), 7);
 
-    // A selection, in the order given; one channel alone has its time.
+    // A selection is exported in the order given. One channel alone has a
+    // `time_s` column.
     let one = dir.0.join("one.csv").to_string_lossy().into_owned();
     let (status, stdout, _) = run(&[
         "tdms",
@@ -233,7 +234,7 @@ fn export_writes_csv() {
 #[test]
 fn export_writes_parquet_by_default_and_is_deterministic() {
     let dir = TempDir::new("tdms-export-parquet");
-    // Enough data to make the threads matter.
+    // The file holds enough data for the thread count to matter.
     let mut builder = FileBuilder::new();
     let segment = builder.segment().interleaved(true);
     for i in 0..20 {

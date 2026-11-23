@@ -294,7 +294,7 @@ fn full_editor_session() {
     assert_eq!(init["capabilities"]["workspaceSymbolProvider"], true);
     session.notify("initialized", json!({}));
 
-    // Initial scan publishes the one problem in the workspace.
+    // The initial scan publishes the one problem in the workspace.
     let found = session.diagnostics_for("/util.vi", |d| !d.is_empty());
     assert_eq!(found.len(), 1);
     assert_eq!(found[0]["code"], "BZ001");
@@ -339,7 +339,8 @@ fn full_editor_session() {
     assert_eq!(inspected["callees"], json!([uri("util.vi")]));
     assert_eq!(inspected["callers"], json!([]));
 
-    // Project files are parsed too: hover, inspect, and re-parse on save.
+    // Project files are parsed too. The next steps cover hover, inspect,
+    // and the re-parse on save.
     let hover = session.request(
         "textDocument/hover",
         json!({ "textDocument": { "uri": uri("App.lvproj") }, "position": position }),
@@ -367,7 +368,8 @@ fn full_editor_session() {
     std::fs::write(dir.0.join("App.lvproj"), "<Project/>").unwrap();
     session.diagnostics_for("/App.lvproj", <[Value]>::is_empty);
 
-    // The block diagram of a file on request, as a graph or as text.
+    // `buzzard/exportAst` returns the block diagram of a file, as a graph
+    // or as text.
     let real = fixtures().join("add.vi");
     let ast = session.request("buzzard/exportAst", json!({ "uri": file_uri(&real) }));
     assert_eq!(ast["diagram"]["root"]["nodes"][1]["class"], "prim");
@@ -380,7 +382,7 @@ fn full_editor_session() {
         .unwrap()
         .starts_with("## Block diagram"));
 
-    // Saving a fixed file from the IDE is picked up by the file watcher.
+    // The file watcher picks up a fixed file that the editor saves.
     dir.vi("util.vi", &CLEAN, &[]);
     session.diagnostics_for("/util.vi", <[Value]>::is_empty);
 
@@ -422,7 +424,7 @@ fn exit_without_shutdown_is_status_one() {
 }
 
 /// Paths with a space or a non-ASCII character are percent-encoded in
-/// URIs; the server and this test must agree on the exact form.
+/// URIs. The server and this test must agree on the exact form.
 #[test]
 fn workspace_path_with_space_and_non_ascii_characters() {
     let dir = TempDir::new("lsp with space \u{e9}");
@@ -469,7 +471,7 @@ fn workspace_path_with_space_and_non_ascii_characters() {
 }
 
 /// A directory rename is reported for the directory alone. The files below
-/// it must move with it, and a deleted directory must take them along.
+/// it must move with it, and deleting a directory must remove them.
 #[test]
 fn directory_rename_and_delete_are_followed() {
     let dir = TempDir::new("lsp-dirs");
@@ -497,7 +499,7 @@ fn directory_rename_and_delete_are_followed() {
     assert!(hover["contents"]["value"].is_string(), "{hover}");
     assert_eq!(session.hover(&dir.0.join("sub/a.vi")), Value::Null);
 
-    // A directory prepared elsewhere and moved in as a whole.
+    // A directory is prepared elsewhere and moved in as a whole.
     let staging = TempDir::new("lsp-dirs-staging");
     staging.vi("c.vi", &INLINE_CODE, &[]);
     std::fs::rename(&staging.0, dir.0.join("moved")).unwrap();
@@ -550,7 +552,8 @@ fn members_of_an_archive_are_shown_at_the_archive() {
     // Nothing was published for a URI that names no file.
     assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
 
-    // The archive and its two members, all found in the archive.
+    // The symbols are the archive and its two members, all located at the
+    // archive.
     assert_eq!(
         session.symbol_uris(""),
         [
@@ -641,9 +644,9 @@ fn files_that_the_scan_skips_stay_out_after_events() {
     assert_eq!(session.hover(&outer.0.join("outside/o.vi")), Value::Null);
 }
 
-/// A workspace opened through a symbolic link: every file has one name,
+/// In a workspace opened through a symbolic link, every file has one name:
 /// the one under the root as the client spelled it, whatever spelling a
-/// change is reported in. (`FSEvents` on macOS reports resolved paths.)
+/// change is reported in. `FSEvents` on macOS reports resolved paths.
 #[cfg(unix)]
 #[test]
 fn root_reached_through_a_symlink_keeps_one_name_per_file() {
@@ -662,20 +665,22 @@ fn root_reached_through_a_symlink_keeps_one_name_per_file() {
     assert_eq!(uri, util);
     assert_eq!(diagnostics[0]["code"], "BZ001");
 
-    // Fixed on disk, and reported by the client under the resolved path.
+    // The file is fixed on disk, and the client reports it under the
+    // resolved path.
     outer.vi("actual/ws/util.vi", &CLEAN, &[]);
     session.changed(&[&canonical.join("util.vi")]);
     let (uri, diagnostics) = session.next_diagnostics();
     assert_eq!(uri, util);
     assert_none(&diagnostics);
 
-    // A new file, reported under the resolved path as well.
+    // A new file is reported under the resolved path as well.
     outer.vi("actual/ws/extra.vi", &INLINE_CODE, &[]);
     session.changed(&[&canonical.join("extra.vi")]);
     let (uri, diagnostics) = session.next_diagnostics();
     assert_eq!(uri, extra);
     assert_eq!(diagnostics.len(), 1);
-    // Time for a second, wrongly named entry to show up if there is one.
+    // The sleep gives a second, wrongly named entry time to appear if
+    // there is one.
     std::thread::sleep(Duration::from_millis(400));
     assert_eq!(session.symbol_uris(""), [extra.clone(), util.clone()]);
     assert_eq!(session.unclaimed_diagnostics(), no_diagnostics());
@@ -689,10 +694,10 @@ fn root_reached_through_a_symlink_keeps_one_name_per_file() {
     assert_eq!(session.symbol_uris(""), [util]);
 }
 
-/// The temporary directory as the system names it, which on macOS is a
-/// path through a symbolic link (`/var` -> `/private/var`). The watcher
-/// there reports resolved paths; diagnostics must still be published under
-/// the root the client gave.
+/// The root is the temporary directory as the system names it, which on
+/// macOS is a path through a symbolic link (`/var` -> `/private/var`). The
+/// watcher there reports resolved paths. Diagnostics must still be
+/// published under the root the client gave.
 #[test]
 fn root_given_as_the_uncanonical_temp_dir() {
     let name = format!("buzzard-cli-{}-lsp-raw-temp", std::process::id());
@@ -715,8 +720,9 @@ fn root_given_as_the_uncanonical_temp_dir() {
     assert_eq!(session.symbol_uris(""), [util]);
 }
 
-/// The IDE truncates a file and then writes it. A file read in between
-/// does not parse; that is not a finding, and must not flash up as one.
+/// The editor truncates a file and then writes it. A file read in between
+/// does not parse. That is not a finding, and the server must not publish
+/// it as one.
 #[test]
 fn file_caught_in_the_middle_of_a_save_is_not_reported_as_broken() {
     let dir = TempDir::new("lsp-midsave");
@@ -728,8 +734,9 @@ fn file_caught_in_the_middle_of_a_save_is_not_reported_as_broken() {
     let full = "<Project Type=\"Project\" LVVersion=\"23008000\">\
                 <Item Name=\"lost.vi\" Type=\"VI\" URL=\"../lost.vi\"/></Project>";
     let half = &full[..40];
-    // Long enough for the watcher to look at the half-written file, short
-    // enough for the save to complete while the server is still waiting.
+    // The pause is long enough for the watcher to look at the half-written
+    // file, and short enough for the save to complete while the server is
+    // still waiting.
     std::fs::write(dir.0.join("App.lvproj"), half).unwrap();
     std::thread::sleep(Duration::from_millis(300));
     std::fs::write(dir.0.join("App.lvproj"), full).unwrap();

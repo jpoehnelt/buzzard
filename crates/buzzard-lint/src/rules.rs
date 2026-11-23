@@ -17,9 +17,10 @@ use crate::workspace::{Analysis, FileState, Workspace};
 /// One lint rule, as listed in [`RULES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rule {
-    /// Stable identifier, e.g. `BZ001`, used in output and with `--ignore`.
+    /// Stable identifier, such as `BZ001`, used in output and with
+    /// `--ignore`.
     pub code: &'static str,
-    /// Short kebab-case name, e.g. `missing-member`.
+    /// Short kebab-case name, such as `missing-member`.
     pub name: &'static str,
     /// One or two sentences on what the rule reports.
     pub summary: &'static str,
@@ -34,7 +35,8 @@ pub const RULES: &[Rule] = &[
         code: "BZ000",
         name: "unreadable-file",
         summary: "The file could not be read, or is not a valid RSRC container, project XML \
-                  file or LLB archive; or a member of an archive cannot be opened.",
+                  file, or LLB archive. A member of an archive that cannot be opened is \
+                  reported too.",
         severity: Severity::Error,
     },
     Rule {
@@ -87,8 +89,8 @@ pub const RULES: &[Rule] = &[
     Rule {
         code: "BZ102",
         name: "reference-never-closed",
-        summary: "A reference (queue, file, network connection, ...) is created and never \
-                  reaches anything that could close it.",
+        summary: "A reference, such as a queue, a file, or a network connection, is created \
+                  and never reaches anything that could close it.",
         severity: Severity::Warning,
     },
     Rule {
@@ -103,12 +105,12 @@ pub const RULES: &[Rule] = &[
         code: "BZ202",
         name: "state-machine-cannot-stop",
         summary: "A state machine has a state from which the condition terminal of its loop \
-                  can never stop the loop (warning), or the terminal can never stop it at \
-                  all (info: a loop that runs until the program is aborted may be \
-                  intended). Proven on a model that over-approximates the diagram, unless \
-                  the diagram holds a subVI call or another node that could end the program \
-                  some other way; the finding then names those nodes and is structural, not \
-                  proven.",
+                  can never stop the loop (warning), or the terminal can never stop the \
+                  loop at all (info, because a loop that runs until the program is aborted \
+                  may be intended). Proven on a model that over-approximates the diagram. \
+                  When the diagram holds a subVI call or another node that could end the \
+                  program some other way, the finding names those nodes and is structural, \
+                  not proven.",
         severity: Severity::Warning,
     },
     Rule {
@@ -146,8 +148,8 @@ impl Default for LintConfig {
     }
 }
 
-/// Run every enabled rule. The result is sorted by path, then code, then
-/// message, and is identical across runs.
+/// Run every enabled rule. The result is sorted by path, code, severity,
+/// and message, and is identical across runs.
 #[expect(
     clippy::missing_panics_doc,
     reason = "the `expect`s look up rule codes that are all in `RULES`"
@@ -292,8 +294,8 @@ fn check_version(
 }
 
 /// `own` is the file's path from its scan root. The length of the absolute
-/// path would depend on where the workspace happens to be checked out, so
-/// the same tree would give different results on different machines.
+/// path would depend on where the workspace is checked out, so the same
+/// tree would give different results on different machines.
 fn check_paths(
     own: &Path,
     meta: &ViMetadata,
@@ -337,9 +339,9 @@ fn check_paths(
     }
 }
 
-/// Members under a project's `Dependencies` node are skipped: the editor
-/// computes that list, so a stale entry there is not something the user
-/// listed. URLs that do not resolve to a path (installation paths, items
+/// Members under a project's `Dependencies` node are skipped, because the
+/// editor computes that list and the user did not write a stale entry
+/// there. URLs that do not resolve to a path (installation paths, items
 /// embedded in the XML file) cannot be checked.
 fn check_members(
     workspace: &Workspace,
@@ -361,19 +363,19 @@ fn check_members(
     }
 }
 
-/// Whether a member's URL resolves to a path at which there is no file:
-/// neither one the workspace has loaded nor one on disk. A URL that leads
-/// into an `.llb` archive is missing when the archive on disk does not
-/// hold that member, and is not missing when the archive cannot be read:
-/// nothing is known then. A URL that does not resolve to a path is never
-/// missing. `BZ006` and the dependency report (`crate::deps`) both decide
-/// with this function.
+/// Whether a member's URL resolves to a path that holds no file, in the
+/// loaded workspace or on disk. A URL that leads into an `.llb` archive is
+/// missing when the archive on disk does not hold that member. It is not
+/// missing when the archive cannot be read, because nothing is known then.
+/// A URL that does not resolve to a path is never missing. `BZ006` and the
+/// dependency report (`crate::deps`) both decide with this function.
 pub(crate) fn member_is_missing(
     workspace: &Workspace,
     archives: &Archives,
     member: &Member,
 ) -> bool {
-    // A file the workspace has loaded exists; only look for the others.
+    // A file that the workspace has loaded exists. Only the others are
+    // looked for on disk.
     member.path.as_ref().is_some_and(|path| {
         workspace.get(path).is_none() && archives.present(path, false) == Some(false)
     })
@@ -381,8 +383,8 @@ pub(crate) fn member_is_missing(
 
 fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
     // An unwired error output raises a dialog at run time when automatic
-    // error handling is on, so the error is at least seen. When it is off
-    // the error vanishes, which is the case worth a warning.
+    // error handling is on, so the user sees the error. When it is off,
+    // the error is discarded, and that case gets a warning.
     let auto_handled = analysis
         .metadata
         .flags
@@ -434,8 +436,8 @@ fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
 }
 
 /// The findings of the state machine verification, computed when the
-/// file was loaded. Each message names the machine and says whether the
-/// finding is proven or a heuristic.
+/// file was loaded. Each message names the machine and ends in the
+/// confidence of the finding: proven, structural, or heuristic.
 fn check_state_machines(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {
     analysis
         .state_machines

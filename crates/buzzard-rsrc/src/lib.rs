@@ -1,5 +1,6 @@
 //! Parser for the binary RSRC resource container used by `.vi` and `.ctl`
-//! files. Pure Rust, read-only, no IDE or runtime required.
+//! files. The crate is pure Rust and read-only, and it needs no LabVIEW editor
+//! or runtime.
 //!
 //! Start with [`ViMetadata::from_path`] for a summary of one file, or
 //! [`RsrcFile::parse`] for raw access to the resource directory.
@@ -38,7 +39,7 @@ pub use version::{Stage, Version};
 /// File extensions (lowercase, without the dot) that hold RSRC containers
 /// this crate can summarize.
 ///
-/// A slice, not an array, so that a new extension does not change the type.
+/// The constant is a slice so that a new extension does not change its type.
 pub const RSRC_EXTENSIONS: &[&str] = &["vi", "ctl", "vit", "ctt", "vim"];
 
 /// The file extension (lowercase, without the dot) of an LLB archive,

@@ -10,8 +10,8 @@ const EMPTY_PASSWORD_MD5: [u8; 16] = [
 /// The password part of a `BDPW` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bdpw {
-    /// MD5 of the password; the remaining hashes in the block are salted
-    /// integrity hashes and are not interpreted.
+    /// MD5 of the password. The remaining hashes in the block are salted
+    /// integrity hashes, which this crate does not interpret.
     pub password_md5: [u8; 16],
 }
 
@@ -20,7 +20,7 @@ impl Bdpw {
     ///
     /// # Errors
     ///
-    /// If the block is shorter than 16 bytes.
+    /// Returns an error if the block is shorter than 16 bytes.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let hash = data
             .first_chunk::<16>()
@@ -30,8 +30,8 @@ impl Bdpw {
         })
     }
 
-    /// Whether a password is set, i.e. the hash is not that of the empty
-    /// string.
+    /// Whether a password is set, which means that the hash is not that of
+    /// the empty string.
     pub fn has_password(&self) -> bool {
         self.password_md5 != EMPTY_PASSWORD_MD5
     }

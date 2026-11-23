@@ -1,8 +1,8 @@
 name: Release
 
-# Publishes the crates to crates.io. Started by hand only: there is no push,
-# pull request, tag or schedule trigger, so nothing a contributor does can
-# start it. See RELEASING.md for the steps around it.
+# This workflow publishes the crates to crates.io. It starts by hand only. It
+# has no push, pull request, tag, or schedule trigger, so nothing a
+# contributor does can start it. See RELEASING.md for the steps around it.
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +20,8 @@ on:
 permissions:
   contents: read
 
-# One release at a time, and never cancelled halfway through a list of crates.
+# One release runs at a time, and a run is never cancelled halfway through a
+# list of crates.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -33,15 +34,16 @@ env:
   RUSTUP_MAX_RETRIES: 10
 
 jobs:
-  # Every job of ci.yml, on the commit being released. Its `package` job
-  # builds each crate from its packaged files.
+  # This job runs every job of ci.yml on the commit being released. The
+  # `package` job of ci.yml builds each crate from its packaged files.
   checks:
     uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 
-  # What `cargo publish` would do, without the upload. Has no access to
-  # crates.io: no token is requested and `id-token` is not granted.
+  # This job does what `cargo publish` would do, without the upload. It has no
+  # access to crates.io, because it requests no token and `id-token` is not
+  # granted.
   dry-run:
     if: ${{ inputs.dry_run }}
     needs: checks
@@ -66,8 +68,8 @@ jobs:
           esac
           cargo publish --dry-run --locked "${selection[@]}"
           # `cargo publish --dry-run` leaves no .crate file in
-          # target/package; `cargo package` does. The build was verified
-          # above, so this only writes the files for the table.
+          # target/package, and `cargo package` does. The build was verified
+          # above, so this command only writes the files for the table.
           rm -rf target/package
           cargo package --no-verify --locked "${selection[@]}"
           shopt -s nullglob
@@ -88,7 +90,7 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # The upload. A version that crates.io already has is skipped, so a run
+  # This job uploads. It skips a version that crates.io already has, so a run
   # that failed halfway can be started again.
   publish:
     if: ${{ !inputs.dry_run }}
@@ -101,8 +103,8 @@ jobs:
     environment: release
     permissions:
       contents: read
-      # Lets the job ask GitHub for the OIDC token that crates.io exchanges
-      # for a publish token.
+      # This permission lets the job ask GitHub for the OIDC token that
+      # crates.io exchanges for a publish token.
       id-token: write
     steps:
       - name: Refuse to publish from anything but main
@@ -117,10 +119,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: stable
-      # Trusted Publishing: exchanges the job's OIDC token for a crates.io
-      # token that lasts 30 minutes, and revokes it when the job ends. It
-      # works only for a crate that already exists on crates.io and has this
-      # workflow as a trusted publisher (RELEASING.md, "The first release").
+      # This action is Trusted Publishing. It exchanges the job's OIDC token
+      # for a crates.io token that lasts 30 minutes, and revokes that token
+      # when the job ends. It works only for a crate that already exists on
+      # crates.io and has this workflow as a trusted publisher (RELEASING.md,
+      # "The first release of a crate").
       - uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
         id: auth
       - name: Publish in dependency order
@@ -138,10 +141,11 @@ jobs:
 
           metadata=$(cargo metadata --no-deps --format-version 1 --locked)
 
-          # Whether crates.io has this version, from the sparse index: one
-          # JSON object per line and per version, yanked ones included.
-          # The names are longer than three characters, so the path is the
-          # first two characters, the next two, then the name.
+          # Returns whether crates.io has this version, as the sparse index
+          # says. The index entry of a crate has one JSON object per line
+          # and per version, yanked versions included. The names are longer
+          # than three characters, so the path is the first two characters,
+          # the next two, then the name.
           published() {
             local name=$1 version=$2 status
             status=$(curl --silent --show-error --retry 3 --output index.json \
@@ -152,8 +156,8 @@ jobs:
               404) return 1 ;;
               *) echo "::error::the crates.io index answered $status for $name"; exit 1 ;;
             esac
-            # jq answers 0 for a match and 4 for none. Anything else (a
-            # body that is not JSON, a missing jq) is not an answer, and
+            # jq exits with 0 for a match and 4 for none. Any other status
+            # (a body that is not JSON, a missing jq) is not an answer, and
             # the release stops instead of taking it for "not published".
             # The `|| status=$?` keeps a 4 from ending the script when the
             # function is called outside an `if`.
@@ -175,16 +179,16 @@ jobs:
               '.packages[] | select(.name == $n) | .version' <<< "$metadata")
             test -n "$version"
             if published "$name" "$version"; then
-              echo "::notice::$name $version is already on crates.io; skipped"
+              echo "::notice::$name $version is already on crates.io and was skipped"
               echo "- $name $version: already published, skipped" >> "$GITHUB_STEP_SUMMARY"
               continue
             fi
             # The `package` job of the checks built this crate from its
-            # packaged files, so the upload does not build it again: the
+            # packaged files, so the upload does not build it again. The
             # token would not outlive six builds. cargo waits up to a
             # minute for the index to list the new version. If the index
-            # takes longer, the next crate fails to resolve it: run the
-            # workflow again, and the uploaded versions are skipped.
+            # takes longer, the next crate fails to resolve it. Run the
+            # workflow again, and it skips the uploaded versions.
             cargo publish --locked --no-verify -p "$name"
             echo "- $name $version: published" >> "$GITHUB_STEP_SUMMARY"
           done

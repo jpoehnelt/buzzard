@@ -1,11 +1,11 @@
 //! Link info blocks (`LIvi`, `LIfp`, `LIbd`): references to other files.
 //!
 //! The full link-object grammar has well over a hundred variants whose layout
-//! depends on the saving version. Every variant that references a file shares
-//! a common prefix, though:
+//! depends on the saving version. But every variant that references a file
+//! starts with the same prefix:
 //!
 //! ```text
-//! fourcc   link type, e.g. `VIVI` (subVI) or `TDCC` (typedef)
+//! fourcc   link type, such as `VIVI` (subVI) or `TDCC` (typedef)
 //! pad      to a 4-byte boundary
 //! u32      qualified-name part count, then that many Pascal strings
 //! pad      to a 2-byte boundary
@@ -21,12 +21,12 @@ use crate::blocks::path::LvPath;
 use crate::fourcc::FourCc;
 use crate::reader::{decode_text, Reader};
 
-/// Resource types that hold link info for the VI, front panel and diagram.
+/// Resource types that hold link info for the VI, front panel, and diagram.
 pub const LINK_BLOCKS: [&[u8; 4]; 3] = [b"LIvi", b"LIfp", b"LIbd"];
 
 const MAX_NAME_PARTS: u32 = 32;
 const MAX_LOOKBEHIND: usize = 4096;
-/// Bytes of parsing work allowed per byte of block; see [`scan`].
+/// Bytes of parsing work allowed per byte of block. [`scan`] spends it.
 const WORK_PER_BYTE: usize = 16;
 /// Most heap objects one link is expected to serve.
 const MAX_HEAP_USES: usize = 4096;
@@ -36,7 +36,7 @@ const MAX_HEAP_UID: u32 = 1 << 24;
 /// One reference from a file to another file.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct LinkRef {
-    /// Link object type, e.g. `VIVI`, when it could be identified.
+    /// Link object type, such as `VIVI`, when it could be identified.
     pub link_type: Option<FourCc>,
     /// Qualified name: owning libraries followed by the item name.
     pub qualified_name: Vec<String>,
@@ -63,10 +63,10 @@ pub fn scan(data: &[u8]) -> Vec<LinkRef> {
     let mut offset = 0;
     // Index into `links` and end offset of the most recent named link.
     let mut pending: Option<(usize, usize)> = None;
-    // End of the last accepted path: no prefix can reach back past it.
+    // End of the last accepted path. No prefix reaches back past it.
     let mut floor = 0;
-    // Bounds total work on input stuffed with path look-alikes. Real blocks
-    // use a small fraction of it.
+    // The budget bounds the total work on input that is full of path
+    // look-alikes. Real blocks use a small fraction of it.
     let mut budget = data.len().saturating_mul(WORK_PER_BYTE) + 64 * 1024;
     while let Some(found) = find(&data[offset..], b"PTH") {
         let at = offset + found;
@@ -151,7 +151,8 @@ fn prefix_before(
         // A name list is at least a count plus one empty string.
         let mut start = end.checked_sub(5)?;
         while start >= lowest {
-            // Cheap filter first: a name list starts with a small `u32`.
+            // A cheap filter runs first, because a name list starts with a
+            // small `u32`.
             let plausible = data[start..start + 3] == [0, 0, 0]
                 && (1..=MAX_NAME_PARTS).contains(&u32::from(data[start + 3]));
             if plausible {
@@ -236,7 +237,7 @@ PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].link_type, Some(FourCc::new(b"IUVI")));
         assert_eq!(links[0].heap_uids, [0x2b]);
-        // The VI-level link in `LIvi` has no trailing path, hence no ids.
+        // The VI-level link in `LIvi` has no trailing path, so it has no ids.
         assert!(
             scan(RELATIVE)[0].heap_uids.is_empty(),
             "expected nothing, got {:?}",
@@ -260,16 +261,16 @@ PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
 
     #[test]
     fn dense_lookalikes_are_scanned_in_bounded_time() {
-        // Minimal valid paths back to back. The scan must not pay a full
-        // lookbehind for each: 200,000 of them are quick.
+        // The data is minimal valid paths back to back. The scan must not do
+        // a full lookbehind for each one, so 200,000 of them finish in time.
         let record = b"PTH0\x00\x00\x00\x05\x00\x01\x00\x01\x00";
         let data = record.repeat(200_000);
         let started = std::time::Instant::now();
         assert_eq!(scan(&data).len(), 200_000);
         assert!(started.elapsed() < std::time::Duration::from_secs(5));
 
-        // Signatures that each claim a huge body made of tiny components:
-        // every parse fails late, and the work budget cuts the scan short.
+        // Each signature declares a huge body made of tiny components. Every
+        // parse fails late, and the work budget ends the scan early.
         let mut hostile = Vec::new();
         for _ in 0..20_000 {
             hostile.extend_from_slice(b"PTH0\x00\x00\xff\x00\x00\x01\xff\xff");

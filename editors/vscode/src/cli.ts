@@ -1,6 +1,6 @@
-// Running `buzzard inspect` for previews. The executable is started
-// directly, never through a shell, so a file name is only ever one argument.
-// `inspect` reads the file and prints; nothing is written.
+// Runs `buzzard inspect` for the previews. The executable is started
+// directly, never through a shell, so a file name is always one argument.
+// `inspect` reads the file and prints to stdout. It writes no file.
 
 import { execFile } from 'node:child_process';
 

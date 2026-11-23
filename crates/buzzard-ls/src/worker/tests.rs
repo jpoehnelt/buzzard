@@ -25,9 +25,10 @@ struct TestInspector {
     gate: Mutex<Option<std_mpsc::Receiver<()>>>,
 }
 
-/// Decrement a counter unless it is zero; true if it was decremented.
+/// Decrement a counter unless it is zero. Returns true if it was
+/// decremented.
 ///
-/// Written as a compare-and-swap loop because the standard helper for this
+/// This is a compare-and-swap loop because the standard helper for this
 /// was renamed between the oldest and newest toolchains this crate builds
 /// on.
 fn take_one(counter: &AtomicUsize) -> bool {
@@ -149,7 +150,7 @@ fn nothing() -> Simple {
     Vec::new()
 }
 
-/// A directory rename is reported for the directory only; the files below
+/// A directory rename is reported for the directory only. The files below
 /// it must follow.
 #[test]
 fn directory_rename_moves_every_file_below_it() {
@@ -189,7 +190,8 @@ fn directory_moved_in_and_directory_deleted() {
     f.vi("keep.vi", &CLEAN);
     f.state.scan();
 
-    // Prepared outside the workspace, then moved in as a whole.
+    // The directory is prepared outside the workspace and then moved in as
+    // a whole.
     write_vi(&f.dir.join("staging/x.vi"), &INLINE_CODE);
     write_vi(&f.dir.join("staging/inner/y.ctl"), &INLINE_CODE);
     write_vi(&f.dir.join("staging/.hidden/z.vi"), &INLINE_CODE);
@@ -213,8 +215,8 @@ fn directory_moved_in_and_directory_deleted() {
     assert_eq!(f.files(), ["keep.vi"]);
 }
 
-/// A directory event must not cost a re-read of everything below it: some
-/// platforms report the parent directory on every save.
+/// A directory event must not cost a re-read of everything below it,
+/// because some platforms report the parent directory on every save.
 #[test]
 fn directory_event_reads_only_new_or_modified_files() {
     let f = Fixture::new("dir-cost");
@@ -227,8 +229,8 @@ fn directory_event_reads_only_new_or_modified_files() {
     assert_eq!(f.simplify(&outcome.updates), nothing());
     assert_eq!(f.reads(), 0);
 
-    // Same name, different content and size: noticed without an event for
-    // the file itself.
+    // `b.vi` keeps its name and gets different content and size. The
+    // change is noticed without an event for the file itself.
     let bytes = RsrcBuilder::default()
         .save_record(V23, &CLEAN)
         .links(&[("a.vi", LvPath::sibling("a.vi"))])
@@ -299,8 +301,8 @@ fn file_replaced_by_a_symlink_is_dropped() {
     assert_eq!(f.files(), ["b.vi"]);
 }
 
-/// A watcher may report resolved paths (`FSEvents` does); the file keeps the
-/// name it has under the root as the client spelled it.
+/// A watcher may report resolved paths (`FSEvents` does). The file keeps
+/// the name it has under the root as the client spelled it.
 #[cfg(unix)]
 #[test]
 fn canonical_event_paths_keep_the_given_root_spelling() {
@@ -342,8 +344,9 @@ fn canonical_event_paths_keep_the_given_root_spelling() {
     assert_eq!(view.paths().collect::<Vec<_>>(), [given.join("new.vi")]);
 }
 
-/// A file caught in the middle of a save fails to parse. That must not be
-/// reported while the file is still fresh; it is read again.
+/// A file caught in the middle of a save fails to parse. The failure must
+/// not be reported while the file is still fresh. The file is read again
+/// instead.
 #[test]
 fn a_fresh_file_that_fails_to_parse_is_retried_not_reported() {
     let f = Fixture::new("retry");
@@ -375,7 +378,7 @@ fn retries_are_bounded_and_skipped_for_files_at_rest() {
     f.vi("old.vi", &CLEAN);
     f.state.scan();
 
-    // Really broken: reported after the last retry.
+    // A file that stays broken is reported after the last retry.
     fs::write(f.root().join("a.vi"), b"RSRC").unwrap();
     let mut outcome = f.changed(&["a.vi"]);
     let mut reads = 1;
@@ -387,7 +390,7 @@ fn retries_are_bounded_and_skipped_for_files_at_rest() {
     assert_eq!(reads, 1 + RETRY_DELAYS.len());
     assert_eq!(f.simplify(&outcome.updates), [update("a.vi", &["BZ000"])]);
 
-    // Broken and not written recently: nothing to wait for.
+    // A broken file that was not written recently is reported at once.
     let old = f.root().join("old.vi");
     fs::write(&old, b"RSRC").unwrap();
     let long_ago = SystemTime::now() - Duration::from_secs(3600);
@@ -399,8 +402,8 @@ fn retries_are_bounded_and_skipped_for_files_at_rest() {
     assert_eq!(f.simplify(&outcome.updates), [update("old.vi", &["BZ000"])]);
 }
 
-/// Requests read a snapshot; they must be answered while a slow batch is
-/// still being read.
+/// Requests read a snapshot, so they must be answered while a slow batch
+/// is still being read.
 #[test]
 fn readers_are_not_blocked_by_a_running_batch() {
     let f = Fixture::new("readers");
@@ -456,9 +459,9 @@ impl Publisher for Arc<Recorder> {
 }
 
 /// The scan and a change that arrives while the scan is still being
-/// published go out in order: the last word on a file is the newest. Also:
-/// `Scan` queued before `Roots` (a client that pipelines `initialize` and
-/// `initialized`) still scans.
+/// published go out in order, so the last diagnostics published for a file
+/// are the newest. A `Scan` queued before `Roots` (a client that pipelines
+/// `initialize` and `initialized`) still scans.
 #[test]
 fn publishing_is_ordered_and_scan_waits_for_roots() {
     const FILES: usize = 40;
@@ -532,9 +535,9 @@ fn write_archive(path: &Path, members: &[(&str, &[u32])]) {
     fs::write(path, builder.build()).unwrap();
 }
 
-/// The members of an archive are not on disk. They follow their archive:
-/// an event for it re-reads them, and an event for a directory above it
-/// neither drops them nor reads the archive again.
+/// The members of an archive are not on disk. They follow their archive.
+/// An event for the archive re-reads them, and an event for a directory
+/// above it neither drops them nor reads the archive again.
 #[test]
 fn members_follow_their_archive() {
     let f = Fixture::new("archive");
@@ -560,7 +563,7 @@ fn members_follow_their_archive() {
         assert_eq!(f.files(), all, "{names:?}");
     }
 
-    // The archive changes: one member is fixed, one is new, one is gone.
+    // The archive changes. One member is fixed, one is new, and one is gone.
     write_archive(
         &archive,
         &[

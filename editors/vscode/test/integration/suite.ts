@@ -1,5 +1,5 @@
-// Runs inside the extension host of a real VS Code. No test framework: a
-// rejected promise from `run` fails the run.
+// Runs inside the extension host of a real VS Code. There is no test
+// framework. A rejected promise from `run` fails the run.
 
 import assert from 'node:assert/strict';
 import * as path from 'node:path';
@@ -87,7 +87,7 @@ export async function run(): Promise<void> {
   });
   log('server restarted');
 
-  // A missing executable is reported, with the install command, not ignored.
+  // A missing executable is reported with the install command.
   const configuration = vscode.workspace.getConfiguration('buzzard');
   await configuration.update('path', path.join(workspace, 'no-such-buzzard'), vscode.ConfigurationTarget.Global);
   const problem = await waitFor('the missing executable to be reported', () => {

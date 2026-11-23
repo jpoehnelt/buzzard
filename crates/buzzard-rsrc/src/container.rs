@@ -26,7 +26,7 @@ const RESOURCE_ENTRY_SIZE: usize = 20;
 /// One resource (a "section" of a block type) borrowed from the file bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Resource<'a> {
-    /// Block type, e.g. `LVSR` or `BDHb`.
+    /// Block type, such as `LVSR` or `BDHb`.
     pub ty: FourCc,
     /// Resource id, which tells apart several resources of one type.
     pub id: i32,
@@ -50,10 +50,10 @@ impl<'a> RsrcFile<'a> {
     ///
     /// # Errors
     ///
-    /// Any error of [`RsrcHeader::parse`] or [`RsrcHeader::validate`];
-    /// [`RsrcError::HeaderMismatch`] if the copy of the header in the info
-    /// section differs; and [`RsrcError::OutOfBounds`] if a directory list,
-    /// name or payload lies outside `bytes` or there are more directory
+    /// Returns any error of [`RsrcHeader::parse`] or [`RsrcHeader::validate`].
+    /// Returns [`RsrcError::HeaderMismatch`] if the copy of the header in the
+    /// info section differs, and [`RsrcError::OutOfBounds`] if a directory
+    /// list, name, or payload lies outside `bytes` or there are more directory
     /// entries than the info section has room for.
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         let header = RsrcHeader::parse(bytes)?;
@@ -126,7 +126,7 @@ impl<'a> RsrcFile<'a> {
         Ok(Self { header, resources })
     }
 
-    /// File type from the header, e.g. `LVIN` or `LVCC`.
+    /// File type from the header, such as `LVIN` or `LVCC`.
     pub fn file_type(&self) -> FourCc {
         self.header.file_type
     }

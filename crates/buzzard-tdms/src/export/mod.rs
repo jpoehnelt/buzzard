@@ -1,8 +1,8 @@
-//! Export of channels as one table: Parquet (behind the `parquet` feature)
-//! and CSV.
+//! Export of channels as one table, as Parquet (behind the `parquet`
+//! feature) or CSV.
 //!
 //! The table has one column per channel (two for a complex channel) and as
-//! many rows as the longest channel; shorter channels are padded with
+//! many rows as the longest channel. Shorter channels are padded with
 //! missing values. When every exported channel has the same waveform
 //! timing, a leading `time_s` column holds each row's time in seconds
 //! (`wf_start_offset + row * wf_increment`), so the timing is in the data
@@ -57,7 +57,7 @@ pub struct Exported {
     /// The names of the columns, in order.
     pub columns: Vec<String>,
     /// The paths of the channels that were left out because they have no
-    /// data type: channels that never held a value.
+    /// data type. Such a channel never held a value.
     pub skipped: Vec<String>,
 }
 
@@ -328,15 +328,19 @@ fn csv_value(out: &mut Vec<u8>, column: &Column, at: usize) {
 }
 
 /// Writes the channels as CSV: a header row of column names, then one row
-/// per sample. Fields follow RFC 4180 quoting, lines end in a line feed,
-/// numbers are printed in their shortest form that reads back exactly,
-/// times as RFC 3339 in UTC, and a channel that has ended leaves its field
-/// empty. CSV carries no metadata; `buzzard tdms info --format json` and
-/// the Parquet export do.
+/// per sample.
+///
+/// Fields follow RFC 4180 quoting, and lines end in a line feed. Numbers
+/// are printed in the shortest form that reads back exactly, and times as
+/// RFC 3339 in UTC. A channel that has ended leaves its field empty.
+///
+/// CSV carries no metadata. `buzzard tdms info --format json` and the
+/// Parquet export carry it.
 ///
 /// # Errors
 ///
-/// When a channel cannot be read or exported, or writing fails.
+/// Returns an error when a channel cannot be read or exported, or writing
+/// fails.
 pub fn write_csv<W: Write>(
     file: &TdmsFile,
     channels: &[Channel<'_>],
@@ -353,7 +357,8 @@ pub fn write_csv<W: Write>(
     }
     line.push(b'\n');
     out.write_all(&line)?;
-    // Text is much larger than the values; keep batches modest.
+    // Text is much larger than the values, so a batch is at most 65,536
+    // rows.
     let batch = plan.batch.min(1 << 16);
     let mut start = 0;
     while start < plan.rows {

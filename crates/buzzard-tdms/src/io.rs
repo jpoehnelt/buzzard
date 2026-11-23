@@ -1,10 +1,10 @@
-//! Positional reads: the only way this crate touches a file.
+//! Positional reads. The crate reads a file in no other way.
 //!
 //! The workspace forbids `unsafe`, so a file cannot be memory-mapped here.
-//! Every read is a positional read into a buffer the reader owns, which
-//! also means that a file that shrinks while it is open produces an error
-//! and never a bus fault. A mapped backend can be added later by
-//! implementing [`ReadAt`] in a crate that allows `unsafe`.
+//! Every read is a positional read into a buffer that the reader owns, so
+//! a file that shrinks while it is open produces an error and cannot cause
+//! a bus fault. To add a mapped backend, implement [`ReadAt`] in a crate
+//! that allows `unsafe`.
 
 use std::fs::File;
 use std::io;
@@ -13,16 +13,16 @@ use std::sync::Arc;
 /// A source of bytes that can be read at any offset from several threads at
 /// once.
 pub trait ReadAt: Send + Sync {
-    /// Total number of bytes. It must not change while the source is in use;
-    /// [`ReadAt`] for [`File`] is wrapped so that the size is taken once.
+    /// Total number of bytes. It must not change while the source is in use.
+    /// [`FileSource`] reads the size of its [`File`] once, when it is made.
     fn size(&self) -> u64;
 
     /// Fills `buf` with the bytes at `offset`.
     ///
     /// # Errors
     ///
-    /// An error of kind [`io::ErrorKind::UnexpectedEof`] when fewer than
-    /// `buf.len()` bytes exist at `offset`, or the error of the operating
+    /// Returns an error of kind [`io::ErrorKind::UnexpectedEof`] when fewer
+    /// than `buf.len()` bytes exist at `offset`, or the error of the operating
     /// system.
     fn read_exact_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<()>;
 }
@@ -41,7 +41,7 @@ impl FileSource {
     ///
     /// # Errors
     ///
-    /// When the file's size cannot be read.
+    /// Returns an error when the file's size cannot be read.
     pub fn new(file: File) -> io::Result<Self> {
         let size = file.metadata()?.len();
         Ok(Self {

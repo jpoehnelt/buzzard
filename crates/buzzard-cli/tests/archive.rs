@@ -103,7 +103,7 @@ fn inspect_lists_the_members_of_an_archive() {
     assert!(stdout.starts_with(
         "### lib.llb\n\n| | |\n| --- | --- |\n| Kind | LLB archive (`LVAR`) |\n| Members | 4 |\n"
     ));
-    // Directory order, not name order.
+    // The rows are in directory order, which is not name order here.
     assert_eq!(
         rows[0],
         format!("| Entry.vi | VI (`LVIN`) | 23.0.0 | stored | {entry} | {entry} |")
@@ -146,7 +146,7 @@ fn inspect_lists_the_members_of_an_archive() {
     assert_eq!(members[3]["kind"], "other");
     assert_eq!(members[3]["storage"], "stored");
 
-    // An archive has no diagram: the error names a member to ask for.
+    // An archive has no diagram, so the error names a member to ask for.
     for format in ["svg", "dot", "mermaid"] {
         let (code, stdout, stderr) = run(&["inspect", "lib.llb", "--format", format], &dir.0);
         assert_eq!((code, stdout.as_str()), (2, ""), "{format}");
@@ -199,7 +199,7 @@ fn what_cannot_be_opened_exits_two_with_the_reason() {
         let (code, _, _) = run(&["inspect", path], &dir.0);
         assert_eq!(code, 2, "{path}");
     }
-    // A path that does not exist is refused by every command that scans.
+    // Every command that scans refuses a path that does not exist.
     for command in ["check", "verify", "deps"] {
         for path in ["lib.llb/Absent.vi", "absent.llb/Entry.vi"] {
             let (code, stdout, stderr) = run(&[command, path], &dir.0);
@@ -365,7 +365,7 @@ fn a_member_path_in_any_letter_case_is_the_member() {
     assert_eq!(both, archive);
     assert_eq!(slashes(&both).matches("lib.llb/Entry.vi: ").count(), 1);
 
-    // SARIF never has a member path as an artifact, also when the
+    // SARIF never has a member path as an artifact, even when the
     // archive itself was not scanned.
     let (code, stdout, _) = run(
         &[
@@ -423,7 +423,7 @@ fn a_member_path_in_any_letter_case_is_the_member() {
     assert!(!slashes(&twice).contains("m.llb/machine.vi"), "{twice}");
 }
 
-/// Names in an archive are data: none of them starts a line of a report
+/// Names in an archive are data. None of them starts a line of a report
 /// or reaches the terminal as a control sequence.
 #[test]
 fn a_member_name_cannot_forge_a_line_of_output() {
@@ -518,7 +518,8 @@ fn a_project_library_in_an_archive_is_a_file_of_the_workspace() {
             .replace("lib.llb/", "loose/"),
         slashes(&on_disk).lines().next().unwrap()
     );
-    // By its path, in each command that takes a project file.
+    // The library is also read by its member path, in each command that
+    // takes a project file.
     let (code, by_path, _) = run(&["check", "lib.llb/Lib.lvlib"], &dir.0);
     assert_eq!(code, 1);
     assert!(
@@ -566,7 +567,8 @@ fn check_lints_the_members_of_an_archive() {
     assert!(lines[1..lines.len() - 1]
         .iter()
         .all(|line| line.starts_with("lib.llb/add.vi: ")));
-    // The archive, three members that are VIs or controls, and Main.vi.
+    // The 5 files are the archive, three members that are VIs or
+    // controls, and Main.vi.
     assert!(lines.last().unwrap().ends_with(" in 5 files."), "{stdout}");
 
     // A member path is checked like a file path.
@@ -581,7 +583,7 @@ fn check_lints_the_members_of_an_archive() {
         (code, stdout.as_str()),
         (0, "No problems found in 1 file.\n")
     );
-    // The archive alone: its members without the caller.
+    // The archive alone gives its members without the caller.
     let (code, stdout, _) = run(&["check", "lib.llb", "--ignore", "BZ001"], &dir.0);
     assert!(stdout.ends_with(" in 4 files.\n"), "{stdout}");
     assert!(code == 0 || stdout.contains("lib.llb"));
@@ -696,7 +698,7 @@ fn diff_takes_a_member_on_either_side() {
             .member("Entry.vi", &vi(&CLEAN, &["/add.vi", "/more.vi"]))
             .build(),
     );
-    // The same file on both sides, whichever is the member.
+    // The two sides hold the same file, whichever side is the member.
     for (old, new) in [
         ("lib.llb/add.vi", "loose/add.vi"),
         ("loose/add.vi", "lib.llb/add.vi"),
@@ -705,7 +707,7 @@ fn diff_takes_a_member_on_either_side() {
         let (code, stdout, stderr) = run(&["diff", old, new], &dir.0);
         assert_eq!((code, stderr.as_str()), (0, ""), "{old} {new}: {stdout}");
     }
-    // Two members of two archives, and a member against a file.
+    // Two members of two archives differ, and so do a file and a member.
     let (code, between, _) = run(&["diff", "lib.llb/Entry.vi", "other.llb/Entry.vi"], &dir.0);
     assert_eq!(code, 1);
     assert!(between.contains("more.vi"), "{between}");
@@ -728,8 +730,8 @@ fn diff_takes_a_member_on_either_side() {
     assert_eq!(code, 1);
     assert!(serde_json::from_str::<Value>(&json).is_ok());
 
-    // A member that is not in its archive is a file that is not there:
-    // the other side was added or deleted.
+    // A member that its archive does not hold counts as a file that is
+    // not on disk, so the other side was added or deleted.
     let (code, added, _) = run(&["diff", "lib.llb/Absent.vi", "lib.llb/add.vi"], &dir.0);
     let (_, from_nothing, _) = run(&["diff", "loose/absent.vi", "lib.llb/add.vi"], &dir.0);
     assert_eq!(code, 1);
@@ -768,7 +770,8 @@ fn deps_and_check_agree_about_members_that_are_not_there() {
         ),
         "{text}"
     );
-    // The archive, its three members, Main.vi, Stale.vi and the project.
+    // The 7 files are the archive, its three members, Main.vi, Stale.vi,
+    // and the project.
     assert!(text.contains("Scanned 7 files: "), "{text}");
     assert!(
         text.contains("2 missing relative links, 0 unparsed files."),
@@ -793,7 +796,8 @@ fn deps_and_check_agree_about_members_that_are_not_there() {
         ]
     );
 
-    // A member path as the only root: the links of that one member.
+    // With a member path as the only argument, the report holds the links
+    // of that one member.
     let (code, json, _) = run(&["deps", "lib.llb/Entry.vi", "--format", "json"], &dir.0);
     assert_eq!(code, 0);
     let json: Value = serde_json::from_str(&json).unwrap();

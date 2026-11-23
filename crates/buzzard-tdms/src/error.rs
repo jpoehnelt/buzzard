@@ -1,4 +1,5 @@
-//! The error type, and the anomalies a file can be opened in spite of.
+//! The error type, and the anomalies that do not stop a file from being
+//! opened.
 
 use std::fmt;
 use std::io;
@@ -29,7 +30,8 @@ pub enum Error {
         /// What is wrong.
         reason: &'static str,
     },
-    /// Raw data contradicts the format; found while reading values.
+    /// Raw data contradicts the format. The reader finds this error while it
+    /// reads values.
     #[error("corrupt raw data at byte {offset}: {reason}")]
     CorruptData {
         /// Byte offset in the file of the channel's data in the chunk.
@@ -95,8 +97,8 @@ pub enum Error {
 
 /// Something wrong with a file that did not stop it from being opened.
 ///
-/// The usual cause is a writer that crashed or a copy that was cut short:
-/// the last segment is then incomplete, and everything before it is intact.
+/// The usual cause is a writer that crashed or a copy that was cut short.
+/// The last segment is then incomplete, and everything before it is intact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Anomaly {
@@ -124,7 +126,7 @@ pub enum Anomaly {
         /// How many bytes are missing.
         missing: u64,
     },
-    /// The file ends inside a segment's metadata; the segment is ignored.
+    /// The file ends inside a segment's metadata. The segment is ignored.
     TruncatedMetadata {
         /// Zero-based number of the segment.
         segment: u64,
@@ -158,8 +160,8 @@ pub enum Anomaly {
         /// The number found.
         version: u32,
     },
-    /// A name or a text property is not valid UTF-8; the bad bytes were
-    /// replaced with U+FFFD.
+    /// A name or a text property is not valid UTF-8. The reader replaced the
+    /// bad bytes with U+FFFD.
     InvalidUtf8 {
         /// Zero-based number of the segment.
         segment: u64,

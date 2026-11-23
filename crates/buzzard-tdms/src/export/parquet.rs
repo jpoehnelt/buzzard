@@ -1,10 +1,14 @@
 //! Parquet export.
 //!
-//! Column types: integers and floats keep their width; booleans are
-//! `BOOLEAN`; strings are UTF-8; a complex channel becomes two float
-//! columns, `.re` and `.im`; a time becomes a UTC timestamp in nanoseconds
-//! since the Unix epoch, rounded down, and is missing where the file's
-//! value lies outside the years 1677 to 2262 that this can hold.
+//! The column types follow the channel types:
+//!
+//! - Integers and floats keep their width.
+//! - Booleans are `BOOLEAN`.
+//! - Strings are UTF-8.
+//! - A complex channel becomes two float columns, `.re` and `.im`.
+//! - A time becomes a UTC timestamp in nanoseconds since the Unix epoch,
+//!   rounded down. The value is missing where the file's time lies outside
+//!   the years 1677 to 2262, the only years that this type can hold.
 //!
 //! Every property of the file, of the exported channels and of their
 //! groups is in the file's key-value metadata, as text:
@@ -14,13 +18,13 @@
 //! | `tdms.file.<property>` | a property of the file |
 //! | `tdms.group.<group>.<property>` | a property of a group |
 //! | `tdms.channel.<column>.<property>` | a property of a channel |
-//! | `buzzard.channel.<column>.path`, `.dtype`, `.length` | the channel's path, stored type and length |
+//! | `buzzard.channel.<column>.path`, `.dtype`, `.length` | the channel's path, stored type, and length |
 //! | `buzzard.channel.<column>.scaling` | `linear <slope> <intercept>` when the column was scaled |
 //! | `buzzard.channel.<column>.wf_start_time`, `.wf_start_offset`, `.wf_increment` | the channel's waveform timing |
 //! | `buzzard.time.column`, `.increment_s`, `.start_offset_s`, `.start` | the generated time column, when there is one |
 //! | `buzzard.tdms.version` | the version of this crate |
 //!
-//! The output depends only on the input and the options: the keys are in a
+//! The output depends only on the input and the options. The keys are in a
 //! fixed order, no creation time is written, and the Arrow schema is not
 //! embedded (its field metadata would be serialized in hash order).
 
@@ -50,7 +54,8 @@ use crate::types::{Column, DataType};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Compression {
-    /// Snappy: fast, read by every Parquet reader. The default.
+    /// Snappy, which is fast and which every Parquet reader reads. This is
+    /// the default.
     #[default]
     Snappy,
     /// No compression.
@@ -134,15 +139,16 @@ fn arrays(column: Column, rows: usize) -> Vec<ArrayRef> {
     }
 }
 
-/// Writes the channels as one Parquet table; see the [module](self) for
-/// its shape.
+/// Writes the channels as one Parquet table. The [module](self)
+/// documentation describes its shape.
 ///
 /// Each batch of rows becomes one row group. Its columns are decoded from
 /// the TDMS file and encoded in parallel on the current rayon thread pool.
 ///
 /// # Errors
 ///
-/// When a channel cannot be read or exported, or writing fails.
+/// Returns an error when a channel cannot be read or exported, or writing
+/// fails.
 pub fn write_parquet<W: Write + Send>(
     file: &TdmsFile,
     channels: &[Channel<'_>],
@@ -181,8 +187,8 @@ pub fn write_parquet<W: Write + Send>(
                 Compression::Snappy => Codec::SNAPPY,
                 Compression::None => Codec::UNCOMPRESSED,
             })
-            // Measurement data rarely repeats values; building dictionaries
-            // costs time and is abandoned after the first pages.
+            // Measurement data rarely repeats values. Building a dictionary
+            // costs time, and the writer abandons it after the first pages.
             .set_dictionary_enabled(false)
             .set_statistics_enabled(EnabledStatistics::Chunk)
             .set_created_by(concat!("buzzard-tdms ", env!("CARGO_PKG_VERSION")).to_owned())
@@ -195,7 +201,8 @@ pub fn write_parquet<W: Write + Send>(
         .map_err(failed)?;
     let mut writer = SerializedFileWriter::new(out, parquet_schema.root_schema_ptr(), properties)
         .map_err(failed)?;
-    let factory = ArrowRowGroupWriterFactory::new(&writer, Arc::clone(&schema));
+    let factory =
+        ArrowRowGroupWriterFactory::try_new(&writer, Arc::clone(&schema)).map_err(failed)?;
 
     let mut start = 0;
     let mut group = 0;

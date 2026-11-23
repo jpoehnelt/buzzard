@@ -18,7 +18,7 @@ use crate::header::{file_type, RsrcHeader, HEADER_SIZE};
 use crate::version::Version;
 
 /// Largest file read into memory. Real files are kilobytes to a few
-/// megabytes; the container format itself cannot exceed 4 GiB.
+/// megabytes. The container format itself cannot exceed 4 GiB.
 pub const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Read an RSRC file, checking its size and header before loading the rest,
@@ -26,16 +26,16 @@ pub const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 ///
 /// # Errors
 ///
-/// [`RsrcError::Io`] if the file cannot be read, [`RsrcError::TooLarge`] if
-/// it is over [`MAX_FILE_BYTES`], and any error of [`RsrcHeader::parse`] if
-/// it does not start with a valid header.
+/// Returns [`RsrcError::Io`] if the file cannot be read,
+/// [`RsrcError::TooLarge`] if it is over [`MAX_FILE_BYTES`], and any error of
+/// [`RsrcHeader::parse`] if it does not start with a valid header.
 pub fn read_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     let mut file = File::open(path)?;
     let len = file.metadata()?.len();
     if len > MAX_FILE_BYTES {
         return Err(RsrcError::TooLarge(len, MAX_FILE_BYTES));
     }
-    // Cannot fail: `MAX_FILE_BYTES` fits in a 32-bit `usize`.
+    // This cannot fail, because `MAX_FILE_BYTES` fits in a 32-bit `usize`.
     let size = usize::try_from(len).map_err(|_| RsrcError::TooLarge(len, MAX_FILE_BYTES))?;
     let mut bytes = vec![0; HEADER_SIZE.min(size)];
     file.read_exact(&mut bytes)?;
@@ -71,19 +71,19 @@ impl FileKind {
     }
 }
 
-/// Summary of one file: its kind, version, settings, owning libraries and
+/// Summary of one file: its kind, version, settings, owning libraries, and
 /// links to other files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ViMetadata {
     /// What the file is, decided by [`file_type`](Self::file_type).
     pub kind: FileKind,
-    /// File type code from the header, e.g. `LVIN`.
+    /// File type code from the header, such as `LVIN`.
     pub file_type: FourCc,
     /// Name the file had when it was last saved.
     pub saved_name: Option<String>,
     /// Version of the editor that saved the file.
     pub version: Option<Version>,
-    /// Settings from the `LVSR` save record; `None` when there is none.
+    /// Settings from the `LVSR` save record, or `None` when there is none.
     pub flags: Option<ViFlags>,
     /// `None` when the file has no block diagram password record.
     pub password_protected: Option<bool>,
@@ -100,7 +100,8 @@ impl ViMetadata {
     ///
     /// # Errors
     ///
-    /// Any error of [`RsrcFile::parse`] or [`from_rsrc`](Self::from_rsrc).
+    /// Returns any error of [`RsrcFile::parse`] or
+    /// [`from_rsrc`](Self::from_rsrc).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         Self::from_rsrc(&RsrcFile::parse(bytes)?)
     }
@@ -109,7 +110,7 @@ impl ViMetadata {
     ///
     /// # Errors
     ///
-    /// Any error of [`read_file`] or [`from_bytes`](Self::from_bytes).
+    /// Returns any error of [`read_file`] or [`from_bytes`](Self::from_bytes).
     pub fn from_path(path: impl AsRef<Path>) -> Result<Self> {
         Self::from_bytes(&read_file(path)?)
     }
@@ -118,8 +119,9 @@ impl ViMetadata {
     ///
     /// # Errors
     ///
-    /// If its `LVSR`, `vers`, `BDPW` or `LIBN` block is malformed. Link info
-    /// blocks never cause an error: links that do not parse are skipped.
+    /// Returns an error if its `LVSR`, `vers`, `BDPW`, or `LIBN` block is
+    /// malformed. Link info blocks never cause an error, because links that do
+    /// not parse are skipped.
     pub fn from_rsrc(file: &RsrcFile<'_>) -> Result<Self> {
         let save_record = file.of_type(b"LVSR").next();
         let lvsr = save_record.map(|r| Lvsr::parse(r.data)).transpose()?;

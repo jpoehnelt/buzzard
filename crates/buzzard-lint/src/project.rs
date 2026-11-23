@@ -1,6 +1,6 @@
-//! Project-level XML files: `.lvproj`, `.lvlib` and `.lvclass`.
+//! Project-level XML files: `.lvproj`, `.lvlib`, and `.lvclass`.
 //!
-//! All three share one layout: a root element (`Project`, `Library` or
+//! All three share one layout: a root element (`Project`, `Library`, or
 //! `LVClass`) with an `LVVersion` attribute, `Property` children, and a tree
 //! of `Item` elements. An item that refers to a file has a `URL` attribute.
 //!
@@ -10,7 +10,7 @@
 //! 13.0 and 19.0. `tests/fixtures/project` holds three of those files and
 //! names the repositories. Other versions have not been checked.
 //!
-//! * A relative `URL` is relative to the XML file *itself*, not to its
+//! * A relative `URL` is relative to the XML file itself, not to its
 //!   directory, so a sibling file is `../Sibling.vi`. Resolved against the
 //!   directory, no URL of the scan finds its file. Resolved against the
 //!   file, every URL does, except a few whose files are not in the
@@ -36,10 +36,11 @@ use crate::workspace::normalize;
 /// File extensions (lowercase, without the dot) of project-level XML files.
 pub const PROJECT_EXTENSIONS: [&str; 3] = ["lvproj", "lvlib", "lvclass"];
 
-/// Largest file that is parsed at all.
+/// Largest file that is parsed.
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
-/// Largest number of XML nodes in one file. Bounds memory on hostile input;
-/// real projects with thousands of members stay far below it.
+/// Largest number of XML nodes in one file. The limit bounds memory on
+/// hostile input. Real projects with thousands of members stay far below
+/// it.
 pub const MAX_NODES: u32 = 1_000_000;
 /// Longest `ParentClassLinkInfo` text that is decoded.
 const MAX_PARENT_LINK_CHARS: usize = 64 * 1024;
@@ -74,7 +75,7 @@ impl ProjectKind {
         }
     }
 
-    /// Name shown in summaries, e.g. `Library`.
+    /// Name shown in summaries, such as `Library`.
     pub fn label(self) -> &'static str {
         match self {
             ProjectKind::Project => "Project",
@@ -92,9 +93,10 @@ pub fn is_project_file(path: &Path) -> bool {
 /// One `Item` element that has a `URL` attribute.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct Member {
-    /// The `Name` attribute, e.g. `Run.vi`.
+    /// The `Name` attribute, such as `Run.vi`.
     pub name: String,
-    /// The `Type` attribute, e.g. `VI`, `LVClass`, `Library`, `Document`.
+    /// The `Type` attribute, such as `VI`, `LVClass`, `Library`, or
+    /// `Document`.
     pub item_type: String,
     /// The `URL` attribute exactly as stored.
     pub url: String,
@@ -110,27 +112,27 @@ pub struct Member {
 /// The parent of a class, from `NI.LVClass.ParentClassLinkInfo`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct ParentClass {
-    /// File name of the parent class, e.g. `Base.lvclass`.
+    /// File name of the parent class, such as `Base.lvclass`.
     pub name: String,
     /// Owning libraries followed by the class name.
     pub qualified_name: Vec<String>,
     /// The stored link, as written by the editor.
     pub link: LvPath,
-    /// The link resolved against the class file; `None` for installation
+    /// The link resolved against the class file. `None` for installation
     /// paths such as `<vilib>/...`.
     pub path: Option<PathBuf>,
 }
 
-/// A parsed `.lvproj`, `.lvlib` or `.lvclass` file.
+/// A parsed `.lvproj`, `.lvlib`, or `.lvclass` file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProjectFile {
-    /// Which kind of file this is, from its extension rather than its root
-    /// element.
+    /// Which kind of file this is, taken from its extension, not from its
+    /// root element.
     pub kind: ProjectKind,
-    /// File name, e.g. `Motor.lvclass`.
+    /// File name, such as `Motor.lvclass`.
     pub name: String,
-    /// Editor version that saved the file, e.g. `19.0.0`. The raw attribute
-    /// is kept when it is not the usual eight hex digits.
+    /// Editor version that saved the file, such as `19.0.0`. The raw
+    /// attribute is kept when it is not eight hex digits.
     pub lv_version: Option<String>,
     /// Every item with a URL, in document order.
     pub members: Vec<Member>,
@@ -167,7 +169,7 @@ impl ProjectFile {
     ///
     /// # Errors
     ///
-    /// As [`from_path`](Self::from_path).
+    /// Returns the errors of [`from_path`](Self::from_path).
     pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
             return Err(format!(
@@ -179,11 +181,11 @@ impl ProjectFile {
     }
 
     /// Parse file contents that may not be valid UTF-8. Older editor
-    /// versions wrote the system code page; those bytes map through Latin-1.
+    /// versions wrote the system code page. Those bytes are read as Latin-1.
     ///
     /// # Errors
     ///
-    /// As for [`ProjectFile::parse`].
+    /// Returns the errors of [`ProjectFile::parse`].
     pub fn parse_bytes(path: &Path, bytes: &[u8]) -> Result<Self, String> {
         if let Ok(text) = std::str::from_utf8(bytes) {
             Self::parse(path, text)
@@ -193,21 +195,21 @@ impl ProjectFile {
         }
     }
 
-    /// Parse XML text. `path` is where the file lives; member URLs and the
-    /// parent class link are resolved against it.
+    /// Parse XML text. `path` is the location of the file. Member URLs and
+    /// the parent class link are resolved against it.
     ///
     /// # Errors
     ///
     /// Returns the reason as text when `path` does not have one of the three
     /// extensions; when the text is not well-formed XML, has a DTD, or has
     /// more than [`MAX_NODES`] nodes; or when the root element is not
-    /// `Project`, `Library` or `LVClass`.
+    /// `Project`, `Library`, or `LVClass`.
     pub fn parse(path: &Path, text: &str) -> Result<Self, String> {
         let kind = ProjectKind::from_path(path)
             .ok_or_else(|| "not a .lvproj, .lvlib or .lvclass file".to_owned())?;
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-        // A DTD is never present in real files and is the vehicle for entity
-        // expansion attacks, so it stays disallowed.
+        // Real files have no DTD, and entity expansion attacks need one, so
+        // a DTD is refused.
         let options = ParsingOptions {
             allow_dtd: false,
             nodes_limit: MAX_NODES,
@@ -245,7 +247,8 @@ impl ProjectFile {
     }
 }
 
-/// `13008000` -> `13.0.0`; anything else is returned unchanged.
+/// Format eight hex digits as a version: `13008000` becomes `13.0.0`.
+/// Anything else is returned unchanged.
 fn format_version(raw: &str) -> String {
     if raw.len() == 8 && raw.bytes().all(|b| b.is_ascii_hexdigit()) {
         if let Ok(value) = u32::from_str_radix(raw, 16) {
@@ -262,7 +265,7 @@ fn node_text(node: Node<'_, '_>) -> String {
         .collect()
 }
 
-/// Collect every item with a URL. Iterates in document order without
+/// Collect every item with a URL. The loop runs in document order without
 /// recursion, so nesting depth cannot overflow the stack.
 fn collect_members(file: &Path, root: Node<'_, '_>) -> Vec<Member> {
     let mut members = Vec::new();
@@ -339,7 +342,7 @@ fn parent_from_text(file: &Path, text: &str) -> Option<ParentClass> {
 ///
 /// Each character carries six bits, most significant first, as the byte
 /// `0x21 + value` (so `!` is 0 and `` ` `` is 63). There is no padding
-/// character: the bits left over after the last whole byte must be zero.
+/// character. The bits left over after the last whole byte must be zero.
 /// Returns `None` for any character outside that range.
 pub fn decode_bin(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
@@ -386,8 +389,7 @@ const PARENT_LINK_TYPES: [u8; 25] = [
 ///   PTHx   flattened path, to the end of the array
 /// ```
 ///
-/// Anything that deviates from this layout yields `None` rather than a
-/// guess.
+/// A value that deviates from this layout gives `None`, never a guess.
 pub fn parse_parent_link(bytes: &[u8]) -> Option<(Vec<String>, LvPath)> {
     let rest = bytes.get(4..)?;
     let rest = rest.strip_prefix(&PARENT_LINK_TYPES)?;
@@ -417,7 +419,8 @@ pub fn parse_parent_link(bytes: &[u8]) -> Option<(Vec<String>, LvPath)> {
     Some((qualified_name, link))
 }
 
-/// Same policy as the binary parser: UTF-8 when valid, else Latin-1.
+/// Decode text as the binary parser does: as UTF-8 when the bytes are
+/// valid UTF-8, and as Latin-1 otherwise.
 fn decode_text(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
         Ok(s) => s.to_owned(),
@@ -425,7 +428,8 @@ fn decode_text(bytes: &[u8]) -> String {
     }
 }
 
-/// Encode bytes the way [`decode_bin`] reads them. Used to build fixtures.
+/// Encode bytes the way [`decode_bin`] reads them. Tests use it to build
+/// fixtures.
 pub fn encode_bin(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 4 / 3 + 1);
     let mut acc: u32 = 0;
@@ -452,13 +456,14 @@ fn push_pstr(out: &mut Vec<u8>, text: &str) {
     out.extend_from_slice(&text.as_bytes()[..usize::from(len)]);
 }
 
-/// Build the text of a `ParentClassLinkInfo` property. Used to build
-/// fixtures; the output has the layout [`parse_parent_link`] reads.
+/// Build the text of a `ParentClassLinkInfo` property. Tests use it to
+/// build fixtures. The output has the layout [`parse_parent_link`] reads.
 ///
 /// # Panics
 ///
-/// If a count or length does not fit its field: more than `u32::MAX` name
-/// parts, more than `u16::MAX` path components, or 4 GiB or more of data.
+/// Panics if a count or length does not fit its field: more than
+/// `u32::MAX` name parts, more than `u16::MAX` path components, or 4 GiB or
+/// more of data.
 pub fn encode_parent_link(version: u32, qualified_name: &[&str], link: &LvPath) -> String {
     let part_count = u32::try_from(qualified_name.len()).expect("name part count fits in a u32");
     let mut data = part_count.to_be_bytes().to_vec();

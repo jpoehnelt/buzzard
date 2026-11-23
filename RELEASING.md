@@ -7,7 +7,7 @@ Publish in this order: `buzzard-rsrc`, `buzzard-tdms`, `buzzard-lint`,
 `buzzard-ls`, `buzzard-mcp`, `buzzard-cli`. `buzzard-tdms` depends on none of
 the others and can be released alone. All six share the `version` in
 `[workspace.package]` in the root `Cargo.toml`. A published version is
-permanent. It can be yanked, not changed.
+permanent. You can yank it, but you cannot change it.
 
 ## The workflow
 
@@ -82,7 +82,8 @@ owner does the first release of each crate by hand.
    approve the `release` environment. With `tdms`, the other crates stay at
    their published version.
 4. If a run fails after some crates were uploaded, fix the cause and run it
-   again. The index error of step 5 above needs no fix, only a second run.
+   again. The index error of step 5 above needs no fix. Run the workflow a second
+   time.
 
 A crate added to the workspace later needs "The first release of a crate"
 once, and a place in the list of crates in `release.yml`.

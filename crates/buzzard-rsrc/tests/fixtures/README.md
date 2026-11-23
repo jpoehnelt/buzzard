@@ -1,7 +1,7 @@
 # Fixtures
 
-Real binary files used as conformance fixtures, copied unmodified from two
-projects.
+The conformance tests read these real binary files, copied unmodified from
+two projects.
 
 | Directory | Source | License |
 | --- | --- | --- |
@@ -20,5 +20,5 @@ No fixture is part of a published package.
 
 Each fixture has a snapshot in `../snapshots/`. To regenerate them, run
 `BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance`. The two
-`.llb` files also have an `.archive.json` snapshot: what the archive reader
-lists, or why it does not open the file.
+`.llb` files also have an `.archive.json` snapshot. It holds what the archive
+reader lists, or why the reader does not open the file.

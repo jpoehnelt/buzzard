@@ -1,5 +1,5 @@
-// Finding the `buzzard` executable. Pure: the file system and the
-// environment are passed in, so this is tested without touching either.
+// Finds the `buzzard` executable. The caller passes in the file system and
+// the environment, so the tests touch neither.
 
 import * as path from 'node:path';
 
@@ -13,7 +13,7 @@ export const DEFAULT_BINARY = 'buzzard';
 
 export interface ResolveEnvironment {
   platform: NodeJS.Platform;
-  /** Environment variables; names are matched without regard to case on Windows. */
+  /** Environment variables. On Windows, names are matched without regard to case. */
   env: Readonly<Record<string, string | undefined>>;
   /** The user's home directory, for a leading `~`. */
   homeDir?: string | undefined;
@@ -46,7 +46,7 @@ function envValue(environment: ResolveEnvironment, name: string): string | undef
   return undefined;
 }
 
-/** The file names to try for one configured name: itself, then PATHEXT on Windows. */
+/** The file names to try for one configured name: the name itself and, on Windows, the name with each PATHEXT extension. */
 function withExtensions(name: string, environment: ResolveEnvironment): string[] {
   if (environment.platform !== 'win32') {
     return [name];
@@ -126,7 +126,7 @@ export function resolveBinary(setting: string | undefined, environment: ResolveE
   const pathVariable = envValue(environment, 'PATH') ?? '';
   for (const raw of pathVariable.split(api.delimiter)) {
     // Windows allows quoted entries. An empty or relative entry would mean
-    // "relative to the current directory" and is skipped on purpose.
+    // "relative to the current directory", so it is skipped.
     const directory = environment.platform === 'win32' ? raw.replace(/^"(.*)"$/, '$1') : raw;
     if (directory === '' || !api.isAbsolute(directory)) {
       continue;

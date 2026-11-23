@@ -10,10 +10,12 @@ use clap::ValueEnum;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
-    /// The old and the new file. A file that does not exist (or
-    /// /dev/null) counts as empty: everything is added or removed.
+    /// The old and the new file. A file that does not exist, or
+    /// /dev/null, counts as empty, so everything is reported as added or
+    /// removed.
     ///
-    /// With --git: the arguments git passes to an external diff driver.
+    /// With --git, these are the arguments that git passes to an external
+    /// diff driver.
     #[arg(required = true, num_args = 1..=9, value_name = "FILE")]
     files: Vec<String>,
     /// Output format.
@@ -51,8 +53,8 @@ fn load(path: &str, same_bytes: bool) -> Result<Side, String> {
     if is_null_device(path) {
         return Ok((None, None));
     }
-    // A member of an archive that is not in it is like a file that is not
-    // on disk: the other side was added or deleted.
+    // A member that its archive does not hold counts as a file that is not
+    // on disk, so the other side was added or deleted.
     if let Some((archive, name)) = buzzard_lint::archive::split(Path::new(path)) {
         return match buzzard_lint::archive::read_member(&archive, &name) {
             Ok(Some(bytes)) => match Inspection::from_bytes(&bytes) {
@@ -63,9 +65,9 @@ fn load(path: &str, same_bytes: bool) -> Result<Side, String> {
             Err(err) => Err(format!("{path}: {err}")),
         };
     }
-    // Two archives are not compared member by member, and what is not
-    // compared is not called the same: only two archives with the same
-    // bytes are. An archive without a directory (one built into an
+    // Two archives are not compared member by member. Because their members
+    // were not compared, they are reported as the same only when their bytes
+    // are the same. An archive without a directory (one built into an
     // application) is a resource file like any other.
     let file = Path::new(path);
     if !same_bytes && buzzard_lint::archive::is_archive(file) && file.is_file() {
@@ -177,7 +179,7 @@ mod tests {
     #[test]
     fn null_device_is_recognised_on_every_platform() {
         assert!(is_null_device("/dev/null"));
-        // `nul` is the null device on Windows only; elsewhere it is an
+        // `nul` is the null device on Windows only. Elsewhere it is an
         // ordinary file name.
         assert_eq!(is_null_device("nul"), cfg!(windows));
         assert_eq!(is_null_device("NUL"), cfg!(windows));

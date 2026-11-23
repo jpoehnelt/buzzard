@@ -1,14 +1,14 @@
 #!/bin/sh
-# Benchmark the TDMS reader: build the release example and run it for
-# every shape with 1 thread and with all cores.
+# Benchmarks the TDMS reader. Builds the release example and runs it for
+# every shape, with 1 thread and with all cores.
 #
 #   tools/tdms-bench.sh [SIZE_MB] [DIR]
 #
 # SIZE_MB is the size of each generated file (default 400). DIR is where
-# the files go (default target/tdms-bench); it needs SIZE_MB of free space
-# twice over, for the file and its Parquet export. Everything written is
-# deleted again. Results are the best of three runs with the file in the
-# page cache.
+# the files go (default target/tdms-bench). DIR needs twice SIZE_MB of free
+# space, for the file and its Parquet export. The benchmark deletes every
+# file it writes. Each result is the best of three runs with the file in
+# the page cache.
 set -eu
 
 size=${1:-400}

@@ -1,5 +1,6 @@
-//! Hostile and damaged input: an error or a correct partial result, never
-//! a panic, a hang, or more memory than the file accounts for.
+//! Tests of hostile and damaged input. The reader gives an error or a
+//! correct partial result. It never panics, never hangs, and never allocates
+//! more than the file accounts for.
 
 mod common;
 
@@ -12,9 +13,10 @@ use common::{assert_matches, daqmx_scenario, digital_scenario, open, scenario, S
 
 /// Opens the bytes and, when that works, uses everything: every property,
 /// every value of every channel and scaler, scaled values, chunked reads.
-/// Returns the error of opening. Panics only if the reader does, or if a
-/// channel claims more values than the file has bytes for, which is what
-/// keeps every allocation within the size of the file.
+/// Returns the error when the bytes do not open. Panics if the reader does,
+/// or if a bound fails. The main bound is that no channel claims more values
+/// than the file has bytes for, which keeps every allocation within the size
+/// of the file.
 fn exercise(bytes: &[u8], index: Option<&[u8]>) -> Option<Error> {
     let file = match open(bytes, index) {
         Ok(file) => file,
@@ -163,7 +165,7 @@ fn any_single_damaged_byte_is_survived() {
 
 #[test]
 fn seeded_random_damage_is_survived() {
-    // Words that break size arithmetic when they land in a count, a length
+    // Words that break size arithmetic when they land in a count, a length,
     // or an offset.
     const WORDS: [u64; 12] = [
         0,
@@ -258,12 +260,13 @@ fn corrupt(bytes: &[u8], reason: &str) {
 fn absurd_lead_in_offsets_are_errors_or_truncation() {
     let built = plain();
     let bytes = &built.bytes;
-    // Next segment offset: zero, smaller than the metadata, one short.
+    // The next segment offset is zero, smaller than the metadata, or one
+    // short.
     corrupt(&with(bytes, 12, &0u64.to_le_bytes()), "metadata is longer");
     corrupt(&with(bytes, 12, &10u64.to_le_bytes()), "metadata is longer");
     let next = u64::from_le_bytes(bytes[12..20].try_into().unwrap());
     corrupt(&with(bytes, 12, &(next - 1).to_le_bytes()), "segment tag");
-    // Raw data offset beyond the segment.
+    // The raw data offset is beyond the segment.
     corrupt(
         &with(bytes, 20, &u64::MAX.to_le_bytes()),
         "metadata is longer",
@@ -272,7 +275,7 @@ fn absurd_lead_in_offsets_are_errors_or_truncation() {
         &with(bytes, 20, &(next + 1).to_le_bytes()),
         "metadata is longer",
     );
-    // A next segment offset near the top of the range must not wrap: the
+    // A next segment offset near the top of the range must not wrap. The
     // segment is taken to run to the end of the file.
     for huge in [u64::MAX - 1, u64::MAX - 27, u64::MAX - 28, 1 << 63] {
         let file = open(&with(bytes, 12, &huge.to_le_bytes()), None).unwrap();
@@ -282,7 +285,8 @@ fn absurd_lead_in_offsets_are_errors_or_truncation() {
         ));
         assert_eq!(file.segment_count(), 1);
     }
-    // Not a TDMS file at all, and an index file passed off as one.
+    // The bytes are not a TDMS file, or are an index file given as a data
+    // file.
     assert!(matches!(exercise(b"", None), Some(Error::NotTdms)));
     assert!(matches!(exercise(b"TDS", None), Some(Error::NotTdms)));
     assert!(matches!(
@@ -311,8 +315,8 @@ fn absurd_counts_and_lengths_are_errors() {
     let built = plain();
     let bytes = &built.bytes;
     let max = u32::MAX.to_le_bytes();
-    // The number of objects, a path length, a property count, the length
-    // of a property's name and of its value.
+    // These fields are the number of objects, a path length, a property
+    // count, and the lengths of a property's name and of its value.
     corrupt(&with(bytes, 28, &max), "ends inside a field");
     corrupt(
         &with(bytes, 28, &0x7FFF_FFFFu32.to_le_bytes()),
@@ -324,7 +328,8 @@ fn absurd_counts_and_lengths_are_errors() {
     corrupt(&with(bytes, root_props + 4, &max), "ends inside a field");
     let value = after(bytes, b"title") + 4;
     corrupt(&with(bytes, value, &max), "ends inside a field");
-    // The raw data index of /'g'/'a': length, type, dimension, count.
+    // The raw data index of /'g'/'a' has a length, a type, a dimension, and
+    // a count.
     let index = after(bytes, b"/'g'/'a'");
     corrupt(&with(bytes, index, &21u32.to_le_bytes()), "index length");
     corrupt(&with(bytes, index, &28u32.to_le_bytes()), "index length");
@@ -343,9 +348,9 @@ fn absurd_counts_and_lengths_are_errors() {
         &with(bytes, index + 12, &(1u64 << 62).to_le_bytes()),
         "overflows",
     );
-    // "Same index as before" for an object that has none.
+    // The index says "same index as before" for an object that has none.
     corrupt(&with(bytes, index, &0u32.to_le_bytes()), "never had");
-    // Types whose layout is not published, and no type at all.
+    // The type is one whose layout is not published, or no type.
     for code in [11u32, 0x1B, 0x4F, 0] {
         let damaged = with(bytes, index + 4, &code.to_le_bytes());
         assert!(
@@ -353,7 +358,7 @@ fn absurd_counts_and_lengths_are_errors() {
             "type code {code:#x}"
         );
     }
-    // A property of an unknown type, and of a type without a known size.
+    // A property has an unknown type, or a type without a known size.
     let kind = after(bytes, b"title");
     corrupt(
         &with(bytes, kind, &0x55u32.to_le_bytes()),
@@ -363,7 +368,7 @@ fn absurd_counts_and_lengths_are_errors() {
         exercise(&with(bytes, kind, &11u32.to_le_bytes()), None),
         Some(Error::Unsupported { .. })
     ));
-    // The string channel: fewer bytes than its offset table needs.
+    // The string channel has fewer bytes than its offset table needs.
     let strings = after(bytes, b"/'g'/'s'");
     corrupt(
         &with(bytes, strings + 20, &7u64.to_le_bytes()),
@@ -379,8 +384,8 @@ fn absurd_counts_and_lengths_are_errors() {
 fn a_count_larger_than_the_data_gives_what_is_there() {
     let built = plain();
     let index = after(&built.bytes, b"/'g'/'a'");
-    // 2^40 values declared; each segment holds 16 bytes of them and 14 of
-    // the string channel.
+    // The index declares 2^40 values. Each segment holds 16 bytes of them
+    // and 14 bytes of the string channel.
     let damaged = with(&built.bytes, index + 12, &(1u64 << 40).to_le_bytes());
     assert!(exercise(&damaged, None).is_none());
     let file = open(&damaged, None).unwrap();
@@ -394,7 +399,7 @@ fn a_count_larger_than_the_data_gives_what_is_there() {
 
 #[test]
 fn inconsistent_layouts_are_errors() {
-    // Interleaved channels of different lengths.
+    // The interleaved channels have different lengths.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -407,7 +412,7 @@ fn inconsistent_layouts_are_errors() {
         &with(&built.bytes, index + 12, &5u64.to_le_bytes()),
         "interleaved channels differ",
     );
-    // A string channel in an interleaved segment.
+    // A string channel is in an interleaved segment.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -418,7 +423,7 @@ fn inconsistent_layouts_are_errors() {
         exercise(&builder.build().bytes, None),
         Some(Error::Unsupported { .. })
     ));
-    // A channel that changes its type.
+    // A channel changes its type.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -433,7 +438,7 @@ fn inconsistent_layouts_are_errors() {
         &with(&built.bytes, index + 4, &DataType::F32.code().to_le_bytes()),
         "changes its data type",
     );
-    // A malformed object path.
+    // The object path is malformed.
     for path in ["g", "/g", "/'g", "/'g'/'a'/'b'", "/'g'x", ""] {
         let mut builder = FileBuilder::new();
         builder.segment().object(Object::raw_path(path));
@@ -459,7 +464,7 @@ fn the_same_object_twice_in_a_segment_is_read_in_order() {
 fn bad_string_offsets_are_a_read_error() {
     let built = plain();
     let data = usize::try_from(built.data_offsets[0]).unwrap();
-    // The raw data: 16 bytes of /'g'/'a', then the offsets 3 and 6.
+    // The raw data is 16 bytes of /'g'/'a', then the offsets 3 and 6.
     let table = data + 16;
     assert_eq!(built.bytes[table..table + 8], [3, 0, 0, 0, 6, 0, 0, 0]);
     for (first, second) in [(5u32, 3u32), (3, 7), (u32::MAX, u32::MAX), (7, 6)] {
@@ -522,8 +527,10 @@ fn bad_scalers_are_errors() {
     assert!(exercise(&file(&[4], 2, 0, false), None).is_none());
     let good = file(&[4], 2, 0, false);
     let index = after(&good, b"/'g'/'ai'");
-    // After the marker: type, dimension, count (8), scalers (4), then the
-    // scaler: type, buffer, offset, format, id; then the widths.
+    // The fields after the marker are the type, the dimension, the count
+    // (8 bytes) and the number of scalers. The scaler follows with its type,
+    // buffer, offset, format, and id. The count of widths and the widths come
+    // last.
     let (buffer, offset, width) = (index + 28, index + 32, index + 48);
     corrupt(
         &with(&good, offset, &3u32.to_le_bytes()),
@@ -552,7 +559,7 @@ fn bad_scalers_are_errors() {
         &with(&good, width - 4, &u32::MAX.to_le_bytes()),
         "ends inside a field",
     );
-    // A wider row than the data has: nothing can be read of the chunk.
+    // A row wider than the data. Nothing of the chunk can be read.
     let wide = with(&good, width, &u32::MAX.to_le_bytes());
     assert!(exercise(&wide, None).is_none());
     assert_eq!(
@@ -582,9 +589,9 @@ fn a_file_that_shrinks_while_open_is_an_error_not_a_fault() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// What a pathological file may cost. The index is built in a single pass
-/// whose work is in proportion to the bytes of metadata, so these hold
-/// with a wide margin on any machine that runs the test suite at all.
+/// The time a pathological file may take to open. The index is built in a
+/// single pass whose work is in proportion to the bytes of metadata, so the
+/// limit has a wide margin on any machine that runs the test suite.
 const TIME_LIMIT: Duration = Duration::from_secs(30);
 
 #[test]
@@ -606,8 +613,8 @@ fn a_million_empty_segments_cost_no_memory() {
 
 #[test]
 fn many_tiny_segments_and_many_objects_stay_within_bounds() {
-    // 100,000 segments of one byte each for 3 channels: the index keeps one
-    // run of segments, not one entry per segment.
+    // The file has 100,000 segments of one byte each for 3 channels. The
+    // index keeps one run of segments, not one entry per segment.
     let mut builder = FileBuilder::new();
     let segment = builder.segment();
     for i in 0..3 {
@@ -633,7 +640,7 @@ fn many_tiny_segments_and_many_objects_stay_within_bounds() {
     let values = channel.read_all::<u8>().unwrap();
     assert!(values[1..].iter().all(|&v| v == 2));
 
-    // 50,000 objects in one segment.
+    // One segment has 50,000 objects.
     let mut builder = FileBuilder::new();
     let segment = builder.segment();
     for i in 0..50_000 {
@@ -652,9 +659,10 @@ fn many_tiny_segments_and_many_objects_stay_within_bounds() {
 
 #[test]
 fn a_file_cannot_make_the_index_grow_without_paying_for_it() {
-    // 2,000 channels, then segments of a few bytes that each change the
-    // length of one channel: every one would need a new layout of 2,000
-    // entries. With the limit lowered, the reader gives up early.
+    // The file has 2,000 channels, then segments of a few bytes that each
+    // change the length of one channel. Every one would need a new layout
+    // of 2,000 entries. With the limit lowered, the reader returns an error
+    // early.
     let mut builder = FileBuilder::new();
     let segment = builder.segment();
     for i in 0..2_000 {
@@ -674,7 +682,7 @@ fn a_file_cannot_make_the_index_grow_without_paying_for_it() {
         outcome,
         Err(Error::IndexTooLarge { limit: 50_000 })
     ));
-    // The default limit takes the file: 800,000 entries.
+    // The default limit accepts the file, which needs about 800,000 entries.
     let file = TdmsFile::from_bytes(bytes).unwrap();
     assert_eq!(file.index_shape().1, 401);
 
@@ -720,7 +728,8 @@ fn a_typed_driver_channel_needs_one_scaler_of_its_type() {
     };
     let good = typed(vec![scaler(0, 0)]);
     assert!(exercise(&good, None).is_none());
-    // Two scalers, and one scaler of another type than the channel's.
+    // The channel has two scalers, or one scaler of another type than the
+    // channel's.
     corrupt(
         &typed(vec![scaler(0, 0), scaler(2, 1)]),
         "exactly one scaler of its type",
@@ -736,7 +745,8 @@ fn a_typed_driver_channel_needs_one_scaler_of_its_type() {
             "exactly one scaler of its type",
         );
     }
-    // The scaler's own type code: 3 is a 16-bit integer, 2 is unsigned.
+    // The scaler's own type code. 3 is a signed 16-bit integer and 2 is an
+    // unsigned one.
     assert_eq!(good[index + 24..index + 28], 3u32.to_le_bytes());
     corrupt(
         &with(&good, index + 24, &2u32.to_le_bytes()),
@@ -769,7 +779,7 @@ fn a_segment_of_driver_buffers_and_plain_data_is_an_error() {
 #[test]
 fn a_driver_channel_that_changes_its_scalers_is_an_error() {
     // One scaler more, a scaler of another type, a scaler with another
-    // number: no single read could cover such a channel.
+    // number. No single read could cover such a channel.
     for how in ["more", "type", "id"] {
         let built = common::scalers_change(how);
         corrupt(&built.bytes, "changes its scalers");
@@ -824,8 +834,8 @@ fn a_driver_channel_that_changes_its_scalers_is_an_error() {
 
 #[test]
 fn a_cut_chunk_of_several_driver_buffers_gives_the_whole_rows_of_each() {
-    // Two buffers, of 4 and of 6 bytes a row; a chunk is four rows of the
-    // first and then four rows of the second: 40 bytes.
+    // Two buffers, of 4 and of 6 bytes a row. A chunk is four rows of the
+    // first and then four rows of the second, 40 bytes in all.
     let built = common::two_driver_channels(&[4, 6], &|b| {
         b.segment()
             .daqmx_widths(&[4, 6])
@@ -893,7 +903,7 @@ fn a_cut_chunk_of_several_driver_buffers_gives_the_whole_rows_of_each() {
 
 #[test]
 fn odd_driver_and_object_lists_have_a_decided_reading() {
-    // A driver channel declared without values beside one with values.
+    // A driver channel is declared without values beside one with values.
     let mut built = common::two_driver_channels(&[6], &|b| {
         b.segment().daqmx_widths(&[6]).no_metadata();
     });
@@ -909,8 +919,8 @@ fn odd_driver_and_object_lists_have_a_decided_reading() {
     );
     assert_eq!(file.channel("g", "b").unwrap().len(), 0);
 
-    // One object listed twice with two different indexes: the later one
-    // replaces the earlier, and accounts for the segment's eight bytes.
+    // One object listed twice with two different indexes. The later index
+    // replaces the earlier one and accounts for the segment's eight bytes.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -930,7 +940,7 @@ fn odd_driver_and_object_lists_have_a_decided_reading() {
     reason = "one list of cases, read top to bottom"
 )]
 fn anomalies_say_exactly_what_is_wrong() {
-    // A file cut five bytes short, in a chunk that holds strings: nothing
+    // A file cut five bytes short, in a chunk that holds strings. Nothing
     // of the chunk can be kept.
     let built = plain();
     let cut = &built.bytes[..built.bytes.len() - 5];
@@ -954,7 +964,8 @@ fn anomalies_say_exactly_what_is_wrong() {
     assert_eq!(file.segment_count(), 2);
     assert_eq!(file.channel("g", "a").unwrap().len(), 4);
 
-    // The same cut in a chunk of fixed-size values: what is there is kept.
+    // A cut in a chunk of fixed-size values. The values that are there are
+    // kept.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -982,8 +993,8 @@ fn anomalies_say_exactly_what_is_wrong() {
     assert_eq!(file.channel("g", "a").unwrap().len(), 12);
     assert_eq!(file.channel("g", "b").unwrap().len(), 7);
 
-    // A finished segment with a tail that is no chunk: no truncation, and
-    // the same report of the incomplete chunk.
+    // A finished segment with a tail that is no whole chunk. No truncation
+    // is reported, and the incomplete chunk is reported as before.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -1000,8 +1011,8 @@ fn anomalies_say_exactly_what_is_wrong() {
         }]
     );
 
-    // Text that is not UTF-8, in the second object of the second segment:
-    // the offset is where that object starts.
+    // The second object of the second segment holds text that is not
+    // UTF-8. The offset is where that object starts.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -1031,7 +1042,7 @@ fn anomalies_say_exactly_what_is_wrong() {
         }]
     );
 
-    // Raw bytes in a segment whose only channel is declared without
+    // A segment has raw bytes, and its only channel is declared without
     // values.
     let mut builder = FileBuilder::new();
     builder
@@ -1050,7 +1061,7 @@ fn anomalies_say_exactly_what_is_wrong() {
     );
     assert_eq!(file.channel("g", "a").unwrap().len(), 0);
 
-    // A file cut inside the metadata of its last segment: the segment is
+    // A file cut inside the metadata of its last segment. The segment is
     // counted and ignored.
     let mut builder = FileBuilder::new();
     for _ in 0..2 {
@@ -1079,7 +1090,7 @@ fn anomalies_say_exactly_what_is_wrong() {
     );
     assert_eq!(file.segment_count(), 2);
     assert_eq!(file.channel("g", "a").unwrap().len(), 4);
-    // A lead-in that is not all there.
+    // The lead-in is incomplete.
     let file = open(&two.bytes[..cut - 10], None).unwrap();
     assert_eq!(
         file.anomalies(),
@@ -1093,8 +1104,8 @@ fn anomalies_say_exactly_what_is_wrong() {
 
 #[test]
 fn only_the_first_anomalies_of_a_file_are_kept() {
-    // 5,000 segments that each have a version number no segment before
-    // them had.
+    // The file has 5,000 segments that each have a version number no
+    // segment before them had.
     let mut bytes = Vec::new();
     for number in 0..5_000u32 {
         bytes.extend(b"TDSm");
@@ -1120,8 +1131,8 @@ fn only_the_first_anomalies_of_a_file_are_kept() {
 fn walking_a_long_object_list_again_and_again_is_refused() {
     // 2,000 channels, then 600 segments of some forty bytes that switch
     // one channel off and on. Only two layouts result, which the limit
-    // below allows; what it does not allow is 600 walks of a list of 2,000
-    // objects that the segments' few bytes do not pay for.
+    // below allows. The limit does not allow 600 walks of a list of 2,000
+    // objects, which the segments' few bytes do not pay for.
     let mut builder = FileBuilder::new();
     let segment = builder.segment();
     for i in 0..2_000 {
@@ -1145,7 +1156,7 @@ fn walking_a_long_object_list_again_and_again_is_refused() {
         outcome,
         Err(Error::IndexTooLarge { limit: 5_000 })
     ));
-    // A third of the segments stay within what the file's bytes pay for.
+    // A tenth as many segments stay within what the file's bytes pay for.
     let mut few = FileBuilder::new();
     let segment = few.segment();
     for i in 0..2_000 {

@@ -2,11 +2,11 @@
 //!
 //! The analyzed files are binary and are never edited through the editor, so
 //! the server does not use text synchronization. It watches the file system
-//! instead and re-parses files when the IDE that owns them saves.
+//! instead and re-parses files when LabVIEW saves them.
 //!
-//! Requests are answered from an immutable snapshot ([`engine::Snapshot`]);
-//! all changes go through one worker task, which keeps the published
-//! diagnostics in order.
+//! The server answers requests from an immutable snapshot
+//! ([`engine::Snapshot`]). All changes go through one worker task, which
+//! keeps the published diagnostics in order.
 
 pub mod engine;
 pub mod fuzzy;

@@ -1,6 +1,6 @@
 # Agent guide
 
-Humans: see [README.md](README.md). This file lists the repo facts that the skills in `.claude/skills/` read.
+This file lists the repo facts that the skills in `.claude/skills/` read. The guide for people is [README.md](README.md).
 
 ## Layout
 
@@ -53,7 +53,7 @@ The lint policy is `[workspace.lints]` in the root `Cargo.toml`, which every cra
 
 ## Tests
 
-- Unit tests sit beside the code in `#[cfg(test)] mod tests` or a `tests.rs` submodule. Integration tests live in `crates/<crate>/tests/`.
+- Unit tests are beside the code in `#[cfg(test)] mod tests` or a `tests.rs` submodule. Integration tests are in `crates/<crate>/tests/`.
 - The tests in `crates/buzzard-cli/tests/` run the built binary and write synthetic `.vi` files with the helpers in `tests/common/mod.rs`.
 - `crates/buzzard-rsrc/tests/conformance.rs` compares the real binaries in `tests/fixtures` with the snapshots in `tests/snapshots`. To regenerate them, run `BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance`. Review the diff before you commit.
 - Fixture files are byte-exact copies of upstream files (`.gitattributes`). Do not edit them. A new fixture records its source and license in the README of its fixture directory and in the "Test fixtures" section of `NOTICE`.
@@ -67,7 +67,7 @@ These invariants have tests that enforce them:
 
 - Output is byte-identical across runs (`check_output_is_byte_identical_across_runs`, `parsing_is_deterministic`).
 - Truncated or corrupted input returns an error and never panics (`hostile_input_never_panics`, `hostile_archives_never_panic`).
-- A finding labelled `PROVEN` is never false. When anything about a diagram was lost or is not understood, the result is unknown, never a default. The decoder records everything it skips or cannot trust as a `Loss`, and a diagram with a loss is not searched for classic state machines (`every_loss_of_the_decoder_is_recorded`).
+- A finding labeled `PROVEN` is never false. When anything about a diagram was lost or is not understood, the result is unknown, never a default. The decoder records everything it skips or cannot trust as a `Loss`, and a diagram with a loss is not searched for classic state machines (`every_loss_of_the_decoder_is_recorded`).
 - A decoder change that skips something new records a loss for it. A decoder change that reads an absent field as a default first makes sure the field cannot be hiding.
 - `a_damaged_heap_never_adds_a_proven_finding` changes single bytes of each fixture's inflated heap. It checks that no proven finding is added and that nothing leaves a diagram without a recorded loss. `BUZZARD_HEAP_DAMAGE_STEP` sets the distance between changed bytes (499 by default). A step of 1 takes hours, so use `--release`.
 - That test has one exception: damage that keeps the structure of the diagram and changes only a value, as the test's `skeleton` function defines. The result is a complete diagram of another program, so the test counts its proofs and does not fail.

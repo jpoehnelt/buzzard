@@ -1,9 +1,9 @@
-//! Property-based tests: random sequences of segments from the generator,
-//! whose model says what each channel holds, must read back exactly, and
-//! any prefix of such a file must give a prefix of every channel.
+//! Property-based tests. The generator writes random sequences of segments,
+//! and its model says what each channel holds. Such a file must read back
+//! exactly, and any prefix of it must give a prefix of every channel.
 //!
 //! Every run draws new cases. Each test prints the seed it used, which
-//! `cargo test` shows when the test fails; set `PROPTEST_RNG_SEED` to that
+//! `cargo test` shows when the test fails. Set `PROPTEST_RNG_SEED` to that
 //! number to run the same cases again.
 
 mod common;
@@ -19,7 +19,7 @@ use proptest::test_runner::RngSeed;
 enum Op {
     /// A new raw data index for this many values per chunk.
     Index(u64),
-    /// The "same as before" marker; a new index when there is none.
+    /// The "same as before" marker, or a new index when the channel has none.
     Same,
     /// The "no data" marker.
     Off,
@@ -29,7 +29,7 @@ enum Op {
 
 #[derive(Clone, Debug)]
 enum Kind {
-    /// The listed channels change; the others carry on.
+    /// The listed channels change and the others stay as they are.
     Incremental,
     /// A new object list of exactly the listed channels.
     NewList,
@@ -90,8 +90,9 @@ fn plan() -> impl Strategy<Value = Plan> {
         )
 }
 
-/// The type of each channel: fixed for the life of a file, as the format
-/// requires, and covering every type over the channels.
+/// The type of a channel. It stays the same for the whole file, as the
+/// format requires. Over the channels and the values of `salt`, every type
+/// occurs.
 fn dtype(channel: usize, salt: usize) -> DataType {
     let all: Vec<DataType> = FIXED.into_iter().chain([DataType::String]).collect();
     all[(channel * 2 + salt) % all.len()]
@@ -182,8 +183,9 @@ fn build(plans: &[Plan], salt: usize) -> Built {
     builder.build()
 }
 
-/// 300 cases from a seed that is printed: the one in `PROPTEST_RNG_SEED`,
-/// or else a new one for every run.
+/// The configuration: 300 cases from a seed that the test prints. The seed
+/// is the one in `PROPTEST_RNG_SEED`, or a new one for every run when the
+/// variable is not set.
 #[expect(
     clippy::print_stderr,
     reason = "cargo shows the seed when a test fails"
@@ -240,7 +242,9 @@ proptest! {
             reason = "a fraction of a small length"
         )]
         let len = (built.bytes.len() as f64 * cut) as usize;
-        // Nothing of a file may be an error, a panic, or invented values.
+        // A prefix of a file must open without an error or a panic, and must
+        // give no invented values. Only a prefix shorter than the 28 bytes of
+        // a lead-in may fail to open.
         let Ok(file) = open(&built.bytes[..len], None) else {
             prop_assert!(len < 28, "a file cut at {len} must open");
             return Ok(());

@@ -1,7 +1,7 @@
 {
   "name": "buzzard",
   "displayName": "Buzzard",
-  "description": "Diagnostics, summaries and block diagram previews for LabVIEW project files, powered by the buzzard language server.",
+  "description": "Diagnostics, summaries, and block diagram previews for LabVIEW project files, from the buzzard language server.",
   "version": "0.1.0",
   "publisher": "buzzard",
   "private": true,

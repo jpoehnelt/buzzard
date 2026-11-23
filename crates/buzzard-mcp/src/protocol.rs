@@ -8,12 +8,13 @@ use serde_json::{json, Map, Value};
 
 use crate::tools::{self, State};
 
-/// Protocol revisions this server speaks, newest first. The tool methods it
-/// implements are the same in all of them.
+/// Protocol revisions this server supports, newest first. The tool methods
+/// it implements are the same in all of them.
 pub const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-/// Longest accepted message. A longer line is discarded and answered with a
-/// parse error, so a runaway client cannot exhaust memory.
+/// The longest accepted message, in bytes. The server discards a longer
+/// line and answers it with a parse error, so a client cannot exhaust
+/// memory with one long line.
 pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 
 const PARSE_ERROR: i64 = -32700;
@@ -21,7 +22,7 @@ const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 
-/// One MCP session. Holds the workspace cache shared by the tools.
+/// One MCP session. It holds the workspace cache that the tools share.
 #[derive(Debug)]
 pub struct Server {
     state: State,
@@ -42,11 +43,11 @@ impl Server {
 
     /// Read messages from `reader` until end of input, writing one line to
     /// `writer` per response. Only an I/O error on either side ends the
-    /// loop early; malformed messages are answered and skipped.
+    /// loop early. A malformed message is answered and skipped.
     ///
     /// # Errors
     ///
-    /// The first error from reading `reader` or writing to `writer`.
+    /// Returns the first error from reading `reader` or writing to `writer`.
     pub fn serve<R: BufRead, W: Write>(&mut self, mut reader: R, mut writer: W) -> io::Result<()> {
         let mut line = Vec::new();
         loop {
@@ -69,8 +70,8 @@ impl Server {
     }
 
     /// Handle one line of input. Returns the line to send back, without a
-    /// trailing newline, or `None` when nothing is owed (a notification, a
-    /// client response or a blank line).
+    /// trailing newline, or `None` when no answer is due (a notification, a
+    /// client response, or a blank line).
     pub fn handle_line(&mut self, line: &str) -> Option<String> {
         let line = line.trim();
         if line.is_empty() {
@@ -81,8 +82,8 @@ impl Server {
             Err(err) => return Some(parse_error(&err.to_string())),
         };
         let reply = match message {
-            // Batches were part of the 2025-03-26 revision only; answering
-            // them costs nothing and keeps such clients working.
+            // Only the 2025-03-26 revision has batches. The server answers
+            // them in every revision, which keeps such clients working.
             Value::Array(batch) if batch.is_empty() => Some(error(
                 &Value::Null,
                 INVALID_REQUEST,
@@ -121,7 +122,8 @@ impl Server {
         };
         let method = match message.remove("method") {
             Some(Value::String(method)) => method,
-            // A response to a request; this server never sends any.
+            // The message is a response to a request. This server sends no
+            // requests, so it ignores the response.
             None if message.contains_key("result") || message.contains_key("error") => return None,
             _ => {
                 return Some(error(
@@ -147,7 +149,8 @@ impl Server {
             "tools/list" => Ok(json!({ "tools": tools::definitions() })),
             "tools/call" => self.call_tool(params),
             other => {
-                // Method names are client-chosen and can be arbitrarily long.
+                // The client chooses the method name, which can have any
+                // length, so the reply shows 64 characters at most.
                 let shown: String = other.chars().take(64).collect();
                 Err((METHOD_NOT_FOUND, format!("Method not found: {shown}")))
             }
@@ -171,8 +174,8 @@ impl Server {
             Some(Value::Object(arguments)) => arguments,
             Some(_) => return Err(invalid("arguments must be an object")),
         };
-        // No input the test suite has found makes the analysis panic, but a
-        // tool call must not be able to take the session down if one does.
+        // No input of the test suite makes the analysis panic. If another
+        // input does, the panic must not end the session.
         let state = &mut self.state;
         let outcome = catch_unwind(AssertUnwindSafe(|| tools::call(state, &name, &arguments)));
         #[expect(

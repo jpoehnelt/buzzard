@@ -100,7 +100,7 @@ pub struct ProjectUsage {
     pub child_classes: usize,
 }
 
-/// Render a summary of a project, library or class.
+/// Render a summary of a project, library, or class.
 pub fn project_to_markdown(
     title: &str,
     project: &ProjectFile,
@@ -197,7 +197,7 @@ pub fn archive_to_markdown(title: &str, archive: &ArchiveFile) -> String {
         );
     }
     for problem in &archive.problems {
-        // Outside the table, and already on one line.
+        // The problem goes outside the table and is already on one line.
         let _ = writeln!(out, "\nNot opened: {problem}.");
     }
     out
@@ -259,7 +259,8 @@ pub fn diagram_to_markdown(diagram: &BlockDiagram) -> String {
         diagram.wires().count(),
         diagram.diagrams().len(),
     );
-    // Explicit stack so that deeply nested structures cannot overflow.
+    // An explicit stack, so that deeply nested structures cannot overflow
+    // the call stack.
     let mut stack: Vec<(usize, Item<'_>)> = vec![(0, Item::Diagram(&diagram.root, None))];
     while let Some((depth, item)) = stack.pop() {
         let indent = "  ".repeat(depth);

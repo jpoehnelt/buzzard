@@ -1,4 +1,4 @@
-//! Data types, sample types and property values.
+//! Data types, sample types, and property values.
 
 use std::fmt;
 
@@ -36,14 +36,15 @@ pub enum DataType {
     F32,
     /// 64-bit float.
     F64,
-    /// Extended-precision float. Its layout is not published; channels of
+    /// Extended-precision float. Its layout is not published, so channels of
     /// this type cannot be read.
     ExtendedFloat,
     /// 32-bit float whose unit is in the `unit_string` property.
     F32WithUnit,
     /// 64-bit float whose unit is in the `unit_string` property.
     F64WithUnit,
-    /// Extended-precision float with unit; not readable.
+    /// Extended-precision float with unit. Channels of this type cannot be
+    /// read.
     ExtendedFloatWithUnit,
     /// UTF-8 string.
     String,
@@ -51,11 +52,12 @@ pub enum DataType {
     Bool,
     /// 16-byte [`Timestamp`].
     Timestamp,
-    /// Fixed-point number. Its layout is not published; not readable.
+    /// Fixed-point number. Its layout is not published, so channels of this
+    /// type cannot be read.
     FixedPoint,
-    /// Two 32-bit floats: real, imaginary.
+    /// Two 32-bit floats, the real part and then the imaginary part.
     ComplexF32,
-    /// Two 64-bit floats: real, imaginary.
+    /// Two 64-bit floats, the real part and then the imaginary part.
     ComplexF64,
     /// Raw buffers of a data-acquisition driver, read through scalers.
     DaqmxRaw,
@@ -139,7 +141,8 @@ impl DataType {
         })
     }
 
-    /// A short, stable, lower-case name such as `i8`, `f64`, `string` or `timestamp`.
+    /// A short, stable, lower-case name such as `i8`, `f64`, `string`, or
+    /// `timestamp`.
     ///
     /// The command line and the export metadata print these names.
     pub fn name(self) -> &'static str {
@@ -187,10 +190,11 @@ impl fmt::Display for DataType {
     }
 }
 
-/// A point in time as the file stores it: whole seconds since
+/// A point in time as the file stores it, in whole seconds since
 /// 1904-01-01T00:00:00Z and a positive fraction in units of 2^-64 s.
 ///
-/// Nothing is lost on reading; the conversions below state what they drop.
+/// Reading a timestamp keeps every bit. Each conversion below states what
+/// it drops.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Pod, Zeroable)]
 #[repr(C)]
 pub struct Timestamp {
@@ -236,11 +240,11 @@ impl Timestamp {
         i64::try_from(self.to_unix_nanos()).ok()
     }
 
-    /// Seconds since the Unix epoch as a float; exact to about 100 ns for
+    /// Seconds since the Unix epoch as a float, exact to about 100 ns for
     /// present-day times.
     #[expect(
         clippy::cast_precision_loss,
-        reason = "a float cannot hold 128 bits; the documentation says so"
+        reason = "a float cannot hold 128 bits, and the documentation says so"
     )]
     pub fn to_unix_seconds_f64(self) -> f64 {
         (self.seconds - EPOCH_OFFSET_SECONDS) as f64 + self.fractions as f64 / TWO_POW_64
@@ -396,7 +400,7 @@ impl PropertyValue {
     /// integers beyond 2^53 lose their low bits.
     #[expect(
         clippy::cast_precision_loss,
-        reason = "documented: a convenience view, not the stored value"
+        reason = "the documentation says which values lose their low bits"
     )]
     pub fn as_f64(&self) -> Option<f64> {
         Some(match *self {
@@ -472,7 +476,7 @@ impl fmt::Display for PropertyValue {
     }
 }
 
-/// A named, typed value attached to the file, a group or a channel.
+/// A named, typed value attached to the file, a group, or a channel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Property {
     /// The property's name.
@@ -566,11 +570,11 @@ impl Column {
         }
     }
 
-    /// The values as 64-bit floats, for integers, floats and booleans.
-    /// Integers of 64 bits beyond 2^53 lose their low bits.
+    /// The values as 64-bit floats, for integers, floats, and booleans.
+    /// 64-bit integers beyond 2^53 lose their low bits.
     #[expect(
         clippy::cast_precision_loss,
-        reason = "documented: a convenience view, not the stored value"
+        reason = "the documentation says which values lose their low bits"
     )]
     pub fn into_f64(self) -> Option<Vec<f64>> {
         Some(match self {
@@ -589,7 +593,7 @@ impl Column {
         })
     }
 
-    /// An empty column for a readable type; `None` for the others.
+    /// An empty column for a readable type, or `None` for the others.
     pub fn empty(dtype: DataType) -> Option<Self> {
         Some(match dtype.without_unit() {
             DataType::I8 => Self::I8(Vec::new()),
