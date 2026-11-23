@@ -31,6 +31,7 @@ use std::path::{Component, Path, PathBuf};
 use buzzard_rsrc::{LvPath, PathKind};
 use serde::Serialize;
 
+use crate::archive::{is_archive, Archives};
 use crate::graph::{candidate_paths, code_page_readings, fold, resolve, DependencyGraph};
 use crate::rules::member_is_missing;
 use crate::workspace::{normalize, FileState, Workspace};
@@ -377,39 +378,67 @@ fn is_file_container(name: &str) -> bool {
     has_extension(name, &["llb", "lvlibp"])
 }
 
-/// Whether there is a file at `path`. A path that leads into a file (a
-/// VI inside an `.llb` library, the private data control inside an
-/// `.lvclass` file) counts as present when that file exists: the file is
-/// not opened to look for the item.
-fn on_disk(path: &Path) -> bool {
-    path.exists() || path.ancestors().skip(1).any(Path::is_file)
+/// Whether there may be a file at `path`. A path that leads into an
+/// `.llb` archive is present when the archive holds that member, and also
+/// when the archive cannot be read: it is then not known to be absent. A
+/// path that leads into any other file (the private data control inside
+/// an `.lvclass` file) counts as present when that file exists: the file
+/// is not opened to look for the item.
+fn on_disk(archives: &Archives, path: &Path) -> bool {
+    archives.present(path, true) != Some(false)
 }
 
-/// Whether `components` name something below `directory`. A name that
-/// is not there as written is looked for without regard to letter case:
+/// Whether `components` name something below `directory`; `None` when
+/// they lead into an `.llb` archive that cannot be read. A name that is
+/// not there as written is looked for without regard to letter case:
 /// links are saved on file systems that ignore case, and are stored in
-/// more than one spelling. As in [`on_disk`], a path that leads into a
+/// more than one spelling. A path that leads into an archive is there
+/// when the archive holds that member; one that leads into any other
 /// file counts when that file exists.
-fn below(directory: &Path, components: &[String]) -> bool {
+fn below(archives: &Archives, directory: &Path, components: &[String]) -> Option<bool> {
     let Some((first, rest)) = components.split_first() else {
-        return true;
+        return Some(true);
     };
-    let reaches = |path: &Path| path.is_file() || (path.is_dir() && below(path, rest));
-    if reaches(&directory.join(first)) {
-        return true;
+    let reaches = |path: &Path| {
+        if path.is_file() {
+            if rest.is_empty() || !is_archive(path) {
+                Some(true)
+            } else {
+                let rest: Vec<&str> = rest.iter().map(String::as_str).collect();
+                archives.contains(path, &rest)
+            }
+        } else if path.is_dir() {
+            below(archives, path, rest)
+        } else {
+            Some(false)
+        }
+    };
+    let mut unknown = false;
+    match reaches(&directory.join(first)) {
+        Some(true) => return Some(true),
+        Some(false) => {}
+        None => unknown = true,
     }
     let wanted = fold(first);
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return false;
-    };
-    entries
+    let mut others: Vec<_> = std::fs::read_dir(directory)
+        .into_iter()
+        .flatten()
         .filter_map(Result::ok)
         .map(|entry| entry.file_name())
         .filter(|name| {
             let name = name.to_string_lossy();
             name != first.as_str() && fold(&name) == wanted
         })
-        .any(|name| reaches(&directory.join(name)))
+        .collect();
+    others.sort();
+    for name in others {
+        match reaches(&directory.join(name)) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => unknown = true,
+        }
+    }
+    (!unknown).then_some(false)
 }
 
 /// Look for a stored path below the directory given for its root.
@@ -417,7 +446,12 @@ fn below(directory: &Path, components: &[String]) -> bool {
 ///
 /// The path is looked for as stored and then, like a relative link, under
 /// each legacy code page its text may be the bytes of.
-fn status_under(directory: Option<&Path>, kind: PathKind, components: &[String]) -> Status {
+fn status_under(
+    archives: &Archives,
+    directory: Option<&Path>,
+    kind: PathKind,
+    components: &[String],
+) -> Status {
     let Some(directory) = directory else {
         return Status::Unchecked;
     };
@@ -434,12 +468,20 @@ fn status_under(directory: Option<&Path>, kind: PathKind, components: &[String])
     if kind != PathKind::Absolute || !checkable(components) {
         return Status::Unchecked;
     }
-    let found = below(directory, components)
-        || code_page_readings(components)
-            .iter()
-            .any(|reading| checkable(reading) && below(directory, reading));
-    if found {
+    let mut looks = vec![below(archives, directory, components)];
+    if looks[0] != Some(true) {
+        looks.extend(
+            code_page_readings(components)
+                .iter()
+                .filter(|reading| checkable(reading))
+                .map(|reading| below(archives, directory, reading)),
+        );
+    }
+    if looks.contains(&Some(true)) {
         Status::Found
+    } else if looks.contains(&None) {
+        // An archive on the way cannot be read, so nobody has looked.
+        Status::Unchecked
     } else {
         Status::Missing
     }
@@ -520,7 +562,13 @@ impl Collected {
 
     /// File a relative link that names no workspace file, unless one of
     /// the places it may name is on disk.
-    fn unresolved(&mut self, referrer: &Path, link: &LvPath, name: Option<&str>) {
+    fn unresolved(
+        &mut self,
+        archives: &Archives,
+        referrer: &Path,
+        link: &LvPath,
+        name: Option<&str>,
+    ) {
         if link.kind != PathKind::Relative || link.is_empty() {
             return;
         }
@@ -536,7 +584,7 @@ impl Collected {
         }
         if candidate_paths(referrer, link, name)
             .iter()
-            .any(|path| on_disk(path))
+            .any(|path| on_disk(archives, path))
         {
             return;
         }
@@ -597,6 +645,7 @@ type Packages = BTreeMap<String, (BTreeSet<String>, Vec<Target>)>;
 /// Group the collected targets by root and package, with their statuses.
 /// Also returns the roots that were given a directory and have no target.
 fn grouped(
+    archives: &Archives,
     symbolic: BTreeMap<(String, String), Stored>,
     roots: &Roots,
 ) -> (Vec<Root>, Vec<String>) {
@@ -606,7 +655,7 @@ fn grouped(
         let status = target
             .spellings
             .iter()
-            .map(|(components, kind)| status_under(directory, *kind, components))
+            .map(|(components, kind)| status_under(archives, directory, *kind, components))
             .min()
             .unwrap_or(Status::Unchecked);
         let Some((components, _)) = target.spellings.first() else {
@@ -658,6 +707,7 @@ fn grouped(
 /// `graph` must have been built from the same workspace.
 pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> DepsReport {
     let mut collected = Collected::default();
+    let archives = Archives::default();
     let mut unparsed = Vec::new();
     for (path, state) in workspace.files() {
         let referrer = text_of(path);
@@ -671,7 +721,7 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
                     if !collected.stored_link(&referrer, &link.path)
                         && graph.link_target(path, &link.path, link.name()).is_none()
                     {
-                        collected.unresolved(path, &link.path, link.name());
+                        collected.unresolved(&archives, path, &link.path, link.name());
                     }
                 }
             }
@@ -679,7 +729,8 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
                 for member in &project.members {
                     if member.path.is_none() {
                         collected.unresolved_url(&referrer, &member.url);
-                    } else if !member.dependency && member_is_missing(workspace, member) {
+                    } else if !member.dependency && member_is_missing(workspace, &archives, member)
+                    {
                         // The members rule `BZ006` reports, by its test.
                         let target = member.path.as_deref().map_or_else(String::new, text_of);
                         collected
@@ -693,14 +744,16 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
                     if !collected.stored_link(&referrer, &parent.link)
                         && graph.parent_target(path, parent).is_none()
                     {
-                        collected.unresolved(path, &parent.link, Some(&parent.name));
+                        collected.unresolved(&archives, path, &parent.link, Some(&parent.name));
                     }
                 }
             }
+            // An archive holds no links; its members are files of their own.
+            FileState::Archive(_) => {}
         }
     }
 
-    let (roots, unused_roots) = grouped(collected.symbolic, roots);
+    let (roots, unused_roots) = grouped(&archives, collected.symbolic, roots);
     DepsReport {
         files: workspace.files().len(),
         roots,

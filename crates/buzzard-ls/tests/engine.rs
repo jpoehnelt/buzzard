@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use buzzard_lint::project::encode_parent_link;
 use buzzard_lint::{FileState, LintConfig};
 use buzzard_ls::engine::{Engine, SymbolKind, Update};
-use buzzard_rsrc::builder::RsrcBuilder;
+use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 use buzzard_rsrc::LvPath;
 
 const V23: u32 = 0x2300_8000;
@@ -486,4 +486,173 @@ fn publishes_state_machine_findings() {
     fs::remove_file(fx.dir.join("examples.vi")).unwrap();
     let updates = fx.touch("examples.vi");
     assert_eq!(updates, [("examples.vi".to_owned(), vec![])]);
+}
+
+/// A VI as bytes, for a member of an archive.
+fn vi_bytes(words: &[u32], calls: &[LvPath]) -> Vec<u8> {
+    let links: Vec<(&str, LvPath)> = calls
+        .iter()
+        .map(|path| (path.file_name().expect("a link names a file"), path.clone()))
+        .collect();
+    RsrcBuilder::default()
+        .save_record(V23, words)
+        .links(&links)
+        .build()
+}
+
+impl Fixture {
+    /// Tell the engine an archive changed on disk, as the worker does:
+    /// the archive first, then its members.
+    fn touch_archive(&mut self, name: &str) -> Vec<(String, Vec<String>)> {
+        let path = self.dir.join(name);
+        let changes = if path.is_file() {
+            FileState::load_all(&path)
+                .into_iter()
+                .map(|(path, state)| (path, Some(state)))
+                .collect()
+        } else {
+            vec![(path, None)]
+        };
+        let updates = self.engine.apply(changes);
+        self.messages(updates)
+    }
+
+    /// Updates as `(file, messages)`, each message cut at its first `;`.
+    fn messages(&self, updates: Vec<Update>) -> Vec<(String, Vec<String>)> {
+        updates
+            .into_iter()
+            .map(|(path, diagnostics)| {
+                let name = path
+                    .strip_prefix(&self.dir)
+                    .expect("updates are for files under the fixture dir")
+                    .to_string_lossy()
+                    .into_owned();
+                let messages = diagnostics
+                    .iter()
+                    .map(|d| {
+                        let start = d.message.split(';').next().unwrap_or_default();
+                        format!("{}: {start}", d.code)
+                    })
+                    .collect();
+                (name, messages)
+            })
+            .collect()
+    }
+}
+
+/// An editor cannot open a member of an archive, so its findings are
+/// published for the archive, with the member's name in the message.
+#[test]
+fn findings_about_members_are_published_for_the_archive() {
+    const INLINE: &str = "compiled code is not separated from the source file";
+    let mut fx = Fixture::new("archive");
+    fx.vi("Main.vi", &CLEAN, &[]);
+    let helper = LvPath::sibling("Helper.vi");
+    let archive = |words: &[u32]| {
+        LlbBuilder::default()
+            .member("Entry.vi", &vi_bytes(words, std::slice::from_ref(&helper)))
+            .member("Helper.vi", &vi_bytes(&INLINE_CODE, &[]))
+            .build()
+    };
+    fs::write(fx.dir.join("lib.llb"), archive(&INLINE_CODE)).unwrap();
+
+    let updates = fx.engine.scan();
+    assert!(updates.iter().all(|(path, _)| path.is_file()));
+    assert_eq!(
+        fx.messages(updates),
+        [(
+            "lib.llb".to_owned(),
+            vec![
+                format!("BZ001: Entry.vi: {INLINE}"),
+                format!("BZ001: Helper.vi: {INLINE}"),
+            ]
+        )]
+    );
+
+    // The members are files of the workspace under their own paths.
+    let entry = fx.dir.join("lib.llb").join("Entry.vi");
+    assert!(fx.engine.metadata(&entry).is_some());
+    assert!(fx.engine.is_member(&entry));
+    assert!(!fx.engine.is_member(&fx.dir.join("Main.vi")));
+    assert_eq!(fx.engine.document(&entry), fx.dir.join("lib.llb"));
+    assert_eq!(
+        fx.engine.document(&fx.dir.join("Main.vi")),
+        fx.dir.join("Main.vi")
+    );
+    assert_eq!(names(&fx.engine.callees(&entry)), ["Helper.vi"]);
+    assert_eq!(
+        names(&fx.engine.members(&fx.dir.join("lib.llb"))),
+        ["Entry.vi", "Helper.vi"]
+    );
+    let hover = fx.engine.hover(&fx.dir.join("lib.llb")).unwrap();
+    assert!(hover.contains("| Kind | LLB archive (`LVAR`) |"), "{hover}");
+    assert!(hover.contains("| Entry.vi | VI (`LVIN`) |"), "{hover}");
+    assert!(fx.engine.hover(&entry).unwrap().contains("### Entry.vi"));
+    let symbols = fx.engine.symbols("", 100);
+    let kinds: Vec<(&str, SymbolKind)> =
+        symbols.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+    assert_eq!(
+        kinds,
+        [
+            ("Entry.vi", SymbolKind::Vi),
+            ("Helper.vi", SymbolKind::Vi),
+            ("Main.vi", SymbolKind::Vi),
+            ("lib.llb", SymbolKind::Library),
+        ]
+    );
+
+    // Nothing changed on disk: nothing to publish.
+    assert_eq!(fx.touch_archive("lib.llb"), []);
+
+    // A change to the archive re-reads its members.
+    fs::write(fx.dir.join("lib.llb"), archive(&CLEAN)).unwrap();
+    assert_eq!(
+        fx.touch_archive("lib.llb"),
+        [(
+            "lib.llb".to_owned(),
+            vec![format!("BZ001: Helper.vi: {INLINE}")]
+        )]
+    );
+
+    // A member that is gone from the archive is gone from the workspace.
+    fs::write(
+        fx.dir.join("lib.llb"),
+        LlbBuilder::default()
+            .member("Entry.vi", &vi_bytes(&CLEAN, &[]))
+            .build(),
+    )
+    .unwrap();
+    assert_eq!(
+        fx.touch_archive("lib.llb"),
+        [("lib.llb".to_owned(), vec![])]
+    );
+    assert!(fx
+        .engine
+        .metadata(&fx.dir.join("lib.llb").join("Helper.vi"))
+        .is_none());
+    assert_eq!(
+        names(&fx.engine.paths().map(Path::to_path_buf).collect::<Vec<_>>()),
+        ["Main.vi", "lib.llb", "Entry.vi"]
+    );
+
+    // An archive that cannot be read is one finding, and has no members.
+    fs::write(fx.dir.join("lib.llb"), b"garbage").unwrap();
+    let broken = fx.touch_archive("lib.llb");
+    assert_eq!(broken.len(), 1);
+    assert!(
+        broken[0].1[0].starts_with("BZ000: cannot analyze file"),
+        "{broken:?}"
+    );
+    assert!(fx.engine.metadata(&entry).is_none());
+
+    // Deleting the archive clears what was published for it.
+    fs::remove_file(fx.dir.join("lib.llb")).unwrap();
+    assert_eq!(
+        fx.touch_archive("lib.llb"),
+        [("lib.llb".to_owned(), vec![])]
+    );
+    assert_eq!(
+        names(&fx.engine.paths().map(Path::to_path_buf).collect::<Vec<_>>()),
+        ["Main.vi"]
+    );
 }

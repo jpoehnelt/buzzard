@@ -8,6 +8,7 @@ use buzzard_rsrc::{
     BlockDiagram, DataType, Diagram, Direction, FileKind, Node, Reentrancy, ViMetadata,
 };
 
+use crate::archive::ArchiveFile;
 use crate::project::{ProjectFile, ProjectKind};
 
 fn yes_no(value: Option<bool>) -> &'static str {
@@ -149,6 +150,55 @@ pub fn project_to_markdown(
                 usage.child_classes
             );
         }
+    }
+    out
+}
+
+/// Render the directory of an `.llb` archive: one row per member, in the
+/// order of the archive.
+pub fn archive_to_markdown(title: &str, archive: &ArchiveFile) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "### {title}\n");
+    let _ = writeln!(out, "| | |\n| --- | --- |");
+    let _ = writeln!(out, "| Kind | LLB archive (`LVAR`) |");
+    let _ = writeln!(out, "| Members | {} |", archive.members.len());
+    if archive.unlisted > 0 {
+        let _ = writeln!(
+            out,
+            "| Content not in the directory | {} |",
+            archive.unlisted
+        );
+    }
+    if !archive.members.is_empty() {
+        let _ = writeln!(
+            out,
+            "\n| Member | Kind | Saved version | Stored | Bytes in archive | Bytes |\n\
+             | --- | --- | --- | --- | ---: | ---: |"
+        );
+    }
+    for member in &archive.members {
+        let kind = match member.kind {
+            FileKind::Vi => "VI",
+            FileKind::Control => "Control",
+            FileKind::Library => "LLB archive",
+            FileKind::Other => "Other",
+        };
+        let version = member
+            .version
+            .map_or_else(|| "unknown".to_owned(), |v| v.to_string());
+        let _ = writeln!(
+            out,
+            "| {} | {kind} (`{}`) | {version} | {} | {} | {} |",
+            cell(&crate::archive::printable(&member.name)),
+            cell(&member.file_type.to_string()),
+            member.storage.as_str(),
+            member.stored_size,
+            member.size,
+        );
+    }
+    for problem in &archive.problems {
+        // Outside the table, and already on one line.
+        let _ = writeln!(out, "\nNot opened: {problem}.");
     }
     out
 }

@@ -6,6 +6,7 @@ use std::path::Path;
 use buzzard_rsrc::{RefKind, ViMetadata};
 use rayon::prelude::*;
 
+use crate::archive::Archives;
 use crate::dataflow::Finding;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::graph::DependencyGraph;
@@ -32,8 +33,8 @@ pub const RULES: &[Rule] = &[
     Rule {
         code: "BZ000",
         name: "unreadable-file",
-        summary:
-            "The file could not be read, or is not a valid RSRC container or project XML file.",
+        summary: "The file could not be read, or is not a valid RSRC container, project XML \
+                  file or LLB archive; or a member of an archive cannot be opened.",
         severity: Severity::Error,
     },
     Rule {
@@ -156,6 +157,7 @@ pub fn lint(
     config: &LintConfig,
 ) -> Vec<Diagnostic> {
     let majority = majority_version(workspace);
+    let archives = Archives::default();
     let entries: Vec<(&std::path::PathBuf, &FileState)> = workspace.files().iter().collect();
     let mut out: Vec<Diagnostic> = entries
         .par_iter()
@@ -184,7 +186,14 @@ pub fn lint(
                     found.extend(check_dataflow(path, analysis));
                     found.extend(check_state_machines(path, analysis));
                 }
-                FileState::Project(project) => check_members(workspace, project, &mut emit),
+                FileState::Project(project) => {
+                    check_members(workspace, &archives, project, &mut emit);
+                }
+                FileState::Archive(archive) => {
+                    for problem in &archive.problems {
+                        emit("BZ000", format!("cannot open {problem}"));
+                    }
+                }
             }
             found
         })
@@ -333,12 +342,13 @@ fn check_paths(
 /// embedded in the XML file) cannot be checked.
 fn check_members(
     workspace: &Workspace,
+    archives: &Archives,
     project: &ProjectFile,
     emit: &mut impl FnMut(&'static str, String),
 ) {
     let mut missing: BTreeSet<(&str, &str)> = BTreeSet::new();
     for member in project.members.iter().filter(|m| !m.dependency) {
-        if member_is_missing(workspace, member) {
+        if member_is_missing(workspace, archives, member) {
             missing.insert((&member.url, &member.name));
         }
     }
@@ -351,15 +361,21 @@ fn check_members(
 }
 
 /// Whether a member's URL resolves to a path at which there is no file:
-/// neither one the workspace has loaded nor one on disk. A URL that does
-/// not resolve to a path is never missing. `BZ006` and the dependency
-/// report (`crate::deps`) both decide with this function.
-pub(crate) fn member_is_missing(workspace: &Workspace, member: &Member) -> bool {
-    // A file the workspace has loaded exists; only stat the others.
-    member
-        .path
-        .as_ref()
-        .is_some_and(|path| workspace.get(path).is_none() && !path.exists())
+/// neither one the workspace has loaded nor one on disk. A URL that leads
+/// into an `.llb` archive is missing when the archive on disk does not
+/// hold that member, and is not missing when the archive cannot be read:
+/// nothing is known then. A URL that does not resolve to a path is never
+/// missing. `BZ006` and the dependency report (`crate::deps`) both decide
+/// with this function.
+pub(crate) fn member_is_missing(
+    workspace: &Workspace,
+    archives: &Archives,
+    member: &Member,
+) -> bool {
+    // A file the workspace has loaded exists; only look for the others.
+    member.path.as_ref().is_some_and(|path| {
+        workspace.get(path).is_none() && archives.present(path, false) == Some(false)
+    })
 }
 
 fn check_dataflow(path: &Path, analysis: &Analysis) -> Vec<Diagnostic> {

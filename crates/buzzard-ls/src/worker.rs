@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
 
+use buzzard_lint::archive::is_archive;
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::workspace::discover;
 use buzzard_lint::{FileState, LintConfig, ViInspector};
@@ -184,7 +185,11 @@ impl State {
                 continue;
             };
             for below in before.paths_under(&path) {
-                candidates.entry(below).or_insert(None);
+                // A member of an archive is not on disk: it comes and goes
+                // with its archive, which is a candidate itself.
+                if !before.is_member(&below) {
+                    candidates.entry(below).or_insert(None);
+                }
             }
             if core.roots.presence(&path) == Presence::Dir {
                 for found in discover(std::slice::from_ref(&path)) {
@@ -213,14 +218,15 @@ impl State {
         }
 
         let mut retry = Batch::new();
-        for (path, attempt, signature, state) in read_all(runtime, &self.inspector, to_read) {
-            let failed = matches!(state, FileState::Failed(_));
+        for (path, attempt, signature, states) in read_all(runtime, &self.inspector, to_read) {
+            let failed = matches!(states.first(), Some((_, FileState::Failed(_))));
             if failed && attempt < RETRY_DELAYS.len() && is_unsettled(&signature) {
                 // Keep what was known about the file until it settles.
                 retry.insert(path, attempt + 1);
             } else {
-                core.signatures.insert(path.clone(), signature);
-                changes.push((path, Some(state)));
+                core.signatures.insert(path, signature);
+                // An archive comes with its members, the archive first.
+                changes.extend(states.into_iter().map(|(path, state)| (path, Some(state))));
             }
         }
 
@@ -234,20 +240,23 @@ impl State {
     }
 }
 
-type Read = (PathBuf, usize, Signature, FileState);
+/// A file that was read: its path, the attempt, its signature, and its
+/// state under its path, followed by the members of an archive.
+type Read = (PathBuf, usize, Signature, Vec<(PathBuf, FileState)>);
 
 fn read_one(runtime: &Handle, inspector: &dyn ViInspector, path: PathBuf, attempt: usize) -> Read {
     // Taken before reading: if the file changes meanwhile, the signature is
     // stale and the file is read again rather than trusted.
     let signature = signature(&path);
-    let state = if is_project_file(&path) {
-        // Project-level XML is always read from disk; the inspector
-        // backend only knows binary files.
-        FileState::load(&path)
+    let states = if is_project_file(&path) || is_archive(&path) {
+        // Project-level XML and archives are always read from disk; the
+        // inspector backend only knows binary files.
+        FileState::load_all(&path)
     } else {
-        FileState::from_inspection(runtime.block_on(inspector.inspect(&path)))
+        let state = FileState::from_inspection(runtime.block_on(inspector.inspect(&path)));
+        vec![(path.clone(), state)]
     };
-    (path, attempt, signature, state)
+    (path, attempt, signature, states)
 }
 
 /// Read the given files, in the given order, on as many threads as help.

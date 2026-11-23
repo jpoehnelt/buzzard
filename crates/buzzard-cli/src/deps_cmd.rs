@@ -47,7 +47,11 @@ pub(crate) fn run(args: &Args) -> Result<String, String> {
             .add(name, Path::new(dir))
             .map_err(|err| format!("--root: {err}"))?;
     }
-    if let Some(missing) = args.paths.iter().find(|p| !p.exists()) {
+    if let Some(missing) = args
+        .paths
+        .iter()
+        .find(|p| !buzzard_lint::archive::exists(p))
+    {
         return Err(format!("path does not exist: {}", missing.display()));
     }
     let workspace = Workspace::scan(&args.paths);

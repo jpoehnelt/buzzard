@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 
 use super::{verify, Confidence, Issue, QueueMachine, Report, Stop, Successors, Verification};
+use crate::archive;
 use crate::inspector::Inspection;
 use crate::project::is_project_file;
 use crate::workspace::discover;
@@ -153,21 +154,54 @@ impl Verified {
         out
     }
 
-    /// Verify every binary file under the given files and directories.
+    /// Verify every binary file under the given files and directories,
+    /// and every VI inside an `.llb` archive among them. A member is
+    /// listed under the path of its archive followed by its name; an
+    /// archive that cannot be opened, or that has a member that cannot
+    /// be, is listed as unreadable.
     pub fn scan(roots: &[PathBuf]) -> Self {
         let paths: Vec<PathBuf> = discover(roots)
             .into_iter()
             .filter(|path| !is_project_file(path))
             .collect();
-        Self::new(
-            paths
-                .into_par_iter()
-                .map(|path| {
+        let results: Vec<Vec<_>> = paths
+            .into_par_iter()
+            .map(|path| {
+                if !archive::is_archive(&path) || archive::split(&path).is_some() {
                     let result = verify_file(&path);
-                    (path, result)
-                })
-                .collect(),
-        )
+                    return vec![(path, result)];
+                }
+                // Project files among the members have no diagram.
+                let verified = archive::open(&path, |member, bytes| {
+                    (!is_project_file(member)).then(|| {
+                        let inspection = Inspection::from_bytes(&bytes?)?;
+                        Ok(inspection.diagram.as_ref().map(verify))
+                    })
+                });
+                match verified {
+                    Err(reason) => vec![(path, Err(reason))],
+                    // An archive without a directory is a resource file.
+                    Ok(None) => {
+                        let result = verify_file(&path);
+                        vec![(path, result)]
+                    }
+                    Ok(Some(opened)) => {
+                        let mut out = Vec::new();
+                        if !opened.file.problems.is_empty() {
+                            out.push((path, Err(opened.file.problems.join("; "))));
+                        }
+                        let members = opened.members.into_iter();
+                        out.extend(members.filter_map(|(path, result)| Some((path, result?))));
+                        out
+                    }
+                }
+            })
+            .collect();
+        // A member that was also given as a root of its own is one file.
+        let mut results: Vec<_> = results.into_iter().flatten().collect();
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+        results.dedup_by(|later, first| later.0 == first.0);
+        Self::new(results)
     }
 
     /// Whether any file has a finding of any confidence.

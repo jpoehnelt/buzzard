@@ -4,7 +4,7 @@ use std::sync::mpsc as std_mpsc;
 use std::time::Instant;
 
 use buzzard_lint::Inspection;
-use buzzard_rsrc::builder::RsrcBuilder;
+use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 use buzzard_rsrc::LvPath;
 use tokio::sync::mpsc;
 
@@ -521,4 +521,85 @@ fn publishing_is_ordered_and_scan_waits_for_roots() {
     let _ = jobs.send(Job::Paths(vec![last.clone()]));
     std::thread::sleep(Duration::from_millis(50));
     assert_eq!(recorder.seen.lock().unwrap().len(), FILES + 1);
+}
+
+fn write_archive(path: &Path, members: &[(&str, &[u32])]) {
+    let mut builder = LlbBuilder::default();
+    for (name, words) in members {
+        let vi = RsrcBuilder::default().save_record(V23, words).build();
+        builder = builder.compressed(name, &vi);
+    }
+    fs::write(path, builder.build()).unwrap();
+}
+
+/// The members of an archive are not on disk. They follow their archive:
+/// an event for it re-reads them, and an event for a directory above it
+/// neither drops them nor reads the archive again.
+#[test]
+fn members_follow_their_archive() {
+    let f = Fixture::new("archive");
+    f.vi("sub/keep.vi", &CLEAN);
+    let archive = f.root().join("sub/lib.llb");
+    write_archive(&archive, &[("A.vi", &INLINE_CODE), ("B.vi", &CLEAN)]);
+    let scanned = f.state.scan();
+    // Published for the archive, which is a file an editor can open.
+    assert_eq!(f.simplify(&scanned), [update("sub/lib.llb", &["BZ001"])]);
+    assert!(scanned[0].1[0].message.starts_with("A.vi: "));
+    let all = [
+        "sub/keep.vi",
+        "sub/lib.llb",
+        "sub/lib.llb/A.vi",
+        "sub/lib.llb/B.vi",
+    ];
+    assert_eq!(f.files(), all);
+
+    // Events for the directories above change nothing.
+    for names in [&["sub"][..], &[""], &["sub", "sub/keep.vi"]] {
+        let outcome = f.changed(names);
+        assert_eq!(f.simplify(&outcome.updates), nothing(), "{names:?}");
+        assert_eq!(f.files(), all, "{names:?}");
+    }
+
+    // The archive changes: one member is fixed, one is new, one is gone.
+    write_archive(
+        &archive,
+        &[
+            ("A.vi", &CLEAN),
+            ("C.vi", &INLINE_CODE),
+            ("D.vi", &INLINE_CODE),
+        ],
+    );
+    let outcome = f.changed(&["sub/lib.llb"]);
+    assert_eq!(
+        f.simplify(&outcome.updates),
+        [update("sub/lib.llb", &["BZ001", "BZ001"])]
+    );
+    assert!(outcome.retry.is_empty());
+    assert_eq!(
+        f.files(),
+        [
+            "sub/keep.vi",
+            "sub/lib.llb",
+            "sub/lib.llb/A.vi",
+            "sub/lib.llb/C.vi",
+            "sub/lib.llb/D.vi"
+        ]
+    );
+
+    // A directory event notices the changed archive by its signature.
+    write_archive(&archive, &[("A.vi", &CLEAN)]);
+    let outcome = f.changed(&["sub"]);
+    assert_eq!(f.simplify(&outcome.updates), [update("sub/lib.llb", &[])]);
+    assert_eq!(
+        f.files(),
+        ["sub/keep.vi", "sub/lib.llb", "sub/lib.llb/A.vi"]
+    );
+
+    // Deleting the archive takes its members with it.
+    write_archive(&archive, &[("A.vi", &INLINE_CODE)]);
+    f.changed(&["sub/lib.llb"]);
+    fs::remove_file(&archive).unwrap();
+    let outcome = f.changed(&["sub/lib.llb"]);
+    assert_eq!(f.simplify(&outcome.updates), [update("sub/lib.llb", &[])]);
+    assert_eq!(f.files(), ["sub/keep.vi"]);
 }

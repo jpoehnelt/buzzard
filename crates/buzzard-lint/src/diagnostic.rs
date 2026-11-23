@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::workspace::Workspace;
+
 /// How serious a finding is. Errors and warnings make `buzzard check` fail;
 /// info does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -44,4 +46,45 @@ pub struct Diagnostic {
     pub message: String,
     /// Other files involved, e.g. the members of a dependency cycle.
     pub related: Vec<PathBuf>,
+}
+
+impl Diagnostic {
+    /// The finding as a program that only knows files on disk can show
+    /// it: an editor, or a code-scanning service.
+    ///
+    /// A finding about a member of an `.llb` archive is moved to the
+    /// archive, and its message starts with the member's name; the name
+    /// is also returned. Related files inside archives become their
+    /// archives. Any other finding is returned as it is.
+    pub fn on_disk(&self, workspace: &Workspace) -> (Self, Option<String>) {
+        let mut related: Vec<PathBuf> = self
+            .related
+            .iter()
+            .map(|path| workspace.file_on_disk(path))
+            .collect();
+        let Some((archive, member)) = workspace.archive_of(&self.path) else {
+            related.dedup();
+            return (
+                Self {
+                    related,
+                    ..self.clone()
+                },
+                None,
+            );
+        };
+        related.retain(|path| *path != archive);
+        related.sort();
+        related.dedup();
+        let shown = crate::archive::printable(&member);
+        (
+            Self {
+                path: archive,
+                code: self.code,
+                severity: self.severity,
+                message: format!("{shown}: {}", self.message),
+                related,
+            },
+            Some(member),
+        )
+    }
 }

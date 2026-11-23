@@ -13,6 +13,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use buzzard_lint::archive;
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::verify::report::{self, Verified};
 use buzzard_lint::Inspection;
@@ -131,10 +132,10 @@ fn main() -> ExitCode {
             max_path_length,
             exit_zero,
         } => check(&paths, format, ignore, max_path_length, exit_zero),
-        Command::Inspect { file, format } if is_project_file(&file) => {
-            inspect_project(&file, format)
+        Command::Inspect { file, format } => {
+            // A member is shown under the name its archive has for it.
+            inspect(&archive::canonical(&file).unwrap_or(file), format)
         }
-        Command::Inspect { file, format } => inspect_binary(&file, format),
         Command::Verify { paths, format } => verify(&paths, format),
         Command::Deps(args) => match deps_cmd::run(&args) {
             Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
@@ -168,6 +169,22 @@ fn main() -> ExitCode {
     }
 }
 
+/// `buzzard inspect`: a project file, the directory of an archive, or a
+/// binary file. A member path is tried first: `x.llb/p.lvlib` is a member
+/// of an archive, and what a member is called decides how it is read.
+fn inspect(file: &Path, format: InspectFormat) -> ExitCode {
+    let is_member = archive::split(file).is_some();
+    if is_project_file(file) && (is_member || file.is_file()) {
+        inspect_project(file, format)
+    } else if !is_member && archive::is_archive(file) && file.is_file() {
+        inspect_archive(file, format)
+    } else if is_project_file(file) {
+        inspect_project(file, format)
+    } else {
+        inspect_binary(file, format)
+    }
+}
+
 /// `buzzard check`: lint everything under `paths` and print the findings.
 fn check(
     paths: &[PathBuf],
@@ -184,7 +201,7 @@ fn check(
         eprintln!("error: unknown rule code(s): {unknown:?}");
         return ExitCode::from(2);
     }
-    if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+    if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
         eprintln!("error: path does not exist: {}", missing.display());
         return ExitCode::from(2);
     }
@@ -198,7 +215,11 @@ fn check(
     let rendered = match format {
         CheckFormat::Human => render_human(&diagnostics, workspace.files().len()),
         CheckFormat::Json => to_json(&diagnostics),
-        CheckFormat::Sarif => to_json(&sarif::to_sarif(&diagnostics, env!("CARGO_PKG_VERSION"))),
+        CheckFormat::Sarif => to_json(&sarif::to_sarif(
+            &workspace,
+            &diagnostics,
+            env!("CARGO_PKG_VERSION"),
+        )),
     };
     let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
     let status = if failed && !exit_zero {
@@ -211,7 +232,7 @@ fn check(
 
 /// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
 fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
-    if let Some(missing) = paths.iter().find(|p| !p.exists()) {
+    if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
         eprintln!("error: path does not exist: {}", missing.display());
         return ExitCode::from(2);
     }
@@ -254,8 +275,68 @@ fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
     }
 }
 
+/// JSON shape of `inspect` on an `.llb` archive: what the file is, as for
+/// any resource file, and its directory.
+#[derive(serde::Serialize)]
+struct ArchiveOutput<'a> {
+    #[serde(flatten)]
+    metadata: &'a ViMetadata,
+    #[serde(flatten)]
+    archive: &'a archive::ArchiveFile,
+}
+
+/// `buzzard inspect` on an `.llb` archive: the list of its members. A
+/// member is inspected by the path of the archive followed by its name.
+fn inspect_archive(file: &Path, format: InspectFormat) -> ExitCode {
+    let fail = |err: String| {
+        eprintln!("error: {}: {err}", file.display());
+        ExitCode::from(2)
+    };
+    let opened = match archive::list(file) {
+        Ok(Some(listing)) => listing,
+        Ok(None) => {
+            eprintln!(
+                "note: {}: the archive was built into an application and has no directory of \
+                 members; it is shown as the resource file it is",
+                file.display()
+            );
+            return inspect_binary(file, format);
+        }
+        Err(err) => return fail(err),
+    };
+    let rendered = match format {
+        InspectFormat::Json => match Inspection::from_path(file) {
+            Ok(inspection) => to_json(&ArchiveOutput {
+                metadata: &inspection.metadata,
+                archive: &opened,
+            }),
+            Err(err) => return fail(err),
+        },
+        InspectFormat::Markdown => {
+            let title = file
+                .file_name()
+                .unwrap_or(file.as_os_str())
+                .to_string_lossy();
+            summary::archive_to_markdown(&title, &opened)
+        }
+        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
+            let example = opened.opened().first().map_or_else(
+                || "<member>".to_owned(),
+                |name| archive::member_path(file, name).display().to_string(),
+            );
+            eprintln!(
+                "error: {}: an archive has no block diagram; name one of its members, as in \
+                 `buzzard inspect \"{example}\"`",
+                file.display()
+            );
+            return ExitCode::from(2);
+        }
+    };
+    print(&rendered, ExitCode::SUCCESS)
+}
+
 /// `buzzard inspect` on a binary file: its metadata and block diagram, or a
-/// picture of the diagram.
+/// picture of the diagram. `file` may name a member of an archive.
 fn inspect_binary(file: &Path, format: InspectFormat) -> ExitCode {
     let inspection = match Inspection::from_path(file) {
         Ok(inspection) => inspection,

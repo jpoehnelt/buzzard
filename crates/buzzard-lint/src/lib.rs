@@ -4,6 +4,7 @@
 //! result list is sorted, so two runs over the same tree give identical
 //! output regardless of thread scheduling.
 
+pub mod archive;
 pub mod dataflow;
 pub mod deps;
 pub mod diagnostic;

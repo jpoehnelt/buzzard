@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use buzzard_rsrc::builder::RsrcBuilder;
+use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 use buzzard_rsrc::{LvPath, PathKind};
 use common::*;
 use serde_json::Value;
@@ -200,8 +200,15 @@ fn machine_absolute_and_missing_relative_links_are_listed() {
 fn a_root_with_a_directory_reports_found_and_missing() {
     let dir = project("deps-roots");
     let install = TempDir::new("deps-roots-install");
-    // An `.llb` is one file; what is inside it is not looked at.
-    write(&install, "vi.lib/Utility/error.llb", b"not opened");
+    // An `.llb` is opened: a link into it is found only if the archive
+    // holds that member, whatever the letter case of its name.
+    write(
+        &install,
+        "vi.lib/Utility/error.llb",
+        &LlbBuilder::default()
+            .member("clear errors.VI", &vi_bytes(&[]))
+            .build(),
+    );
     write(
         &install,
         "vi.lib/addons/_JKI Toolkits/State Machine/Parse State Queue.vi",
@@ -241,7 +248,10 @@ fn a_root_with_a_directory_reports_found_and_missing() {
                 "missing"
             ),
             pair("<vilib>/Utility/error.llb/Clear Errors.vi", "found"),
-            pair("<vilib>/Utility/error.llb/Simple Error Handler.vi", "found"),
+            pair(
+                "<vilib>/Utility/error.llb/Simple Error Handler.vi",
+                "missing"
+            ),
             pair(
                 "<vilib>/addons/_JKI Toolkits/State Machine/Parse State Queue.vi",
                 "found"
@@ -259,7 +269,7 @@ fn a_root_with_a_directory_reports_found_and_missing() {
     let text = deps(&["--root", &spec], &dir.0);
     assert!(
         text.contains(&format!(
-            "<vilib> (checked in {}: 3 found, 1 missing)\n",
+            "<vilib> (checked in {}: 2 found, 2 missing)\n",
             vilib.display()
         )),
         "{text}"
@@ -267,10 +277,16 @@ fn a_root_with_a_directory_reports_found_and_missing() {
     assert!(text.contains("    found     <vilib>/Utility/error.llb/Clear Errors.vi\n"));
     assert!(text.contains("    missing   <vilib>/Utility/High Resolution Relative Seconds.vi\n"));
     assert!(text.contains("    unchecked <resource>/lvanlys.dll\n"));
-    assert!(text.contains("(3 found, 1 missing, 2 unchecked)"), "{text}");
+    assert!(text.contains("(2 found, 2 missing, 2 unchecked)"), "{text}");
 
     // Several roots, and a directory relative to the working directory.
-    write(&dir, "user.lib/_OpenG.lib/error/error.llb", b"x");
+    write(
+        &dir,
+        "user.lib/_OpenG.lib/error/error.llb",
+        &LlbBuilder::default()
+            .member("Build Error Cluster__ogtk.vi", &vi_bytes(&[]))
+            .build(),
+    );
     let text = deps(&["--root", &spec, "--root", "userlib=user.lib"], &dir.0);
     assert!(
         text.contains("<userlib> (checked in user.lib: 1 found, 0 missing)\n"),

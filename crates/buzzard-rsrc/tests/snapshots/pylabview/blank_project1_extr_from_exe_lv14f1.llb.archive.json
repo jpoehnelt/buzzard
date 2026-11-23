@@ -1,0 +1,3 @@
+{
+  "error": "malformed `LVzp` block: the archive holds a zipped program tree instead of a directory; archives built into an application are not opened"
+}

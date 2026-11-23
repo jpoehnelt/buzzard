@@ -19,4 +19,6 @@ The files under `pylabview/` and their upstream paths:
 No fixture is part of a published package.
 
 Each fixture has a golden snapshot in `../snapshots/`. See the crate-level
-conformance test for how to regenerate them.
+conformance test for how to regenerate them. The two `.llb` files also have
+an `.archive.json` snapshot: what the archive reader lists, or why it does
+not open the file.
