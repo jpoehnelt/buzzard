@@ -2,10 +2,9 @@ buzzard
 Copyright (c) 2026 buzzard contributors
 
 buzzard is licensed under the Apache License, Version 2.0 (see LICENSE). Two
-generated files contain data taken from third-party projects, one under the
-same licence and one under the MIT licence, and one test fixture is a
-published measurement file under another licence.
-This file records what was taken and on what terms.
+generated source files contain data from third-party projects. The test
+fixtures are unmodified third-party files and are not part of any published
+package. This file records what was taken and on what terms.
 
 buzzard is not affiliated with, authorized by, endorsed by, or sponsored by
 National Instruments Corporation. LabVIEW, NI, and National Instruments are
@@ -155,3 +154,57 @@ The tests of buzzard-tdms can also run npTDMS
 (https://github.com/adamreeve/npTDMS, LGPL-3.0) as a separate program to
 compare results. npTDMS is not included in, linked into or distributed
 with buzzard; see crates/buzzard-tdms/tests/oracle/README.md.
+
+
+Test fixtures
+=============
+
+Every fixture is an unmodified copy of a file from a public project. Some
+were renamed. The README named in each entry records the source and licence
+of each file, and its upstream path and commit or checksum where the entry
+does not say otherwise.
+
+crates/buzzard-rsrc/tests/fixtures/pylavi
+    Source:   pylavi, https://github.com/marcpage/pylavi, its test suite
+    Licence:  Unlicense (public domain)
+    Record:   crates/buzzard-rsrc/tests/fixtures/README.md, by directory
+              only: no upstream path, commit or checksum per file
+
+crates/buzzard-rsrc/tests/fixtures/pylabview
+    Source:   pylabview, the section "Three test fixtures" above
+    Licence:  MIT, the text reproduced above
+    Record:   crates/buzzard-rsrc/tests/fixtures/README.md
+
+crates/buzzard-lint/tests/fixtures/diff/jki-state-machine
+crates/buzzard-lint/tests/fixtures/verify/jki-state-machine
+    Source:   JKI State Machine,
+              https://github.com/JKISoftware/JKI-State-Machine
+    Licence:  BSD 3-Clause, the text in the LICENSE file of each directory
+    Record:   the README.md of crates/buzzard-lint/tests/fixtures/diff and
+              of crates/buzzard-lint/tests/fixtures/verify
+
+crates/buzzard-lint/tests/fixtures/project/jki-smo
+crates/buzzard-lint/tests/fixtures/verify/jki-smo
+    Source:   JKI State Machine Objects,
+              https://github.com/JKISoftware/JKI-State-Machine-Objects
+    Licence:  BSD 3-Clause, the text in the LICENSE file of each directory
+    Record:   the README.md of crates/buzzard-lint/tests/fixtures/project
+              and of crates/buzzard-lint/tests/fixtures/verify
+
+crates/buzzard-lint/tests/fixtures/diff/grpc-labview
+crates/buzzard-lint/tests/fixtures/project/grpc-labview
+    Source:   grpc-labview, https://github.com/ni/grpc-labview
+    Licence:  MIT, the text in the LICENSE file of each directory
+    Record:   the README.md of crates/buzzard-lint/tests/fixtures/diff and
+              of crates/buzzard-lint/tests/fixtures/project
+
+crates/buzzard-lint/tests/fixtures/verify/lv-mqtt-broker
+    Source:   LV-MQTT-Broker,
+              https://github.com/LabVIEW-Open-Source/LV-MQTT-Broker
+    Licence:  Zero-Clause BSD, the text in the LICENSE file of the directory
+    Record:   crates/buzzard-lint/tests/fixtures/verify/README.md
+
+crates/buzzard-tdms/tests/fixtures/zenodo-7758683
+    Source:   Zenodo, the section "A TDMS measurement file" above
+    Licence:  Creative Commons Attribution 4.0 International
+    Record:   crates/buzzard-tdms/tests/fixtures/README.md
