@@ -171,17 +171,27 @@ impl Verified {
                     let result = verify_file(&path);
                     return vec![(path, result)];
                 }
-                let verified = archive::open(&path, |inspection| {
-                    inspection.map(|inspection| inspection.diagram.as_ref().map(verify))
+                // Project files among the members have no diagram.
+                let verified = archive::open(&path, |member, bytes| {
+                    (!is_project_file(member)).then(|| {
+                        let inspection = Inspection::from_bytes(&bytes?)?;
+                        Ok(inspection.diagram.as_ref().map(verify))
+                    })
                 });
                 match verified {
                     Err(reason) => vec![(path, Err(reason))],
-                    Ok(opened) => {
+                    // An archive without a directory is a resource file.
+                    Ok(None) => {
+                        let result = verify_file(&path);
+                        vec![(path, result)]
+                    }
+                    Ok(Some(opened)) => {
                         let mut out = Vec::new();
                         if !opened.file.problems.is_empty() {
                             out.push((path, Err(opened.file.problems.join("; "))));
                         }
-                        out.extend(opened.members);
+                        let members = opened.members.into_iter();
+                        out.extend(members.filter_map(|(path, result)| Some((path, result?))));
                         out
                     }
                 }

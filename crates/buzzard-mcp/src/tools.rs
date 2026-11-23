@@ -617,8 +617,14 @@ fn inspect(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, 
             structured: Some(json!({ "path": shown, "project": to_value(&project)? })),
         });
     }
-    if archive::is_archive(&path) && path.is_file() {
-        let listing = archive::list(&path).map_err(|err| format!("{shown}: {err}"))?;
+    // An archive without a directory is inspected as the resource file
+    // it is.
+    let listing = if archive::is_archive(&path) && path.is_file() {
+        archive::list(&path).map_err(|err| format!("{shown}: {err}"))?
+    } else {
+        None
+    };
+    if let Some(listing) = listing {
         let members: Vec<String> = listing
             .opened()
             .into_iter()
@@ -725,14 +731,16 @@ fn neighbors(
     let root = root_dir(state, &args)?;
     let refresh = args.flag("refresh")?;
     let (state, scan) = state.scan(vec![root.clone()], refresh);
-    if scan.workspace.get(&path).is_none() {
+    // A member is found under any letter case of its name; the answer
+    // names it as its archive does.
+    let Some(path) = scan.workspace.stored_path(&path) else {
         return Err(format!(
             "{} is not one of the {} analyzable file(s) under root {}",
             state.show(&path),
             scan.workspace.files().len(),
             state.show(&root)
         ));
-    }
+    };
     let found = match direction {
         Direction::Callers => scan.graph.callers(&path),
         Direction::Callees => scan.graph.callees(&path),

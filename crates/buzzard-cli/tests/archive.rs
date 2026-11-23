@@ -171,10 +171,11 @@ fn inspect_reads_a_member_like_the_file_it_holds() {
         assert_eq!(member, loose, "{format}");
         assert!(member.1.len() > 50, "{format}");
     }
-    // The name is matched as the editor matches it: without letter case.
+    // The name is matched as the editor matches it, without letter
+    // case, and shown as the archive has it.
     let (code, stdout, _) = run(&["inspect", "lib.llb/ADD.VI"], &dir.0);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("### ADD.VI\n"));
+    assert!(stdout.starts_with("### add.vi\n"), "{stdout}");
 }
 
 #[test]
@@ -209,7 +210,7 @@ fn what_cannot_be_opened_exits_two_with_the_reason() {
 }
 
 #[test]
-fn the_real_archives_are_listed_or_refused() {
+fn the_real_archives_are_listed_or_shown_as_resource_files() {
     let fixtures = fixtures().join("../pylabview");
     let (code, stdout, _) = run(&["inspect", "empty_libfile.llb"], &fixtures);
     assert_eq!(code, 0);
@@ -219,18 +220,337 @@ fn the_real_archives_are_listed_or_refused() {
         (code, stdout.as_str()),
         (0, "No problems found in 1 file.\n")
     );
-    // An archive taken out of a built application has no directory.
+    // The JSON of an archive has what the JSON of any resource file has,
+    // and the directory.
+    let (code, stdout, _) = run(
+        &["inspect", "empty_libfile.llb", "--format", "json"],
+        &fixtures,
+    );
+    assert_eq!(code, 0);
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let keys: Vec<&str> = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "file_type",
+            "flags",
+            "kind",
+            "libraries",
+            "links",
+            "members",
+            "password_protected",
+            "resource_types",
+            "saved_name",
+            "unlisted",
+            "version"
+        ]
+    );
+    assert_eq!(json["resource_types"][0], "ADir");
+
+    // An archive taken out of a built application has no directory. It
+    // is a resource file, and nothing about it is a problem.
     let built = "blank_project1_extr_from_exe_lv14f1.llb";
-    let (code, _, stderr) = run(&["inspect", built], &fixtures);
-    assert_eq!(code, 2);
-    assert!(stderr.contains("zipped program tree"), "{stderr}");
-    let (code, stdout, _) = run(&["check", built], &fixtures);
-    assert_eq!(code, 1);
+    let (code, stdout, stderr) = run(&["inspect", built], &fixtures);
+    assert_eq!(code, 0);
     assert!(
-        stdout.contains("error[BZ000]: cannot analyze file: "),
+        stdout.contains("| Kind | LLB archive (`LVAR`) |"),
         "{stdout}"
     );
-    assert!(stdout.contains("Found 1 problem (1 error, 0 warnings) in 1 file."));
+    assert!(!stdout.contains("| Members |"), "{stdout}");
+    assert!(
+        stderr.starts_with("note: ") && stderr.contains("has no directory of members"),
+        "{stderr}"
+    );
+    let (code, stdout, _) = run(&["inspect", built, "--format", "json"], &fixtures);
+    assert_eq!(code, 0);
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["kind"], "library");
+    assert_eq!(json["resource_types"], serde_json::json!(["FLAG", "LVzp"]));
+    assert!(json.get("members").is_none());
+    let (code, stdout, _) = run(&["check", built], &fixtures);
+    assert_eq!(
+        (code, stdout.as_str()),
+        (0, "No problems found in 1 file.\n")
+    );
+    let (code, stdout, _) = run(&["verify", built, "--format", "json"], &fixtures);
+    assert_eq!(code, 0);
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["unreadable"], serde_json::json!([]));
+    // It is compared like any resource file, too.
+    let (code, stdout, _) = run(&["diff", built, built], &fixtures);
+    assert_eq!((code, stdout.as_str()), (0, "no differences\n"));
+}
+
+/// Two archives are not compared member by member, so they are not said
+/// to be the same unless their bytes are.
+#[test]
+fn diff_does_not_call_two_archives_the_same() {
+    let dir = workspace("archive-diff-whole");
+    write(
+        &dir,
+        "other.llb",
+        &LlbBuilder::default()
+            .member("Entry.vi", &vi(&CLEAN, &[]))
+            .build(),
+    );
+    fs::copy(dir.0.join("lib.llb"), dir.0.join("copy.llb")).unwrap();
+    for (old, new) in [
+        ("lib.llb", "other.llb"),
+        ("other.llb", "lib.llb"),
+        ("lib.llb", "Main.vi"),
+        ("lib.llb/Entry.vi", "other.llb"),
+    ] {
+        let (code, stdout, stderr) = run(&["diff", old, new], &dir.0);
+        assert_eq!((code, stdout.as_str()), (2, ""), "{old} {new}");
+        assert!(
+            stderr.contains("an archive is not compared as a whole; name one of its members"),
+            "{stderr}"
+        );
+    }
+    for (old, new) in [("lib.llb", "lib.llb"), ("lib.llb", "copy.llb")] {
+        let (code, stdout, _) = run(&["diff", old, new], &dir.0);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (0, "no differences\n"),
+            "{old} {new}"
+        );
+    }
+    // An archive whose directory cannot be read is an error, not "same".
+    let mut cut = fs::read(dir.0.join("lib.llb")).unwrap();
+    cut.truncate(cut.len() - 30);
+    write(&dir, "cut.llb", &cut);
+    let (code, _, _) = run(&["diff", "cut.llb", "other.llb"], &dir.0);
+    assert_eq!(code, 2);
+    // As a git diff driver the refusal is part of the output.
+    let (code, stdout, _) = run(
+        &[
+            "diff",
+            "--git",
+            "lib.llb",
+            "lib.llb",
+            "0",
+            "100644",
+            "other.llb",
+            "1",
+            "100644",
+        ],
+        &dir.0,
+    );
+    assert_eq!(code, 0);
+    assert!(stdout.contains("cannot compare: "), "{stdout}");
+}
+
+/// A member given by its own path is located like a member found by a
+/// scan, whatever letter case it was typed in.
+#[test]
+fn a_member_path_in_any_letter_case_is_the_member() {
+    let dir = workspace("archive-case");
+    let (code, typed, _) = run(&["check", "lib.llb/entry.VI"], &dir.0);
+    assert_eq!(code, 1);
+    assert_eq!(
+        slashes(&typed),
+        format!("lib.llb/Entry.vi: {BZ001}\nFound 1 problem (0 errors, 1 warning) in 1 file.\n")
+    );
+    let (code, both, _) = run(
+        &["check", "lib.llb", "lib.llb/ENTRY.vi", "lib.llb/entry.vi"],
+        &dir.0,
+    );
+    let (_, archive, _) = run(&["check", "lib.llb"], &dir.0);
+    assert_eq!(code, 1);
+    assert_eq!(both, archive);
+    assert_eq!(slashes(&both).matches("lib.llb/Entry.vi: ").count(), 1);
+
+    // SARIF never has a member path as an artifact, also when the
+    // archive itself was not scanned.
+    let (code, stdout, _) = run(
+        &[
+            "check",
+            "lib.llb/entry.vi",
+            "lib.llb/Type.ctl",
+            "--format",
+            "sarif",
+        ],
+        &dir.0,
+    );
+    assert_eq!(code, 1);
+    let sarif: Value = serde_json::from_str(&stdout).unwrap();
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    let location = &results[0]["locations"][0];
+    let uri = location["physicalLocation"]["artifactLocation"]["uri"]
+        .as_str()
+        .unwrap();
+    assert_eq!(uri, "lib.llb");
+    assert!(dir.0.join(uri).is_file());
+    assert_eq!(location["logicalLocations"][0]["name"], "Entry.vi");
+    assert_eq!(
+        location["logicalLocations"][0]["fullyQualifiedName"],
+        "lib.llb/Entry.vi"
+    );
+    assert_eq!(
+        results[0]["partialFingerprints"]["buzzardMember/v1"],
+        "BZ001:lib.llb/Entry.vi"
+    );
+    assert!(results[0]["message"]["text"]
+        .as_str()
+        .unwrap()
+        .starts_with("Entry.vi: compiled code"));
+
+    let (code, stdout, _) = run(
+        &["deps", "lib.llb/ENTRY.VI", "lib.llb", "--format", "json"],
+        &dir.0,
+    );
+    assert_eq!(code, 0);
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(json["files"], 4);
+
+    write(
+        &dir,
+        "m.llb",
+        &LlbBuilder::default()
+            .member("Machine.vi", &machine_vi())
+            .build(),
+    );
+    let (code, twice, _) = run(&["verify", "m.llb", "m.llb/machine.vi"], &dir.0);
+    let (_, once, _) = run(&["verify", "m.llb"], &dir.0);
+    assert_eq!(code, 1);
+    assert_eq!(twice, once);
+    assert!(!slashes(&twice).contains("m.llb/machine.vi"), "{twice}");
+}
+
+/// Names in an archive are data: none of them starts a line of a report
+/// or reaches the terminal as a control sequence.
+#[test]
+fn a_member_name_cannot_forge_a_line_of_output() {
+    let dir = TempDir::new("archive-forge");
+    let inline = vi(&INLINE_CODE, &[]);
+    write(
+        &dir,
+        "odd.llb",
+        &LlbBuilder::default()
+            .member("ok.vi", &inline)
+            .member("a\nfake.vi: error[BZ999]: forged", &inline)
+            .member("\u{1b}[31mred.vi", &inline)
+            .member("a\\b.vi", &inline)
+            .member("old.vi", &inline)
+            .legacy("zeros.vi", &inline)
+            .build(),
+    );
+    let (code, stdout, _) = run(&["check", "."], &dir.0);
+    assert_eq!(code, 1);
+    let lines: Vec<String> = stdout.lines().map(slashes).collect();
+    let refused = |name: &str| {
+        format!("odd.llb: error[BZ000]: cannot open member `{name}`: its name is not a file name")
+    };
+    assert_eq!(
+        lines,
+        [
+            refused("/u{1b}[31mred.vi"),
+            refused("a/b.vi"),
+            refused("a/nfake.vi: error[BZ999]: forged"),
+            format!("odd.llb/ok.vi: {BZ001}"),
+            format!("odd.llb/old.vi: {BZ001}"),
+            format!("odd.llb/zeros.vi: {BZ001}"),
+            "Found 6 problems (3 errors, 3 warnings) in 4 files.".to_owned(),
+        ]
+    );
+    assert!(!stdout.chars().any(|c| c.is_ascii_control() && c != '\n'));
+    // A backslash in a name is printed once, as the archive has it.
+    assert!(stdout.contains("`a\\b.vi`"), "{stdout}");
+    let (code, listing, _) = run(&["inspect", "odd.llb"], &dir.0);
+    assert_eq!(code, 0);
+    assert!(listing.contains("| a\\b.vi | VI"), "{listing}");
+    assert!(
+        listing.contains("| zeros.vi | VI (`LVIN`) | unknown | legacy | "),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("\nNot opened: member `a\\b.vi`: its name is not a file name.\n"),
+        "{listing}"
+    );
+    assert!(!listing.chars().any(|c| c.is_ascii_control() && c != '\n'));
+    // Such a member is not opened by its path either.
+    #[cfg(unix)]
+    for command in ["check", "inspect", "verify", "deps"] {
+        let (code, stdout, _) = run(&[command, "odd.llb/a\\b.vi"], &dir.0);
+        assert_eq!((code, stdout.as_str()), (2, ""), "{command}");
+    }
+}
+
+/// A project library inside an archive is linted and inspected like one
+/// on disk, and its links are part of the dependency report.
+#[test]
+fn a_project_library_in_an_archive_is_a_file_of_the_workspace() {
+    let dir = TempDir::new("archive-library");
+    let xml = "<Library LVVersion=\"23008000\">\n\
+               <Item Name=\"Here.vi\" Type=\"VI\" URL=\"../Here.vi\"/>\n\
+               <Item Name=\"Gone.vi\" Type=\"VI\" URL=\"../Gone.vi\"/>\n\
+               <Item Name=\"T.vit\" Type=\"VI\" URL=\"/&lt;vilib&gt;/Utility/T.vit\"/>\n\
+               </Library>\n";
+    write(
+        &dir,
+        "lib.llb",
+        &LlbBuilder::default()
+            .member("Here.vi", &vi(&CLEAN, &[]))
+            .compressed("Lib.lvlib", xml.as_bytes())
+            .build(),
+    );
+    write(&dir, "loose/Here.vi", &vi(&CLEAN, &[]));
+    write(&dir, "loose/Lib.lvlib", xml.as_bytes());
+    let (code, stdout, _) = run(&["check", "lib.llb"], &dir.0);
+    assert_eq!(code, 1);
+    assert_eq!(
+        slashes(&stdout),
+        "lib.llb/Lib.lvlib: warning[BZ006]: member `Gone.vi` does not exist on disk \
+         (`../Gone.vi`)\nFound 1 problem (0 errors, 1 warning) in 3 files.\n"
+    );
+    let (_, on_disk, _) = run(&["check", "loose"], &dir.0);
+    assert_eq!(
+        slashes(&stdout)
+            .lines()
+            .next()
+            .unwrap()
+            .replace("lib.llb/", "loose/"),
+        slashes(&on_disk).lines().next().unwrap()
+    );
+    // By its path, in each command that takes a project file.
+    let (code, by_path, _) = run(&["check", "lib.llb/Lib.lvlib"], &dir.0);
+    assert_eq!(code, 1);
+    assert!(
+        by_path.contains("BZ006") && by_path.contains("in 1 file."),
+        "{by_path}"
+    );
+    let (code, member, stderr) = run(&["inspect", "lib.llb/lib.LVLIB"], &dir.0);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    let (_, loose, _) = run(&["inspect", "loose/Lib.lvlib"], &dir.0);
+    assert_eq!(member, loose);
+    assert!(member.contains("| Members | 3 |"), "{member}");
+    // The dependency report has the library's links.
+    let report = |path: &str| {
+        let (code, stdout, _) = run(&["deps", path, "--format", "json"], &dir.0);
+        assert_eq!(code, 0);
+        serde_json::from_str::<Value>(&stdout).unwrap()
+    };
+    let (packed, loose) = (report("lib.llb"), report("loose"));
+    assert_eq!(packed["roots"][0]["root"], "vilib");
+    assert_eq!(
+        packed["roots"][0]["packages"][0]["targets"][0]["path"],
+        "<vilib>/Utility/T.vit"
+    );
+    assert_eq!(
+        packed["roots"][0]["packages"][0]["name"],
+        loose["roots"][0]["packages"][0]["name"]
+    );
+    assert_eq!(packed["missing"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        (packed["files"].as_u64(), loose["files"].as_u64()),
+        (Some(3), Some(2))
+    );
 }
 
 const BZ001: &str = "warning[BZ001]: compiled code is not separated from the source file; \

@@ -15,6 +15,7 @@ use flate2::{write::ZlibEncoder, Compression};
 use crate::blocks::path::{LvPath, PathKind};
 use crate::fourcc::FourCc;
 use crate::header::{file_type, RsrcHeader, FORMAT_VERSION, HEADER_SIZE};
+use crate::llb::Storage;
 
 const INFO_HEADER_SIZE: usize = 20;
 
@@ -222,6 +223,10 @@ pub type AdirEntry<'a> = (i32, FourCc, u32, &'a [u8]);
 
 /// Encode the `ADir` directory of an LLB archive (see [`crate::llb`]).
 ///
+/// The bytes of an entry that the reader does not read are written as an
+/// archive saved by the editor has them, not as zeros: a flags word, a
+/// time stamp, and padding after the name that is not zero.
+///
 /// # Panics
 ///
 /// If a name is longer than 255 bytes.
@@ -235,10 +240,12 @@ pub fn encode_adir(entries: &[AdirEntry<'_>]) -> Vec<u8> {
         out.extend_from_slice(&id.to_be_bytes());
         out.extend_from_slice(file_type.as_bytes());
         out.extend_from_slice(&version.to_be_bytes());
-        out.extend_from_slice(&[0; 20]);
+        out.extend_from_slice(&0x10u32.to_be_bytes());
+        out.extend_from_slice(&[0; 8]);
+        out.extend_from_slice(&[0xe2, 0x27, 0x2c, 0xa0, 0xc1, 0xbe, 0x25, 0x35]);
         push_pstr(&mut out, name);
         while !out.len().is_multiple_of(4) {
-            out.push(0);
+            out.push(0x69);
         }
     }
     out
@@ -248,7 +255,8 @@ pub fn encode_adir(entries: &[AdirEntry<'_>]) -> Vec<u8> {
 struct LlbEntry {
     name: Vec<u8>,
     data: Vec<u8>,
-    compressed: bool,
+    storage: Storage,
+    file_type: Option<FourCc>,
 }
 
 /// Collects files and lays them out as an LLB archive with
@@ -281,22 +289,42 @@ impl LlbBuilder {
     /// Like [`member`](Self::member), with the name given as raw bytes:
     /// names are text of the saving machine's code page.
     #[must_use]
-    pub fn member_bytes(mut self, name: &[u8], data: &[u8]) -> Self {
-        self.entries.push(LlbEntry {
-            name: name.to_vec(),
-            data: data.to_vec(),
-            compressed: false,
-        });
-        self
+    pub fn member_bytes(self, name: &[u8], data: &[u8]) -> Self {
+        self.push(name, data, Storage::Stored, None)
+    }
+
+    /// Like [`member`](Self::member), with a file type in the directory
+    /// that is not taken from the member's own header.
+    #[must_use]
+    pub fn member_typed(self, name: &str, file_type: FourCc, data: &[u8]) -> Self {
+        self.push(name.as_bytes(), data, Storage::Stored, Some(file_type))
     }
 
     /// Add a member that is stored as a zlib stream (`ZCRF`).
     #[must_use]
-    pub fn compressed(mut self, name: &str, data: &[u8]) -> Self {
+    pub fn compressed(self, name: &str, data: &[u8]) -> Self {
+        self.push(name.as_bytes(), data, Storage::Zlib, None)
+    }
+
+    /// Add a member that is stored with its zero bytes left out (`CPRF`),
+    /// as LabVIEW 5 and 7 wrote archives.
+    #[must_use]
+    pub fn legacy(self, name: &str, data: &[u8]) -> Self {
+        self.push(name.as_bytes(), data, Storage::Legacy, None)
+    }
+
+    fn push(
+        mut self,
+        name: &[u8],
+        data: &[u8],
+        storage: Storage,
+        file_type: Option<FourCc>,
+    ) -> Self {
         self.entries.push(LlbEntry {
-            name: name.as_bytes().to_vec(),
+            name: name.to_vec(),
             data: data.to_vec(),
-            compressed: true,
+            storage,
+            file_type,
         });
         self
     }
@@ -318,8 +346,10 @@ impl LlbBuilder {
             .zip(&ids)
             .map(|(entry, &id)| {
                 // The directory states the type the member's own header has.
-                let file_type = RsrcHeader::parse(&entry.data)
-                    .map_or(FourCc::new(b"\0\0\0\0"), |header| header.file_type);
+                let file_type = entry.file_type.unwrap_or_else(|| {
+                    RsrcHeader::parse(&entry.data)
+                        .map_or(FourCc::new(b"\0\0\0\0"), |header| header.file_type)
+                });
                 (id, file_type, self.version, entry.name.as_slice())
             })
             .collect();
@@ -334,16 +364,27 @@ impl LlbBuilder {
             // A resource name is a Pascal string; the directory is what
             // the reader takes names from.
             let name = (name.len() <= 255).then_some(&*name);
-            builder = if entry.compressed {
-                let size = u32_field(entry.data.len()).to_be_bytes().to_vec();
-                let mut encoder = ZlibEncoder::new(size, Compression::default());
-                encoder
-                    .write_all(&entry.data)
-                    .expect("writing to a vector cannot fail");
-                let stream = encoder.finish().expect("writing to a vector cannot fail");
-                builder.resource(b"ZCRF", id, name, stream)
-            } else {
-                builder.resource(b"UCRF", id, name, entry.data.clone())
+            let size = u32_field(entry.data.len()).to_be_bytes().to_vec();
+            builder = match entry.storage {
+                Storage::Zlib => {
+                    let mut encoder = ZlibEncoder::new(size, Compression::default());
+                    encoder
+                        .write_all(&entry.data)
+                        .expect("writing to a vector cannot fail");
+                    let stream = encoder.finish().expect("writing to a vector cannot fail");
+                    builder.resource(b"ZCRF", id, name, stream)
+                }
+                Storage::Legacy => {
+                    let mut stream = size;
+                    stream.extend(entry.data.chunks(8).map(|chunk| {
+                        chunk.iter().enumerate().fold(0u8, |mask, (bit, &byte)| {
+                            mask | (u8::from(byte != 0) << bit)
+                        })
+                    }));
+                    stream.extend(entry.data.iter().filter(|&&byte| byte != 0));
+                    builder.resource(b"CPRF", id, name, stream)
+                }
+                Storage::Stored => builder.resource(b"UCRF", id, name, entry.data.clone()),
             };
         }
         builder.build()

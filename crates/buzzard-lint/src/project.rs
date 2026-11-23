@@ -138,6 +138,9 @@ impl ProjectFile {
     /// Returns the reason as text when the file cannot be read, is larger
     /// than [`MAX_FILE_BYTES`], or does not parse (see [`ProjectFile::parse`]).
     pub fn from_path(path: &Path) -> Result<Self, String> {
+        if crate::archive::split(path).is_some() {
+            return Self::from_bytes(path, &crate::archive::read(path)?);
+        }
         let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
         if size > MAX_FILE_BYTES {
             return Err(format!(
@@ -146,6 +149,24 @@ impl ProjectFile {
         }
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         Self::parse_bytes(path, &bytes)
+    }
+
+    /// Parse the contents of a project file that did not come from a file
+    /// of its own, such as a member of an `.llb` archive at the virtual
+    /// path `path`. The size limit of [`from_path`](Self::from_path)
+    /// holds.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_path`](Self::from_path).
+    pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() as u64 > MAX_FILE_BYTES {
+            return Err(format!(
+                "file is {} bytes, over the limit of {MAX_FILE_BYTES}",
+                bytes.len()
+            ));
+        }
+        Self::parse_bytes(path, bytes)
     }
 
     /// Parse file contents that may not be valid UTF-8. Older editor

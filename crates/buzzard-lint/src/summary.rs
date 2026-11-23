@@ -197,7 +197,8 @@ pub fn archive_to_markdown(title: &str, archive: &ArchiveFile) -> String {
         );
     }
     for problem in &archive.problems {
-        let _ = writeln!(out, "\nNot opened: {}.", cell(problem));
+        // Outside the table, and already on one line.
+        let _ = writeln!(out, "\nNot opened: {problem}.");
     }
     out
 }

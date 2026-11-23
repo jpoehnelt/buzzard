@@ -87,9 +87,10 @@ truncated report. A reader that closes the pipe early, as in
 ## LLB archives
 
 An `.llb` file is one file that holds many VIs and controls. buzzard opens
-it: every member that is a VI or a control is a file of the workspace, named
-by the path of the archive followed by the member's name, which is how
-LabVIEW itself writes a link to it.
+it: every member that is a VI, a control or a project file (`.lvlib`,
+`.lvclass`, `.lvproj`) is a file of the workspace, named by the path of the
+archive followed by the member's name, which is how LabVIEW itself writes a
+link to it.
 
 ```bash
 buzzard inspect lib/util.llb                      # the members: name, kind, version, sizes
@@ -100,47 +101,72 @@ buzzard check lib/util.llb                        # only the members of this arc
 buzzard diff old/util.llb/Init.vi new/util.llb/Init.vi
 ```
 
+`diff` compares members, not archives: given two `.llb` files it exits 2
+and asks for a member on each side, unless the two files have the same
+bytes.
+
 - `check`, `verify` and `deps` on a directory include the members of every
   archive in it, and all rules run on them. A finding names the member path:
   `lib/util.llb/Init.vi: warning[BZ001]: ...`.
 - `check`, `verify`, `deps`, `inspect` and either side of `diff` take a
   member path where they take a file. A member name is matched as the editor
   matches it: exactly, or without regard to letter case when only one member
-  fits.
+  fits. However it was typed, the member is one file, and reports name it
+  as the archive does.
 - Links run through an archive in both directions: a VI that calls
   `util.llb/Init.vi` is a caller of that member, and a member's own links
   are resolved from its place inside the archive.
 - A project member whose URL names a member the archive does not hold is a
   `BZ006` finding, and `buzzard deps` lists it, and a link from a VI to such
   a member, under the missing relative links. When the archive cannot be
-  read, nothing is known and neither reports the member.
+  read, or the path leads into an archive inside the archive, nothing is
+  known and neither reports the member.
+- A project library or class inside an archive is read like one on disk:
+  the project rules run on it and its links are part of `buzzard deps`.
 - `inspect` on the archive lists its members in the order of its directory,
-  as Markdown or JSON (`members`, each with `name`, `id`, `file_type`,
-  `kind`, `version`, `storage`, `stored_size` and `size`). An archive has no
-  block diagram: `--format svg`, `dot` and `mermaid` are an error that asks
-  for a member.
+  as Markdown or JSON: the keys of any resource file (`kind`, `file_type`,
+  `resource_types` and the rest), and `members`, each with `name`, `id`,
+  `file_type`, `kind`, `version`, `storage` (`stored`, `zlib` or `legacy`),
+  `stored_size` and `size`. An archive has no block diagram: `--format
+  svg`, `dot` and `mermaid` are an error that asks for a member.
+- What a member is called decides whether it is opened, whatever type its
+  directory entry states: a member named `x.vi` is analyzed, and parsing it
+  says what it is.
 
-What is not opened is reported, not skipped silently:
+What is not opened is reported:
 
 | In the archive | Result |
 | --- | --- |
-| A member that does not parse, or whose zlib stream is damaged | `BZ000` on the member path; the other members are analyzed |
-| A directory that cannot be read, or none (an archive taken out of a built application holds a zipped program tree instead) | One `BZ000` on the `.llb` file |
-| A member whose name is not a file name (`..`, a name with `/` or `\`), or a second member with the name of an earlier one | `BZ000` on the `.llb` file; the member is not opened, so it can never stand for another file |
-| A member in the compression older than LabVIEW 6 (`CPRF`) | Listed by `inspect`; `BZ000` on the member path |
+| A member that does not parse, or whose compressed stream is damaged | `BZ000` on the member path; the other members are analyzed |
+| A directory that cannot be read | One `BZ000` on the `.llb` file |
+| A member whose name is not a file name (`..`, a name with `/`, `\` or a control character such as a line break), or a second member with the name of an earlier one | `BZ000` on the `.llb` file (`verify` lists the file as unreadable); the member is not opened, by a scan or by its path, so it can never stand for another file or start a line of a report |
+| Compressed members that would inflate to more than 1 GiB together | `BZ000` on the member path of each member past that |
 | An archive inside an archive | Listed by `inspect`, never opened |
-| A member that is neither a VI nor a control | Listed by `inspect` only |
+| A member that is not a VI, a control or a project file by its type or its name | Listed by `inspect` only |
+
+An archive taken out of a built application has no directory of members: it
+holds a zipped program tree instead. It is not an error. `check`, `verify`
+and `inspect` treat it as the resource file it is, as they did before
+archives were opened, and `inspect` says on stderr that it lists no
+members.
+
+Member names with `/` occur in real archives (`DAQFT Get F/T.vi`); such a
+member cannot be named by a path and is not analyzed.
 
 A member that declares more than 128 MiB, or more than its compressed bytes
-could hold, is refused before anything is inflated. A directory that is
-merely called `something.llb` is a directory, as before.
+could hold, is refused before anything is inflated, and so is an archive in
+which two members share bytes of the file. A directory that is merely called
+`something.llb` is a directory, as before.
 
 A member is not a file an editor or a code-scanning service can open, so
 the language server and `--format sarif` report a finding about a member at
 the `.llb` file, with the member's name at the start of the message:
 `Init.vi: compiled code is not separated ...`. In SARIF the result also has
-a logical location with the member's name and its member path. The human
-and JSON formats of `check`, and the MCP tools, print the member path.
+a logical location with the member's name and its member path, and a
+partial fingerprint (`buzzardMember/v1`, the rule code and the member path)
+that tells the findings of two members of one archive apart. This holds
+when a member was given by its own path, too. The human and JSON formats of
+`check`, and the MCP tools, print the member path.
 
 ## Semantic diff
 
@@ -355,7 +381,8 @@ inside `error.llb` is `found` only if the `error.llb` in the directory holds
 a member of that name, compared without regard to letter case and under the
 same code page readings as a file name. It is `missing` when the archive is
 there and has no such member, and `unchecked` when the archive cannot be
-read, because nobody could look. A path that leads into any other file
+read or the path leads on into an archive inside it, because nobody could
+look. A path that leads into any other file
 counts as found when that file exists: the private data control of a class
 is found when its `.lvclass` file is.
 
@@ -876,8 +903,8 @@ Review the generated snapshot before committing it.
 The two `.llb` fixtures are an archive without members and an archive taken
 out of a built application, which has no directory. No archive with members
 is in the repository: those tests build their archives with
-`builder::LlbBuilder`, which writes the layout that was read off an archive
-saved by LabVIEW 2017.
+`builder::LlbBuilder`, which writes the layout that was read off archives
+saved by LabVIEW 5.1 to 2023.
 
 `crates/buzzard-lint/tests/fixtures/project` holds real `.lvproj`, `.lvlib`
 and `.lvclass` files; its README records where they come from and what they
@@ -979,11 +1006,15 @@ does not lead to a workspace file:
 - VIs inside packed libraries (`.lvlibp`) and installer packages are not
   opened. Of `.llb` archives, the ones saved by the editor are opened (see
   [LLB archives](#llb-archives)); an archive taken out of a built
-  application, a member in the compression older than LabVIEW 6, and an
-  archive inside an archive are not. The archive layout was read off one
-  archive saved by LabVIEW 2017 and the zlib storage off the format's
-  description; 20 bytes of each directory entry are not understood and are
-  not used.
+  application, an archive inside an archive, and a member whose name holds
+  a path separator are not. Two `.llb` files are not compared by `diff`;
+  their members are. The archive layout was checked against 23 public
+  archives saved by LabVIEW 5.1 to 2023, which are not in the repository.
+  All of them store their members as they are or in the compression older
+  than zlib; no real archive with zlib members was found, so that storage
+  is read as the format's description gives it and tested on generated
+  archives only. 20 bytes of each directory entry (flags and a time stamp)
+  are not used.
 - `buzzard deps` does not list a link that stays inside the file holding it:
   a shared library called by name alone (`user32.dll`) and a generated
   instance of a malleable VI have no location to report.

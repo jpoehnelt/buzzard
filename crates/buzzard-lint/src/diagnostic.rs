@@ -60,7 +60,7 @@ impl Diagnostic {
         let mut related: Vec<PathBuf> = self
             .related
             .iter()
-            .map(|path| workspace.file_on_disk(path).to_path_buf())
+            .map(|path| workspace.file_on_disk(path))
             .collect();
         let Some((archive, member)) = workspace.archive_of(&self.path) else {
             related.dedup();
@@ -72,13 +72,13 @@ impl Diagnostic {
                 None,
             );
         };
-        related.retain(|path| path != archive);
+        related.retain(|path| *path != archive);
         related.sort();
         related.dedup();
         let shown = crate::archive::printable(&member);
         (
             Self {
-                path: archive.to_path_buf(),
+                path: archive,
                 code: self.code,
                 severity: self.severity,
                 message: format!("{shown}: {}", self.message),

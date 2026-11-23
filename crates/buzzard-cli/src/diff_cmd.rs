@@ -46,7 +46,7 @@ fn is_null_device(path: &str) -> bool {
     path == "/dev/null" || (cfg!(windows) && path.eq_ignore_ascii_case("nul"))
 }
 
-fn load(path: &str) -> Result<Side, String> {
+fn load(path: &str, same_bytes: bool) -> Result<Side, String> {
     if is_null_device(path) {
         return Ok((None, None));
     }
@@ -61,6 +61,23 @@ fn load(path: &str) -> Result<Side, String> {
             Ok(None) => Ok((None, None)),
             Err(err) => Err(format!("{path}: {err}")),
         };
+    }
+    // Two archives are not compared member by member, and what is not
+    // compared is not called the same: only two archives with the same
+    // bytes are. An archive without a directory (one built into an
+    // application) is a resource file like any other.
+    let file = Path::new(path);
+    if !same_bytes && buzzard_lint::archive::is_archive(file) && file.is_file() {
+        match buzzard_lint::archive::list(file) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                return Err(format!(
+                    "{path}: an archive is not compared as a whole; name one of its members on \
+                     each side, as in `{path}/<member name>` (buzzard inspect lists them)"
+                ));
+            }
+            Err(err) => return Err(format!("{path}: {err}")),
+        }
     }
     let bytes = match buzzard_rsrc::read_file(Path::new(path)) {
         Ok(bytes) => bytes,
@@ -77,7 +94,18 @@ fn load(path: &str) -> Result<Side, String> {
 }
 
 fn compare(old: &str, new: &str, options: DiffOptions) -> Result<ViDiff, String> {
-    let ((old_file, old_note), (new_file, new_note)) = (load(old)?, load(new)?);
+    let is_archive = |path: &str| {
+        let path = Path::new(path);
+        buzzard_lint::archive::is_archive(path) && path.is_file()
+    };
+    let same_bytes = is_archive(old)
+        && is_archive(new)
+        && matches!(
+            (buzzard_rsrc::read_file(old), buzzard_rsrc::read_file(new)),
+            (Ok(old), Ok(new)) if old == new
+        );
+    let ((old_file, old_note), (new_file, new_note)) =
+        (load(old, same_bytes)?, load(new, same_bytes)?);
     if old_file.is_none() && new_file.is_none() {
         return Err(format!("neither {old} nor {new} can be read"));
     }
@@ -154,6 +182,6 @@ mod tests {
         assert_eq!(is_null_device("NUL"), cfg!(windows));
         assert!(!is_null_device("null.vi"));
         assert!(!is_null_device("nul.vi"));
-        assert!(load("/dev/null").unwrap().0.is_none());
+        assert!(load("/dev/null", false).unwrap().0.is_none());
     }
 }

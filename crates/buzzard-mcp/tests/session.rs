@@ -1736,4 +1736,67 @@ fn the_cache_follows_a_change_to_an_archive() {
     // A member given by its own path changes with its archive.
     let (_, one) = session.ok("buzzard_check", json!({ "paths": ["lib.llb/Inline.vi"] }));
     assert_eq!(one["diagnostics"], json!([]));
+    // Also when the same member is asked for again and nothing but the
+    // archive changed in between: the member's stamp is its archive's.
+    let inline = RsrcBuilder::default()
+        .save_record(0x2300_8000, &[0; 6])
+        .build();
+    fs::write(
+        dir.0.join("lib.llb"),
+        LlbBuilder::default()
+            .member("Inline.vi", &inline)
+            .member("padding.txt", b"so that the size differs")
+            .build(),
+    )
+    .expect("write the archive");
+    let (_, again) = session.ok("buzzard_check", json!({ "paths": ["lib.llb/Inline.vi"] }));
+    assert_eq!(again["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(again["diagnostics"][0]["code"], "BZ001");
+}
+
+#[test]
+fn a_member_is_found_in_any_letter_case_and_named_as_its_archive_names_it() {
+    let dir = archive_workspace("archive-case");
+    let mut session = Session::new(dir.0.clone());
+    let (text, callers) = session.ok(
+        "buzzard_callers",
+        json!({ "path": "lib.llb/ADD.vi", "root": "." }),
+    );
+    assert_eq!(callers["path"], "lib.llb/add.vi");
+    assert_eq!(callers["callers"], json!(["Main.vi", "lib.llb/Inline.vi"]));
+    assert!(text.contains("use lib.llb/add.vi:"), "{text}");
+    let (_, used) = session.ok(
+        "buzzard_callees",
+        json!({ "path": "lib.llb/inline.VI", "root": "." }),
+    );
+    assert_eq!(used["callees"], json!(["lib.llb/add.vi"]));
+    let message = session.fails(
+        "buzzard_callers",
+        json!({ "path": "lib.llb/absent.vi", "root": "." }),
+    );
+    assert!(
+        message.contains("is not one of the 5 analyzable file(s)"),
+        "{message}"
+    );
+    let (_, checked) = session.ok(
+        "buzzard_check",
+        json!({ "paths": ["lib.llb", "lib.llb/INLINE.vi"] }),
+    );
+    assert_eq!(checked["summary"]["files"], 3);
+}
+
+#[test]
+fn an_archive_without_a_directory_is_inspected_as_a_resource_file() {
+    let dir = TempDir::new("archive-built");
+    let built = RsrcBuilder::new(buzzard_rsrc::header::file_type::LIBRARY)
+        .resource(b"LVzp", 0, None, vec![0; 32])
+        .build();
+    fs::write(dir.0.join("built.llb"), built).expect("write the archive");
+    let mut session = Session::new(dir.0.clone());
+    let (text, structured) = session.ok("buzzard_inspect", json!({ "path": "built.llb" }));
+    assert!(text.contains("| Kind | LLB archive (`LVAR`) |"), "{text}");
+    assert_eq!(structured["metadata"]["kind"], "library");
+    assert!(structured.get("archive").is_none());
+    let (_, checked) = session.ok("buzzard_check", json!({ "paths": ["."] }));
+    assert_eq!(checked["diagnostics"], json!([]));
 }

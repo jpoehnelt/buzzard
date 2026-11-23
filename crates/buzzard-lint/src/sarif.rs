@@ -88,6 +88,10 @@ fn location(path: &Path) -> Value {
     json!({ "physicalLocation": { "artifactLocation": { "uri": uri(path) } } })
 }
 
+/// Key of the partial fingerprint that a finding about a member of an
+/// archive carries: the rule code and the member's path.
+const MEMBER_FINGERPRINT: &str = "buzzardMember/v1";
+
 /// A SARIF log with one run that lists every rule and the given
 /// diagnostics. `tool_version` is reported as the version of the tool.
 ///
@@ -95,7 +99,10 @@ fn location(path: &Path) -> Value {
 /// member of an `.llb` archive is not one. A finding about a member is
 /// therefore located at its archive: the message starts with the
 /// member's name (see [`Diagnostic::on_disk`]), and a logical location
-/// names the member. `workspace` is the one the diagnostics came from.
+/// names the member. Such a result also has a partial fingerprint made of
+/// the rule code and the member's path, because nothing else tells the
+/// findings of two members of one archive apart. `workspace` is the one
+/// the diagnostics came from.
 pub fn to_sarif(workspace: &Workspace, diagnostics: &[Diagnostic], tool_version: &str) -> Value {
     let rules: Vec<Value> = RULES
         .iter()
@@ -114,10 +121,15 @@ pub fn to_sarif(workspace: &Workspace, diagnostics: &[Diagnostic], tool_version:
             let virtual_path = &d.path;
             let (d, member) = d.on_disk(workspace);
             let mut place = location(&d.path);
+            let mut fingerprint = None;
             if let Some(member) = member {
+                let qualified = virtual_path.to_string_lossy().replace('\\', "/");
+                // The findings of all members of an archive have one
+                // artifact and no region; this tells them apart.
+                fingerprint = Some(format!("{}:{qualified}", d.code));
                 place["logicalLocations"] = json!([{
                     "name": member,
-                    "fullyQualifiedName": virtual_path.to_string_lossy().replace('\\', "/"),
+                    "fullyQualifiedName": qualified,
                     "kind": "member",
                 }]);
             }
@@ -128,6 +140,9 @@ pub fn to_sarif(workspace: &Workspace, diagnostics: &[Diagnostic], tool_version:
                 "message": { "text": d.message },
                 "locations": [place],
             });
+            if let Some(name) = fingerprint {
+                result["partialFingerprints"] = json!({ MEMBER_FINGERPRINT: name });
+            }
             if !d.related.is_empty() {
                 result["relatedLocations"] = d.related.iter().map(|p| location(p)).collect();
             }

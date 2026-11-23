@@ -48,8 +48,9 @@ pub enum FileState {
     /// A parsed `.lvproj`, `.lvlib` or `.lvclass` file.
     Project(Box<ProjectFile>),
     /// An `.llb` archive whose directory was read. Its members that are
-    /// VIs or controls are files of the workspace themselves, each under
-    /// the path of the archive followed by its name.
+    /// VIs, controls or project files are files of the workspace
+    /// themselves, each under the path of the archive followed by its
+    /// name.
     Archive(Box<ArchiveFile>),
     /// The file could not be read or parsed; the message says why.
     Failed(String),
@@ -67,28 +68,52 @@ impl FileState {
     }
 
     /// Read one file from disk, and with an archive each member that is a
-    /// VI or a control. The first entry is the file itself; the members
-    /// follow in the order of the archive, under their virtual paths. The
-    /// archive is read once and its members are parsed in parallel.
+    /// VI, a control or a project file. The first entry is the file
+    /// itself; the members follow in the order of the archive, under
+    /// their virtual paths. The archive is read once and its members are
+    /// parsed in parallel.
     pub fn load_all(path: &Path) -> Vec<(PathBuf, FileState)> {
         let own = |state| vec![(path.to_path_buf(), state)];
+        // A member path first: what a member is called decides how it is
+        // read, as for a file on disk, and never whether it is one.
+        if archive::split(path).is_some() {
+            return own(Self::from_bytes(path, archive::read(path)));
+        }
         if is_project_file(path) {
             return own(match ProjectFile::from_path(path) {
                 Ok(project) => FileState::Project(Box::new(project)),
                 Err(reason) => FileState::Failed(reason),
             });
         }
-        if !archive::is_archive(path) || archive::split(path).is_some() {
+        if !archive::is_archive(path) {
             return own(Self::from_inspection(Inspection::from_path(path)));
         }
-        match archive::open(path, Self::from_inspection) {
-            Ok(opened) => {
+        match archive::open(path, Self::from_bytes) {
+            Ok(Some(opened)) => {
                 let mut out = own(FileState::Archive(Box::new(opened.file)));
                 out.extend(opened.members);
                 out
             }
+            // An archive without a directory is a resource file.
+            Ok(None) => own(Self::from_inspection(Inspection::from_path(path))),
             Err(reason) => own(FileState::Failed(reason)),
         }
+    }
+
+    /// The state of the file called `path` that holds `bytes`: a project
+    /// file by its extension, and a binary resource file otherwise.
+    fn from_bytes(path: &Path, bytes: Result<Vec<u8>, String>) -> Self {
+        let bytes = match bytes {
+            Ok(bytes) => bytes,
+            Err(reason) => return FileState::Failed(reason),
+        };
+        if is_project_file(path) {
+            return match ProjectFile::from_bytes(path, &bytes) {
+                Ok(project) => FileState::Project(Box::new(project)),
+                Err(reason) => FileState::Failed(reason),
+            };
+        }
+        Self::from_inspection(Inspection::from_bytes(&bytes))
     }
 
     /// Turn a backend's answer for a binary file into a file state.
@@ -171,13 +196,33 @@ impl Workspace {
         &self.files
     }
 
-    /// The key under which `path` is stored, whatever its spelling.
+    /// The key under which `path` is stored, whatever its spelling. A
+    /// member of an archive is also found under another letter case of
+    /// its name, as the editor finds it.
     fn key(&self, path: &Path) -> Option<PathBuf> {
         let path = normalize(path);
         if self.files.contains_key(&path) {
             return Some(path);
         }
-        self.keys.get(&identity(&path)).cloned()
+        if let Some(key) = self.keys.get(&identity(&path)) {
+            return Some(key.clone());
+        }
+        let archive = self.keys.get(&identity(path.parent()?))?;
+        let wanted = path.file_name()?.to_str()?.to_lowercase();
+        let mut folded = self.files.get(archive)?.archive()?.opened().into_iter();
+        let name = folded.find(|name| name.to_lowercase() == wanted)?;
+        if folded.any(|name| name.to_lowercase() == wanted) {
+            return None;
+        }
+        let member = archive::member_path(archive, name);
+        self.files.contains_key(&member).then_some(member)
+    }
+
+    /// The path under which the workspace holds `path`: the spelling it
+    /// was first seen in, and for a member of an archive the name the
+    /// archive has for it. `None` when it is not a file of the workspace.
+    pub fn stored_path(&self, path: &Path) -> Option<PathBuf> {
+        self.key(path)
     }
 
     /// The state of one file, whatever the spelling of its path.
@@ -238,22 +283,30 @@ impl Workspace {
         }
     }
 
-    /// The archive a file of the workspace is a member of: the key of the
-    /// archive and the member's name. `None` for a file on disk, and for
-    /// a member whose archive is not in the workspace.
-    pub fn archive_of(&self, path: &Path) -> Option<(&Path, String)> {
+    /// The archive a file of the workspace is a member of: the path of
+    /// the archive (its key, when it is a file of the workspace too) and
+    /// the member's name. `None` for a file on disk. A member that was
+    /// given by its own path has an archive although the archive is not
+    /// in the workspace.
+    pub fn archive_of(&self, path: &Path) -> Option<(PathBuf, String)> {
         let key = self.key(path)?;
-        let parent = self.key(key.parent()?)?;
-        let (archive, state) = self.files.get_key_value(&parent)?;
-        state.archive()?;
         let name = key.file_name()?.to_string_lossy().into_owned();
-        Some((archive.as_path(), name))
+        let parent = key.parent()?;
+        let in_workspace = self.key(parent).and_then(|parent| {
+            let (archive, state) = self.files.get_key_value(&parent)?;
+            state.archive().map(|_| archive.clone())
+        });
+        match in_workspace {
+            Some(archive) => Some((archive, name)),
+            None => archive::split(&key).map(|(archive, _)| (archive, name)),
+        }
     }
 
     /// The file on disk that holds `path`: the archive for a member of an
-    /// archive of the workspace, and `path` itself for anything else.
-    pub fn file_on_disk<'a>(&'a self, path: &'a Path) -> &'a Path {
-        self.archive_of(path).map_or(path, |(archive, _)| archive)
+    /// archive, and `path` itself for anything else.
+    pub fn file_on_disk(&self, path: &Path) -> PathBuf {
+        self.archive_of(path)
+            .map_or_else(|| path.to_path_buf(), |(archive, _)| archive)
     }
 
     /// `path` as seen from the scan root that contains it, which does not
@@ -314,8 +367,17 @@ fn discover_from(base: Option<&Path>, roots: &[PathBuf]) -> Vec<PathBuf> {
         found.push((identity_from(base, &path), order, path));
     };
     for (order, root) in roots.iter().enumerate() {
-        if root.is_file() || archive::split(root).is_some() {
+        if root.is_file() {
             add(order, root);
+            continue;
+        }
+        if archive::split(root).is_some() {
+            // Under the name the archive has for the member, so that two
+            // spellings of one member are one file.
+            add(
+                order,
+                &archive::canonical(root).unwrap_or_else(|| root.clone()),
+            );
             continue;
         }
         let walker = WalkDir::new(root).follow_links(false).into_iter();

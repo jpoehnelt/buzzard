@@ -60,9 +60,12 @@ fn main() -> Result<(), buzzard_rsrc::RsrcError> {
 A member name is data from the file: it may be `..` or hold a separator, so
 do not join it to a path. A member that declares more than
 `llb::MAX_MEMBER_BYTES`, or more than its compressed bytes could hold, is
-refused before anything is inflated. Archives taken out of a built
-application, and members in the compression older than LabVIEW 6, are not
-read; the module documentation of `llb` has the layout.
+refused before anything is inflated, and so is an archive in which two
+members share bytes of the file. Members are read whether they are stored as
+they are, as a zlib stream, or in the older compression that leaves out zero
+bytes. An archive taken out of a built application has no directory
+(`llb::is_program_tree`) and is not read; the module documentation of `llb`
+has the layout.
 
 This crate is the parser of [buzzard](https://github.com/jpoehnelt/buzzard),
 a static analyzer and language server for these files; the tool is the

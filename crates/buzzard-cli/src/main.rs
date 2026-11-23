@@ -132,13 +132,10 @@ fn main() -> ExitCode {
             max_path_length,
             exit_zero,
         } => check(&paths, format, ignore, max_path_length, exit_zero),
-        Command::Inspect { file, format } if is_project_file(&file) => {
-            inspect_project(&file, format)
+        Command::Inspect { file, format } => {
+            // A member is shown under the name its archive has for it.
+            inspect(&archive::canonical(&file).unwrap_or(file), format)
         }
-        Command::Inspect { file, format } if archive::is_archive(&file) && file.is_file() => {
-            inspect_archive(&file, format)
-        }
-        Command::Inspect { file, format } => inspect_binary(&file, format),
         Command::Verify { paths, format } => verify(&paths, format),
         Command::Deps(args) => match deps_cmd::run(&args) {
             Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
@@ -169,6 +166,22 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+    }
+}
+
+/// `buzzard inspect`: a project file, the directory of an archive, or a
+/// binary file. A member path is tried first: `x.llb/p.lvlib` is a member
+/// of an archive, and what a member is called decides how it is read.
+fn inspect(file: &Path, format: InspectFormat) -> ExitCode {
+    let is_member = archive::split(file).is_some();
+    if is_project_file(file) && (is_member || file.is_file()) {
+        inspect_project(file, format)
+    } else if !is_member && archive::is_archive(file) && file.is_file() {
+        inspect_archive(file, format)
+    } else if is_project_file(file) {
+        inspect_project(file, format)
+    } else {
+        inspect_binary(file, format)
     }
 }
 
@@ -262,12 +275,12 @@ fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
     }
 }
 
-/// JSON shape of `inspect` on an `.llb` archive: what the file is, and its
-/// directory.
+/// JSON shape of `inspect` on an `.llb` archive: what the file is, as for
+/// any resource file, and its directory.
 #[derive(serde::Serialize)]
 struct ArchiveOutput<'a> {
-    kind: buzzard_rsrc::FileKind,
-    file_type: &'static str,
+    #[serde(flatten)]
+    metadata: &'a ViMetadata,
     #[serde(flatten)]
     archive: &'a archive::ArchiveFile,
 }
@@ -275,19 +288,30 @@ struct ArchiveOutput<'a> {
 /// `buzzard inspect` on an `.llb` archive: the list of its members. A
 /// member is inspected by the path of the archive followed by its name.
 fn inspect_archive(file: &Path, format: InspectFormat) -> ExitCode {
+    let fail = |err: String| {
+        eprintln!("error: {}: {err}", file.display());
+        ExitCode::from(2)
+    };
     let opened = match archive::list(file) {
-        Ok(listing) => listing,
-        Err(err) => {
-            eprintln!("error: {}: {err}", file.display());
-            return ExitCode::from(2);
+        Ok(Some(listing)) => listing,
+        Ok(None) => {
+            eprintln!(
+                "note: {}: the archive was built into an application and has no directory of \
+                 members; it is shown as the resource file it is",
+                file.display()
+            );
+            return inspect_binary(file, format);
         }
+        Err(err) => return fail(err),
     };
     let rendered = match format {
-        InspectFormat::Json => to_json(&ArchiveOutput {
-            kind: buzzard_rsrc::FileKind::Library,
-            file_type: "LVAR",
-            archive: &opened,
-        }),
+        InspectFormat::Json => match Inspection::from_path(file) {
+            Ok(inspection) => to_json(&ArchiveOutput {
+                metadata: &inspection.metadata,
+                archive: &opened,
+            }),
+            Err(err) => return fail(err),
+        },
         InspectFormat::Markdown => {
             let title = file
                 .file_name()

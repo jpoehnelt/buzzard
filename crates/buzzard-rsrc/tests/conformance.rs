@@ -527,6 +527,7 @@ fn synthetic_archive() -> Vec<u8> {
         .compressed("inner.llb", &inner)
         .member_bytes(b"../\x83\x65.vi", &vi)
         .member("not a file", b"plain text")
+        .legacy("Old.vi", &vi)
         .build()
 }
 
@@ -558,10 +559,15 @@ fn a_synthetic_archive_reads_back() {
             Storage::Zlib,
             Storage::Zlib,
             Storage::Stored,
-            Storage::Stored
+            Storage::Stored,
+            Storage::Legacy
         ]
     );
-    assert_eq!(open_archive(&bytes), 5);
+    assert_eq!(open_archive(&bytes), 6);
+    assert_eq!(
+        llb.read(&llb.members()[5]).unwrap(),
+        llb.read(&llb.members()[0]).unwrap()
+    );
     assert_eq!(llb.members()[2].kind, FileKind::Library);
     // Listing is deterministic.
     assert_eq!(llb.members(), Llb::parse(&bytes).unwrap().members());
@@ -610,9 +616,9 @@ fn damage_to_one_member_does_not_hide_the_others() {
         *byte ^= 0xff;
     }
     let llb = Llb::parse(&damaged).unwrap();
-    assert_eq!(llb.members().len(), 5);
+    assert_eq!(llb.members().len(), 6);
     assert!(llb.read(&llb.members()[1]).is_err());
-    assert_eq!(open_archive(&damaged), 4);
+    assert_eq!(open_archive(&damaged), 5);
 }
 
 // State machine facts. The files live with the tests that use them most,

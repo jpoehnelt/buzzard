@@ -191,7 +191,7 @@ impl Snapshot {
     /// The file an editor can open for `path`: the archive for a member
     /// of an `.llb` archive, and `path` itself for anything else.
     pub fn document(&self, path: &Path) -> PathBuf {
-        self.workspace.file_on_disk(path).to_path_buf()
+        self.workspace.file_on_disk(path)
     }
 
     /// True if `path` is a member of an `.llb` archive of the workspace.

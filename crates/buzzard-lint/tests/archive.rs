@@ -10,7 +10,8 @@ use buzzard_lint::graph::CaseSensitivity;
 use buzzard_lint::verify::report::Verified;
 use buzzard_lint::{archive, lint, DependencyGraph, Diagnostic, FileState, LintConfig, Workspace};
 use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
-use buzzard_rsrc::{LvPath, PathKind};
+use buzzard_rsrc::header::file_type;
+use buzzard_rsrc::{FileKind, FourCc, LvPath, PathKind};
 
 const V23: u32 = 0x2300_8000;
 /// Flag words for a clean file: compiled code separated, nothing else set.
@@ -155,7 +156,7 @@ fn members_are_files_of_the_workspace_and_every_rule_runs_on_them() {
     assert_eq!(
         workspace
             .archive_of(&dir.at("lib/util.llb/Inline.vi"))
-            .map(|(archive, name)| (dir.rel(archive), name)),
+            .map(|(archive, name)| (dir.rel(&archive), name)),
         Some(("lib/util.llb".to_owned(), "Inline.vi".to_owned()))
     );
     assert_eq!(workspace.archive_of(&dir.at("Main.vi")), None);
@@ -401,24 +402,45 @@ fn an_archive_whose_directory_cannot_be_read_is_one_finding() {
         .build();
     cut.truncate(cut.len() - 40);
     dir.write("cut.llb", &cut);
-    // An archive of a built application: no directory to read.
+    // An archive of a built application has no directory to read. It is
+    // a resource file like any other, as it was before archives were
+    // opened: nothing about it is a problem.
     dir.write(
         "built.llb",
-        &RsrcBuilder::new(buzzard_rsrc::header::file_type::LIBRARY)
+        &RsrcBuilder::new(file_type::LIBRARY)
             .resource(b"LVzp", 0, Some("embdZip"), vec![0; 64])
             .build(),
     );
     assert_eq!(
         dir.codes(),
         [
-            ("built.llb".to_owned(), "BZ000"),
             ("cut.llb".to_owned(), "BZ000"),
             ("garbage.llb".to_owned(), "BZ000"),
         ]
     );
+    let workspace = dir.scan();
     assert_eq!(
-        dir.keys(&dir.scan()),
+        dir.keys(&workspace),
         ["built.llb", "cut.llb", "garbage.llb"]
+    );
+    let built = workspace.get(&dir.at("built.llb")).unwrap();
+    assert_eq!(built.metadata().unwrap().kind, FileKind::Library);
+    assert_eq!(archive::list(&dir.at("built.llb")), Ok(None));
+    assert!(archive::list(&dir.at("cut.llb")).is_err());
+    let verified = Verified::scan(std::slice::from_ref(&dir.0));
+    let unreadable: Vec<String> = verified
+        .unreadable
+        .iter()
+        .map(|(path, _)| dir.rel(path))
+        .collect();
+    assert_eq!(unreadable, ["cut.llb", "garbage.llb"]);
+    // A link into it is not known to be there or to be missing.
+    dir.write("ws/Main.vi", &vi(&CLEAN, &["//built.llb/Any.vi"]));
+    let workspace = Workspace::scan(&[dir.at("ws")]);
+    let graph = DependencyGraph::build(&workspace);
+    assert_eq!(
+        deps::scan(&workspace, &graph, &Roots::default()).missing,
+        []
     );
 }
 
@@ -498,10 +520,97 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     assert!(archive::read(&dir.at("ws/a.llb/..")).is_err());
     assert_eq!(archive::read(&dir.at("ws/a.llb/Same.vi")).unwrap(), hostile);
     assert_eq!(archive::split(&dir.at("ws/a.llb/sub/x.vi")), None);
+    // A name the scan refuses is refused as a path too, on a system
+    // where a backslash is not a separator as well.
+    let backslash = dir.at("ws/a.llb").join("sub\\x.vi");
+    assert_eq!(archive::split(&backslash), None);
+    assert!(archive::read(&backslash).is_err());
+    assert!(!archive::exists(&backslash));
+    assert!(Workspace::scan(std::slice::from_ref(&backslash))
+        .files()
+        .values()
+        .all(|state| state.metadata().is_none()));
     assert_eq!(
         archive::split(&dir.at("ws/a.llb/Same.vi")),
         Some((dir.at("ws/a.llb"), "Same.vi".to_owned()))
     );
+}
+
+/// A name is printed on one line and as the archive spells it: its
+/// control characters are escaped, and nothing else is. A name with one
+/// is not the name of a file, so it never starts a line of a report.
+#[test]
+fn a_member_name_is_printed_on_one_line() {
+    let dir = TempDir::new("one-line");
+    let hostile = vi(&INLINE_CODE, &[]);
+    let names: [&[u8]; 5] = [
+        b"new\nline.vi",
+        b"\x1b[31mred.vi",
+        b"tab\there.vi",
+        b"sub\\x.vi",
+        b"nul\0.vi",
+    ];
+    let mut builder = LlbBuilder::default();
+    for name in names {
+        builder = builder.member_bytes(name, &hostile);
+    }
+    dir.write("ws/a.llb", &builder.build());
+    let workspace = Workspace::scan(&[dir.at("ws")]);
+    assert_eq!(dir.keys(&workspace), ["ws/a.llb"]);
+    let graph = DependencyGraph::build(&workspace);
+    let found = lint(&workspace, &graph, &LintConfig::default());
+    assert_eq!(found.len(), 5);
+    let messages: Vec<&str> = found.iter().map(|d| d.message.as_str()).collect();
+    for expected in [
+        "cannot open member `new\\nline.vi`: its name is not a file name",
+        "cannot open member `\\u{1b}[31mred.vi`: its name is not a file name",
+        "cannot open member `tab\\there.vi`: its name is not a file name",
+        "cannot open member `sub\\x.vi`: its name is not a file name",
+        "cannot open member `nul\\u{0}.vi`: its name is not a file name",
+    ] {
+        assert!(messages.contains(&expected), "{expected}: {messages:?}");
+    }
+    for d in &found {
+        let path = d.path.to_string_lossy();
+        assert!(
+            !d.message
+                .chars()
+                .chain(path.chars())
+                .any(|c| c.is_ascii_control()),
+            "{d:?}"
+        );
+    }
+    let listing = buzzard_lint::summary::archive_to_markdown(
+        "a.llb",
+        workspace
+            .get(&dir.at("ws/a.llb"))
+            .unwrap()
+            .archive()
+            .unwrap(),
+    );
+    assert!(
+        listing.contains("\nNot opened: member `sub\\x.vi`: its name is not a file name.\n"),
+        "{listing}"
+    );
+    assert!(listing.contains("| new\\nline.vi | VI"), "{listing}");
+    assert_eq!(listing.lines().filter(|l| l.contains("line.vi")).count(), 2);
+    // A member that is not opened by a scan is not opened by its path
+    // either (a backslash is an ordinary character of a path on Unix).
+    #[cfg(unix)]
+    for name in ["sub\\x.vi", "new\nline.vi", "\u{1b}[31mred.vi"] {
+        let path = dir.at("ws/a.llb").join(name);
+        assert_eq!(archive::split(&path), None, "{name:?}");
+        assert!(!archive::exists(&path), "{name:?}");
+        assert!(archive::read(&path).is_err(), "{name:?}");
+        let alone = Workspace::scan(std::slice::from_ref(&path));
+        assert!(
+            alone
+                .files()
+                .values()
+                .all(|s| matches!(s, FileState::Failed(_))),
+            "{name:?}"
+        );
+    }
 }
 
 #[test]
@@ -526,6 +635,370 @@ fn an_archive_inside_an_archive_is_listed_and_not_opened() {
     assert_eq!(listing.members.len(), 2);
     assert_eq!(dir.codes().len(), 0);
     assert!(archive::read(&dir.at("outer.llb/inner.llb/Deep.vi")).is_err());
+    // Asked for by its path, the inner archive is a resource file: it is
+    // parsed as one, and its members are not listed.
+    let inner = FileState::load_all(&dir.at("outer.llb/inner.llb"));
+    assert_eq!(inner.len(), 1);
+    assert_eq!(
+        inner[0].1.metadata().map(|m| m.kind),
+        Some(FileKind::Library)
+    );
+}
+
+/// Nobody looks inside an archive in an archive, so a link into one is
+/// neither found nor missing.
+#[test]
+fn a_link_into_an_archive_in_an_archive_is_not_known_to_be_missing() {
+    let dir = TempDir::new("nested-link");
+    let inner = LlbBuilder::default().member("In.vi", &clean()).build();
+    dir.write(
+        "vilib/Utility/error.llb",
+        &LlbBuilder::default()
+            .member("inner.llb", &inner)
+            .member("Top.vi", &clean())
+            .build(),
+    );
+    let vilib = |rest: &str| LvPath {
+        kind: PathKind::Absolute,
+        components: format!("<vilib>/Utility/error.llb/{rest}")
+            .split('/')
+            .map(str::to_owned)
+            .collect(),
+    };
+    let links = [
+        ("In.vi", vilib("inner.llb/In.vi")),
+        ("Top.vi", vilib("Top.vi")),
+        ("Gone.vi", vilib("Gone.vi")),
+        ("Deep.vi", vilib("Top.vi/Deep.vi")),
+        (
+            "In.vi",
+            relative("//vilib/Utility/error.llb/inner.llb/In.vi"),
+        ),
+        ("X.vi", relative("//vilib/Utility/error.llb/Top.vi/X.vi")),
+    ];
+    dir.write(
+        "ws/Main.vi",
+        &RsrcBuilder::default()
+            .save_record(V23, &CLEAN)
+            .links(
+                &links
+                    .iter()
+                    .map(|(n, p)| (*n, p.clone()))
+                    .collect::<Vec<_>>(),
+            )
+            .build(),
+    );
+    dir.write(
+        "ws/App.lvproj",
+        &project(&[
+            "../../vilib/Utility/error.llb/inner.llb/In.vi",
+            "../../vilib/Utility/error.llb/Top.vi/X.vi",
+        ]),
+    );
+    let archives = archive::Archives::default();
+    let outer = dir.at("vilib/Utility/error.llb");
+    assert_eq!(archives.contains(&outer, &["inner.llb", "In.vi"]), None);
+    assert_eq!(archives.contains(&outer, &["INNER.LLB", "x", "y"]), None);
+    assert_eq!(archives.contains(&outer, &["Top.vi", "X.vi"]), Some(false));
+    assert_eq!(
+        archives.contains(&outer, &["absent.llb", "X.vi"]),
+        Some(false)
+    );
+    assert_eq!(archives.contains(&outer, &["inner.llb"]), Some(true));
+
+    let workspace = Workspace::scan(&[dir.at("ws")]);
+    let graph = DependencyGraph::build(&workspace);
+    let flagged: Vec<String> = lint(&workspace, &graph, &LintConfig::default())
+        .into_iter()
+        .filter(|d| d.code == "BZ006")
+        .map(|d| d.message)
+        .collect();
+    assert_eq!(
+        flagged,
+        ["member `X.vi` does not exist on disk (`../../vilib/Utility/error.llb/Top.vi/X.vi`)"]
+    );
+    let mut roots = Roots::default();
+    roots.add("vilib", &dir.at("vilib")).unwrap();
+    let report = deps::scan(&workspace, &graph, &roots);
+    let missing: Vec<String> = report
+        .missing
+        .iter()
+        .map(|link| dir.rel(Path::new(&link.target)))
+        .collect();
+    assert_eq!(missing, ["vilib/Utility/error.llb/Top.vi/X.vi"]);
+    let statuses: Vec<(String, String)> = report
+        .roots
+        .iter()
+        .flat_map(|root| &root.packages)
+        .flat_map(|package| &package.targets)
+        .map(|target| {
+            let status = serde_json::to_value(target.status).unwrap();
+            (target.path.clone(), status.as_str().unwrap().to_owned())
+        })
+        .collect();
+    let status = |rest: &str| {
+        let wanted = format!("<vilib>/Utility/error.llb/{rest}");
+        let found = statuses.iter().find(|(path, _)| *path == wanted);
+        found
+            .unwrap_or_else(|| panic!("{wanted}: {statuses:?}"))
+            .1
+            .clone()
+    };
+    assert_eq!(status("inner.llb/In.vi"), "unchecked");
+    assert_eq!(status("Top.vi"), "found");
+    assert_eq!(status("Gone.vi"), "missing");
+    assert_eq!(status("Top.vi/Deep.vi"), "missing");
+}
+
+/// What the directory says a member is does not decide whether it is
+/// analyzed: one changed type code must not hide a VI.
+#[test]
+fn the_type_in_the_directory_does_not_hide_a_member() {
+    let dir = TempDir::new("type");
+    let inline = vi(&INLINE_CODE, &[]);
+    let control = RsrcBuilder::new(file_type::CONTROL)
+        .save_record(V23, &INLINE_CODE)
+        .build();
+    let inner = LlbBuilder::default().member("Deep.vi", &inline).build();
+    dir.write(
+        "odd.llb",
+        &LlbBuilder::default()
+            // The directory says archive, the name and the content say VI.
+            .member_typed("x.vi", FourCc::new(b"LVAR"), &inline)
+            .member_typed("y.vi", FourCc::new(b"TEXT"), &inline)
+            // A control by its type alone, and one by its name alone.
+            .member("Cluster typedef", &control)
+            .member_typed("z.ctl", FourCc::new(b"????"), &control)
+            // The directory says VI, the content is an archive: it is
+            // parsed as the resource file it is, and not opened.
+            .member_typed("fake.vi", FourCc::new(b"LVIN"), &inner)
+            // A real archive in the archive, under either type.
+            .member("inner.llb", &inner)
+            .member_typed("other.llb", FourCc::new(b"TEXT"), &inner)
+            .build(),
+    );
+    let workspace = dir.scan();
+    assert_eq!(
+        dir.keys(&workspace),
+        [
+            "odd.llb",
+            "odd.llb/Cluster typedef",
+            "odd.llb/fake.vi",
+            "odd.llb/x.vi",
+            "odd.llb/y.vi",
+            "odd.llb/z.ctl",
+        ]
+    );
+    assert_eq!(
+        dir.codes(),
+        [
+            ("odd.llb/Cluster typedef".to_owned(), "BZ001"),
+            ("odd.llb/x.vi".to_owned(), "BZ001"),
+            ("odd.llb/y.vi".to_owned(), "BZ001"),
+            ("odd.llb/z.ctl".to_owned(), "BZ001"),
+        ]
+    );
+    let kind = |name: &str| {
+        let state = workspace.get(&dir.at("odd.llb").join(name)).unwrap();
+        state.metadata().unwrap().kind
+    };
+    assert_eq!(kind("Cluster typedef"), FileKind::Control);
+    assert_eq!(kind("fake.vi"), FileKind::Library);
+}
+
+fn library(urls: &[&str]) -> Vec<u8> {
+    let mut xml = String::from("<Library LVVersion=\"23008000\">\n");
+    for url in urls {
+        let name = url.rsplit('/').next().unwrap_or(url);
+        let _ = writeln!(xml, "<Item Name=\"{name}\" Type=\"VI\" URL=\"{url}\"/>");
+    }
+    xml.push_str("</Library>\n");
+    xml.into_bytes()
+}
+
+/// A project library or class in an archive is a file of the workspace
+/// like one on disk: the same rules, the same links.
+#[test]
+fn project_files_in_an_archive_are_analyzed_like_files_on_disk() {
+    let dir = TempDir::new("project-member");
+    let lib = library(&["../Present.vi", "../Gone.vi", "../../Loose.vi"]);
+    dir.write("loose.llb/Lib.lvlib", &lib);
+    dir.write("loose.llb/Present.vi", &clean());
+    dir.write("Loose.vi", &clean());
+    dir.write(
+        "packed.llb",
+        &LlbBuilder::default()
+            .member("Present.vi", &clean())
+            .compressed("Lib.lvlib", &lib)
+            .member("Bad.lvclass", b"<not xml")
+            .build(),
+    );
+    let workspace = dir.scan();
+    assert_eq!(
+        dir.keys(&workspace),
+        [
+            "Loose.vi",
+            "loose.llb/Lib.lvlib",
+            "loose.llb/Present.vi",
+            "packed.llb",
+            "packed.llb/Bad.lvclass",
+            "packed.llb/Lib.lvlib",
+            "packed.llb/Present.vi",
+        ]
+    );
+    let member = dir.at("packed.llb/Lib.lvlib");
+    let on_disk = dir.at("loose.llb/Lib.lvlib");
+    let urls = |path: &Path| -> Vec<String> {
+        let project = workspace.get(path).unwrap().project().unwrap();
+        project.members.iter().map(|m| m.url.clone()).collect()
+    };
+    assert_eq!(urls(&member), urls(&on_disk));
+    assert_eq!(urls(&member).len(), 3);
+    // The findings are those of the same file in a directory.
+    let found = dir.diagnostics();
+    let of = |prefix: &str| -> Vec<(String, &str, String)> {
+        found
+            .iter()
+            .filter_map(|d| {
+                let path = dir.rel(&d.path);
+                let rest = path.strip_prefix(prefix)?.to_owned();
+                (rest != "/Bad.lvclass" && !rest.is_empty())
+                    .then(|| (rest, d.code, d.message.clone()))
+            })
+            .collect()
+    };
+    assert_eq!(of("packed.llb"), of("loose.llb"));
+    assert_eq!(
+        of("packed.llb"),
+        [(
+            "/Lib.lvlib".to_owned(),
+            "BZ006",
+            "member `Gone.vi` does not exist on disk (`../Gone.vi`)".to_owned()
+        )]
+    );
+    assert!(found
+        .iter()
+        .any(|d| dir.rel(&d.path) == "packed.llb/Bad.lvclass" && d.code == "BZ000"));
+    // The library contains its members across the archive boundary.
+    let graph = DependencyGraph::build(&workspace);
+    let report = deps::scan(&workspace, &graph, &Roots::default());
+    let missing: Vec<String> = report
+        .missing
+        .iter()
+        .map(|link| dir.rel(Path::new(&link.target)))
+        .collect();
+    assert_eq!(missing, ["loose.llb/Gone.vi", "packed.llb/Gone.vi"]);
+    // Given by its path, the member is read as the project file it is.
+    assert_eq!(
+        FileState::load(&member).project().map(|p| p.members.len()),
+        Some(3)
+    );
+    // It has no diagram, and `verify` neither lists nor reports it.
+    let verified = Verified::scan(std::slice::from_ref(&dir.0));
+    assert_eq!(verified.unreadable, []);
+    assert_eq!(verified.files.len(), 0);
+}
+
+/// A member is found whatever the letter case it is asked for in, and is
+/// one file under the name its archive has for it.
+#[test]
+fn a_member_asked_for_in_another_letter_case_is_the_same_file() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/verify");
+    let machine = fs::read(fixtures.join("jki-state-machine/new-support-vis-examples.vi")).unwrap();
+    let dir = TempDir::new("letter-case");
+    dir.write(
+        "lib/util.llb",
+        &LlbBuilder::default()
+            .member("Helper.vi", &vi(&INLINE_CODE, &["/Gone.vi"]))
+            .member("Machine.vi", &machine)
+            .build(),
+    );
+    let archive_path = dir.at("lib/util.llb");
+    let typed = dir.at("lib/util.llb/helper.VI");
+    assert_eq!(
+        archive::canonical(&typed),
+        Some(dir.at("lib/util.llb/Helper.vi"))
+    );
+    assert_eq!(archive::canonical(&dir.at("lib/util.llb/absent.vi")), None);
+    assert_eq!(archive::canonical(&archive_path), None);
+    for roots in [
+        vec![typed.clone()],
+        vec![typed.clone(), dir.at("lib/util.llb/HELPER.vi")],
+    ] {
+        let workspace = Workspace::scan(&roots);
+        assert_eq!(
+            dir.keys(&workspace),
+            ["lib/util.llb/Helper.vi"],
+            "{roots:?}"
+        );
+    }
+    let both = [archive_path.clone(), typed.clone()];
+    let workspace = Workspace::scan(&both);
+    assert_eq!(
+        dir.keys(&workspace),
+        [
+            "lib/util.llb",
+            "lib/util.llb/Helper.vi",
+            "lib/util.llb/Machine.vi"
+        ]
+    );
+    let graph = DependencyGraph::build(&workspace);
+    let found = lint(&workspace, &graph, &LintConfig::default());
+    let on_helper = |d: &&Diagnostic| d.code == "BZ001" && d.path.ends_with("Helper.vi");
+    assert_eq!(found.iter().filter(on_helper).count(), 1);
+    assert!(found.iter().all(|d| !d.path.ends_with("helper.VI")));
+    let report = deps::scan(&workspace, &graph, &Roots::default());
+    assert_eq!(report.files, 3);
+    let gone: Vec<_> = report
+        .missing
+        .iter()
+        .filter(|link| link.target.ends_with("Gone.vi"))
+        .collect();
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].referrers.len(), 1);
+    // The workspace answers for either spelling, with its own.
+    assert_eq!(
+        workspace.stored_path(&typed),
+        Some(dir.at("lib/util.llb/Helper.vi"))
+    );
+    assert!(workspace.get(&typed).unwrap().metadata().is_some());
+    assert_eq!(
+        workspace.stored_path(&dir.at("lib/util.llb/absent.vi")),
+        None
+    );
+    // `verify` lists the machine once.
+    let verified = Verified::scan(&[archive_path, dir.at("lib/util.llb/machine.vi")]);
+    let files: Vec<String> = verified.files.iter().map(|f| dir.rel(&f.path)).collect();
+    assert_eq!(files, ["lib/util.llb/Machine.vi"]);
+    let alone = Verified::scan(&[dir.at("lib/util.llb/machine.vi")]);
+    assert_eq!(alone.files.len(), 1);
+    assert_eq!(alone.summary.findings, verified.summary.findings);
+}
+
+/// `verify` says which members of an archive it did not look at.
+#[test]
+fn verify_lists_an_archive_with_a_member_it_cannot_open() {
+    let dir = TempDir::new("verify-problems");
+    dir.write(
+        "odd.llb",
+        &LlbBuilder::default()
+            .member("Fine.vi", &clean())
+            .member("a/b.vi", &clean())
+            .build(),
+    );
+    let verified = Verified::scan(std::slice::from_ref(&dir.0));
+    let unreadable: Vec<(String, &str)> = verified
+        .unreadable
+        .iter()
+        .map(|(path, reason)| (dir.rel(path), reason.as_str()))
+        .collect();
+    assert_eq!(
+        unreadable,
+        [(
+            "odd.llb".to_owned(),
+            "member `a/b.vi`: its name is not a file name"
+        )]
+    );
 }
 
 #[test]
@@ -689,15 +1162,81 @@ fn sarif_locates_a_member_finding_at_its_archive() {
         .as_str()
         .unwrap()
         .ends_with("my lib.llb/In side.vi"));
+    assert!(member["partialFingerprints"]["buzzardMember/v1"]
+        .as_str()
+        .unwrap()
+        .ends_with("my lib.llb/In side.vi"));
     let loose = results
         .iter()
         .find(|r| uri(r).ends_with("Loose.vi"))
         .unwrap();
     assert!(loose["locations"][0].get("logicalLocations").is_none());
+    assert!(loose.get("partialFingerprints").is_none());
     assert!(loose["message"]["text"]
         .as_str()
         .unwrap()
         .starts_with("compiled code"));
+}
+
+/// The findings of several members of one archive have one artifact and
+/// no region: a fingerprint tells them apart. The same holds when the
+/// members were given by their own paths and the archive is not a file
+/// of the workspace.
+#[test]
+fn sarif_tells_the_members_of_one_archive_apart() {
+    let dir = &TempDir::new("sarif-members");
+    dir.write(
+        "many.llb",
+        &LlbBuilder::default()
+            .member("One.vi", &vi(&INLINE_CODE, &[]))
+            .member("Two.vi", &vi(&INLINE_CODE, &[]))
+            .member("Three.vi", &vi(&INLINE_CODE, &[]))
+            .build(),
+    );
+    let mut counts = Vec::new();
+    for roots in [
+        vec![dir.at("many.llb")],
+        vec![
+            dir.at("many.llb/One.vi"),
+            dir.at("many.llb/two.VI"),
+            dir.at("many.llb/Three.vi"),
+        ],
+    ] {
+        let workspace = Workspace::scan(&roots);
+        let graph = DependencyGraph::build(&workspace);
+        let diagnostics = lint(&workspace, &graph, &LintConfig::default());
+        let sarif = buzzard_lint::sarif::to_sarif(&workspace, &diagnostics, "0");
+        let results = sarif["runs"][0]["results"].as_array().unwrap();
+        let mut prints = Vec::new();
+        for result in results {
+            let location = &result["locations"][0];
+            let uri = location["physicalLocation"]["artifactLocation"]["uri"]
+                .as_str()
+                .unwrap();
+            assert!(uri.ends_with("/many.llb"), "{roots:?}: {uri}");
+            let name = location["logicalLocations"][0]["name"].as_str().unwrap();
+            let text = result["message"]["text"].as_str().unwrap();
+            assert!(
+                text.starts_with(&format!("{name}: compiled code")),
+                "{text}"
+            );
+            let print = result["partialFingerprints"]["buzzardMember/v1"]
+                .as_str()
+                .unwrap();
+            assert!(print.starts_with("BZ001:"), "{print}");
+            assert!(print.ends_with(&format!("many.llb/{name}")), "{print}");
+            prints.push(print.to_owned());
+        }
+        prints.sort();
+        prints.dedup();
+        assert_eq!(prints.len(), results.len(), "{roots:?}");
+        assert_eq!(
+            sarif,
+            buzzard_lint::sarif::to_sarif(&workspace, &diagnostics, "0")
+        );
+        counts.push(results.len());
+    }
+    assert_eq!(counts, [3, 3]);
 }
 
 #[test]
