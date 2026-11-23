@@ -69,7 +69,8 @@ test('the real tool gives an SVG and a summary, and leaves the file alone', { sk
   const binary = realBinary ?? '';
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'buzzard-vscode-'));
   try {
-    // A name a shell would trip over, and one that looks like an option.
+    // One name has characters that a shell would interpret, and one looks
+    // like an option.
     for (const name of ['-weird $(x) "q" <b>&.vi', '--format=json.vi']) {
       const file = path.join(directory, name);
       fs.copyFileSync(realFixture ?? '', file);

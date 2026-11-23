@@ -1,20 +1,21 @@
-// HTML for the webviews. Pure; no `vscode` import.
+// HTML for the webviews. This module does not import `vscode`.
 //
 // Everything shown comes from files that may be hostile (a file name, a
-// name stored inside a VI, the SVG drawn from one), so:
+// name stored inside a VI, the SVG drawn from one). So the module follows
+// three rules:
 //
-// - The webviews run no script at all, and the Content-Security-Policy
+// - The webviews run no script, and the Content-Security-Policy
 //   allows none. It allows one stylesheet (by nonce) and `data:` images.
-// - Text is escaped. Markdown is rendered with raw HTML, links and images
+// - Text is escaped. Markdown is rendered with raw HTML, links, and images
 //   switched off.
 // - The SVG is never put into the page as markup. It is shown through
-//   `<img src="data:image/svg+xml;base64,...">`; an SVG loaded as an image
+//   `<img src="data:image/svg+xml;base64,...">`. An SVG loaded as an image
 //   cannot run script or load anything from outside itself.
 
 import { randomBytes } from 'node:crypto';
 import MarkdownIt from 'markdown-it';
 
-/** Larger pictures are not embedded; the page says so instead. */
+/** A larger picture is not embedded. The page says so instead. */
 export const MAX_SVG_BYTES = 16 * 1024 * 1024;
 
 export function escapeHtml(text: string): string {
@@ -65,7 +66,7 @@ export function looksLikeSvg(text: string): boolean {
   return /^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*<svg[\s>]/.test(text.slice(start, start + 4096));
 }
 
-/** A `data:` URI for an SVG document. Base64, so no character of it is markup. */
+/** A `data:` URI for an SVG document. The document is Base64-encoded, so no character of it is markup. */
 export function svgDataUri(svg: string): string {
   return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
 }

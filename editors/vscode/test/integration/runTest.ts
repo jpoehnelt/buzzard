@@ -1,5 +1,6 @@
 // Starts a real VS Code (downloaded on first use) with the extension and
-// runs `suite.ts` inside it. Needs a display: on Linux, run under xvfb.
+// runs `suite.ts` inside it. It needs a display. On Linux, run it under
+// xvfb.
 //
 //   BUZZARD_BIN=/path/to/buzzard xvfb-run -a npm run test:integration
 
@@ -15,7 +16,7 @@ async function main(): Promise<void> {
   if (fixture !== undefined) {
     fs.copyFileSync(fixture, path.join(workspace, 'Fixture.vi'));
   }
-  // A file that is not a valid container: the server must report BZ000.
+  // This file is not a valid container, so the server must report BZ000 for it.
   fs.writeFileSync(path.join(workspace, 'Broken.vi'), 'this is not a resource container');
   try {
     await runTests({

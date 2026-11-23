@@ -1,15 +1,15 @@
 # buzzard-rsrc
 
 A read-only parser for the binary RSRC resource container that LabVIEW saves
-`.vi`, `.ctl`, `.vit`, `.ctt` and `.vim` files in, and for the `.llb`
+`.vi`, `.ctl`, `.vit`, `.ctt`, and `.vim` files in, and for the `.llb`
 archives that hold such files. It is pure Rust, has no `unsafe` code, and
 needs no LabVIEW installation.
 
 It reads the resource directory, the version and save settings, the owning
-libraries, the links to other files, the type table and the block diagram
-(nodes, terminals, wires, constants, case selectors, loops and tunnels).
-Truncated or corrupted input gives an `RsrcError`, never a panic, and what
-the diagram decoder had to skip is recorded as a `Loss` on the diagram.
+libraries, the links to other files, the type table, and the block diagram
+(nodes, terminals, wires, constants, case selectors, loops, and tunnels).
+Truncated or corrupted input gives an `RsrcError`, never a panic. The
+diagram decoder records what it skips as a `Loss` on the diagram.
 
 ```rust
 use buzzard_rsrc::builder::RsrcBuilder;
@@ -33,8 +33,8 @@ fn main() -> Result<(), buzzard_rsrc::RsrcError> {
 `BlockDiagram::from_rsrc` decodes the block diagram.
 
 An `.llb` archive is one such container that holds many files. `Llb::parse`
-lists its members and `Llb::read` gives the bytes of one, which the parsers
-above take:
+lists its members, and `Llb::read` gives the bytes of one member. The
+parsers above take those bytes:
 
 ```rust
 use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};

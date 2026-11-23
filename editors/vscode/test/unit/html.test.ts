@@ -21,9 +21,9 @@ function assertInert(html: string): void {
   for (const tag of tags(html)) {
     assert.ok(SAFE_TAGS.has(tag), `unexpected <${tag}>`);
   }
-  // No attribute can start an event handler or a navigation: outside the
-  // data URI, every quote that came from the input is escaped.
-  // Quoted attribute values are text; what is left of each tag is its
+  // No attribute can start an event handler or a navigation, because
+  // outside the data URI every quote that came from the input is escaped.
+  // Quoted attribute values are text. What is left of each tag is its
   // attribute names.
   for (const tag of html.matchAll(/<[a-zA-Z](?:"[^"]*"|[^>"])*>/g)) {
     const names = tag[0].replace(/"[^"]*"/g, '""');

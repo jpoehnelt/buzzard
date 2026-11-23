@@ -1,14 +1,16 @@
 # buzzard-lint
 
 The analysis library of [buzzard](https://github.com/jpoehnelt/buzzard), a
-static analyzer and language server for LabVIEW projects: the lint rules, the
-dataflow checks, the project XML parser, the dependency graph, SARIF output,
-diagram rendering, the semantic diff and the state machine verification.
+static analyzer and language server for LabVIEW projects. It holds the lint
+rules, the dataflow checks, the project XML parser, the dependency graph,
+SARIF output, diagram rendering, the semantic diff, and the state machine
+verification.
 
 This crate is an internal part of the buzzard tool. Its API may change in
 any 0.x release, including patch releases. It is published so that
 `cargo install buzzard-cli` works. To use the analysis, run the `buzzard`
-binary and read its JSON or SARIF output, which is the supported interface.
+binary and read its JSON or SARIF output. That output is the supported
+interface.
 
 ```rust,no_run
 use std::path::PathBuf;

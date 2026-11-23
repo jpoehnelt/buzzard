@@ -1,8 +1,8 @@
 # The npTDMS oracle
 
-`dump.py` asks [npTDMS](https://github.com/adamreeve/npTDMS) what it makes
-of a set of TDMS files, and `../oracle.rs` requires this crate's reader to
-agree.
+`dump.py` reads a set of TDMS files with
+[npTDMS](https://github.com/adamreeve/npTDMS) and prints what npTDMS finds
+in them. `../oracle.rs` requires this crate's reader to agree.
 
 ## Run it
 
@@ -27,7 +27,7 @@ scaling. It does not compare the width of an integer property, because
 npTDMS returns every integer property as a Python `int`. The files are:
 
 - files from this crate's generator (`buzzard_tdms::build`), which cover
-  what npTDMS cannot write: big-endian, interleaved and driver data
+  what npTDMS cannot write: big-endian, interleaved, and driver data
 - files written by `nptdms.TdmsWriter` through its public API
 - the real file in `../fixtures`
 - the 31 scenario files and 4 data files in the test package of the
@@ -42,16 +42,16 @@ no longer occurs.
 
 npTDMS is LGPL-3.0. This crate is Apache-2.0. To keep them apart:
 
-- `dump.py` is ours, written for this repository, and Apache-2.0 licensed. It
+- `dump.py` was written for this repository and is Apache-2.0 licensed. It
   imports npTDMS and calls its public API (`TdmsFile.read`,
   `TdmsWriter`, channel and property accessors) and the entry points of
   its shipped test package (`get_scenarios`, `get_bytes_io_file`).
 - npTDMS runs as a separate program at test time. It is not a build or
   runtime dependency of the crate, and nothing of it is linked or vendored.
-- No npTDMS code, test or fixture was copied or ported. The reader was
+- No npTDMS code, test, or fixture was copied or ported. The reader was
   written from the published format description, from research notes that
   state format facts in prose (some of them first established by reading
-  npTDMS, and recorded as facts, not as code), and from the behaviour
+  npTDMS, and recorded as facts, not as code), and from the behavior
   observed through this harness.
 - Files that npTDMS writes are program output. The test writes them to a
   temporary directory and deletes them.

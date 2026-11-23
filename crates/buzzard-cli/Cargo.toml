@@ -10,8 +10,8 @@ readme = "README.md"
 keywords = ["labview", "lint", "static-analysis", "lsp", "sarif"]
 categories = ["command-line-utilities", "development-tools"]
 documentation = "https://github.com/jpoehnelt/buzzard#readme"
-# The package is the source. The tests stay in the repository: they need
-# fixtures and sibling crates that a package does not carry.
+# The package is the source. The tests stay in the repository, because they
+# need fixtures and sibling crates that a package does not carry.
 include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 
 [[bin]]
@@ -20,8 +20,8 @@ path = "src/main.rs"
 
 [features]
 default = ["parquet"]
-# `buzzard tdms export --format parquet`. Without it the export writes CSV
-# only and the binary does not carry the Arrow and Parquet crates.
+# Enables `buzzard tdms export --format parquet`. Without it, the export
+# writes CSV only and the binary does not carry the Arrow and Parquet crates.
 parquet = ["buzzard-tdms/parquet"]
 
 [dependencies]

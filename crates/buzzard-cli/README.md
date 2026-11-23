@@ -1,8 +1,9 @@
 # buzzard-cli
 
-The `buzzard` binary: a static analyzer, language server and MCP server for
-LabVIEW projects, and a reader for the TDMS measurement files they produce.
-It reads the binary files directly and needs no LabVIEW installation.
+This crate is the `buzzard` binary. It is a static analyzer, a language
+server, and an MCP server for LabVIEW projects, and a reader for the TDMS
+measurement files they produce. It reads the files from disk and needs no
+LabVIEW installation.
 
 ```sh
 cargo install buzzard-cli
@@ -23,16 +24,17 @@ buzzard mcp                         # MCP server over stdio
 ```
 
 The [repository's README](https://github.com/jpoehnelt/buzzard#readme) is the
-manual: usage, the rules, exit statuses, output formats and limitations.
+manual. It has the usage, the rules, the exit statuses, the output formats,
+and the limitations.
 
 The `parquet` feature is on by default. `cargo install buzzard-cli
 --no-default-features` builds a binary whose `tdms export` writes CSV only
 and that does not carry the Arrow and Parquet crates.
 
-This crate has no library. Its building blocks are `buzzard-rsrc` (the file
-parser) and `buzzard-tdms` (the TDMS reader), which are libraries for other
-programs, and `buzzard-lint`, `buzzard-ls` and `buzzard-mcp`, which are
-internal.
+This crate has no library. It is built from `buzzard-rsrc` (the file parser)
+and `buzzard-tdms` (the TDMS reader), which are libraries for other
+programs, and from `buzzard-lint`, `buzzard-ls`, and `buzzard-mcp`, which
+are internal.
 
 ## License
 

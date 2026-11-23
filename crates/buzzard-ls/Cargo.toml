@@ -9,8 +9,8 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["lsp", "language-server", "static-analysis"]
 categories = ["development-tools", "text-editors"]
-# The package is the source. The tests stay in the repository: they need
-# fixtures and sibling crates that a package does not carry.
+# The package is the source. The tests stay in the repository, because they
+# need fixtures and sibling crates that a package does not carry.
 include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 
 [dependencies]

@@ -1,4 +1,4 @@
-// Path and URI helpers. Pure; no `vscode` import.
+// Path and URI helpers. This module does not import `vscode`.
 
 import * as path from 'node:path';
 

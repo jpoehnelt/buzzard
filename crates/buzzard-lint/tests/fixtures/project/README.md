@@ -1,6 +1,6 @@
 # Project file fixtures
 
-Real project-level XML files, copied unmodified from two public
+These are real project XML files, copied unmodified from two public
 repositories. Each directory holds the license of the repository its files
 come from.
 
@@ -11,4 +11,4 @@ come from.
 | `grpc-labview/helloworld.lvproj` | [ni/grpc-labview](https://github.com/ni/grpc-labview) at `2f07f03`, `examples/helloworld/` | MIT, `grpc-labview/LICENSE` |
 
 The short `NI.LVClass.ParentClassLinkInfo` strings used as test vectors in
-`src/project.rs` are quoted from class files in the same two repositories.
+`src/project/tests.rs` are quoted from class files in the same two repositories.

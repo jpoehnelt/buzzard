@@ -19,8 +19,9 @@ all-features = true
 
 [features]
 default = []
-# Parquet export (`buzzard_tdms::export::parquet`). Off by default so that the
-# reader alone builds with three small dependencies; `buzzard-cli` turns it on.
+# Enables the Parquet export (`buzzard_tdms::export::parquet`). It is off by
+# default so that the reader alone builds with three dependencies.
+# `buzzard-cli` turns it on.
 parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
 
 [dependencies]

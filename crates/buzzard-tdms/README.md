@@ -44,7 +44,7 @@ samples, and large reads are split over the rayon thread pool.
 When a `.tdms_index` file lies beside the data file, the reader takes the
 metadata from it after comparing its lead-ins and metadata with the data
 file's, byte for byte. It compares every segment of a file of up to 64
-segments, and the first, the last and up to 64 evenly spaced segments of a
+segments, and the first, the last, and up to 64 evenly spaced segments of a
 longer file. A difference in a segment that is not compared goes unnoticed.
 The reader ignores an index file that fails the comparison.
 `TdmsFile::index_source` says which file it used, and
@@ -64,12 +64,12 @@ Supported:
   after one lead-in.
 - Metadata: incremental object lists, the "new object list" flag, the raw
   data index markers "none" and "same as before", and channels that are
-  added, removed, reordered and resized.
+  added, removed, reordered, and resized.
 - Raw data, contiguous or interleaved: 8-bit to 64-bit integers, 32-bit
   and 64-bit floats, the "float with unit" types, booleans, timestamps,
   complex numbers, and strings (contiguous only).
 - Timestamps with their 64 bits of whole seconds and 64 bits of fraction,
-  and properties of the file, groups and channels in each of those types.
+  and properties of the file, groups, and channels in each of those types.
 - Driver raw data ("DAQmx"): format changing scalers of all ten integer
   and float types, digital line scalers, several scalers per channel
   (`Channel::read_scaler`), and chains of linear scales
@@ -136,16 +136,16 @@ has as many rows as the longest channel, so export channels of different
 sample rates separately.
 
 - When every exported channel has the same `wf_start_time`,
-  `wf_start_offset` and `wf_increment`, a leading `time_s` column holds
+  `wf_start_offset`, and `wf_increment`, a leading `time_s` column holds
   `wf_start_offset + row * wf_increment`.
-- Parquet key-value metadata holds every property of the file, the groups
+- Parquet key-value metadata holds every property of the file, the groups,
   and the channels. The rustdoc of `export::parquet` lists the keys.
 - A channel with linear scaling is exported in engineering units as 64-bit
   floats unless `ExportOptions::scaled` is off.
 - The same input and options give the same bytes.
 
 The `parquet` feature is off by default. Without it the crate depends on
-`bytemuck`, `rayon` and `thiserror` only. Compression is Snappy or none.
+`bytemuck`, `rayon`, and `thiserror` only. Compression is Snappy or none.
 
 ## Speed
 
@@ -184,10 +184,10 @@ generator's own model, compare the reader with
 every byte, and read one real measurement file.
 
 This crate is Apache-2.0 (see `LICENSE` and `NOTICE`). npTDMS is LGPL-3.0,
-runs only as a separate test program, and none of its code, tests or
+runs only as a separate test program, and none of its code, tests, or
 fixtures is in this repository. See the
 [oracle README](https://github.com/jpoehnelt/buzzard/blob/main/crates/buzzard-tdms/tests/oracle/README.md).
 
-"TDMS", "DAQmx", "LabVIEW" and "NI" name the format and the software that
+"TDMS", "DAQmx", "LabVIEW", and "NI" name the format and the software that
 writes it. buzzard is not affiliated with, endorsed by, or sponsored by National
 Instruments Corporation.

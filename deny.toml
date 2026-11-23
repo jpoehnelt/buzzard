@@ -1,4 +1,4 @@
-# cargo-deny checks the dependency tree in CI: `cargo deny check`.
+# CI checks the dependency tree with `cargo deny --all-features --locked check`.
 # https://embarkstudios.github.io/cargo-deny/
 
 [graph]
@@ -15,14 +15,14 @@ ignore = [
     # arrow and parquet, which the `parquet` feature of buzzard-tdms uses for
     # the Parquet export. buzzard passes no date or time text to it. Remove
     # this entry when arrow drops chrono.
-    { id = "RUSTSEC-2026-0543", reason = "transitive through arrow and parquet; no fixed version" },
+    { id = "RUSTSEC-2026-0543", reason = "comes in through arrow and parquet, and no fixed version exists" },
 ]
 
 [licenses]
 # Permissive licenses compatible with distributing an Apache-2.0 binary.
 allow = [
     "Apache-2.0",
-    # encoding_rs: its encoding tables come from WHATWG under BSD-3-Clause.
+    # The encoding tables of encoding_rs come from WHATWG under BSD-3-Clause.
     "BSD-3-Clause",
     "CC0-1.0",
     "ISC",
@@ -33,7 +33,7 @@ allow = [
 
 [bans]
 # Duplicate versions come from third-party crates and cannot always be
-# avoided; report them without failing.
+# avoided. cargo-deny reports them without failing.
 multiple-versions = "warn"
 wildcards = "deny"
 

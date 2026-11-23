@@ -1,14 +1,14 @@
 # Buzzard for VS Code
 
-A client for the [`buzzard`](https://github.com/jpoehnelt/buzzard#readme) language server. It shows
-what `buzzard` finds in LabVIEW `.vi`, `.ctl`, `.lvproj`, `.lvlib` and `.lvclass` files inside VS
-Code. LabVIEW does not have to be installed. All analysis comes from the `buzzard` executable, which
+This extension is a client for the [`buzzard`](https://github.com/jpoehnelt/buzzard#readme) language
+server. It shows what `buzzard` finds in LabVIEW `.vi`, `.ctl`, `.lvproj`, `.lvlib`, and `.lvclass`
+files inside VS Code. LabVIEW does not have to be installed. All analysis comes from the `buzzard` executable, which
 only reads the files.
 
 ## Requirements
 
-The `buzzard` executable, on `PATH` or named by the `buzzard.path` setting. From a checkout of the
-repository:
+The extension needs the `buzzard` executable, on `PATH` or named by the `buzzard.path` setting. To
+install it from a checkout of the repository, run:
 
 ```bash
 cargo install --path crates/buzzard-cli
@@ -19,15 +19,17 @@ command.
 
 ## Features
 
-- **Problems panel.** The `BZxxx` findings of every file in the workspace folders, updated when a
-  file is saved. The files do not have to be open.
-- **Go to Symbol in Workspace** (`Ctrl+T`) finds VIs, controls, classes, libraries and projects.
-- **Buzzard: Show File Summary.** Saved version, execution flags, dependencies and caller counts.
-- **Buzzard: Show Block Diagram.** A picture of the block diagram of a `.vi` or `.ctl`.
-- **Buzzard: Find Callers.** Lists the files that use a file. Select one to reveal it in Explorer.
-- **Buzzard: Restart Server.** A click on the status bar item does the same.
-- **Buzzard Viewer.** A read-only editor for `.vi` and `.ctl` with the summary and the diagram,
-  offered through "Open With...". To make it the default, set `"workbench.editorAssociations"` to
+- **Problems panel.** It lists the `BZxxx` findings of every file in the workspace folders and
+  updates when a file is saved. The files do not have to be open.
+- **Go to Symbol in Workspace** (`Ctrl+T`) finds VIs, controls, classes, libraries, and projects.
+- **Buzzard: Show File Summary** shows the saved version, execution flags, dependencies, and caller
+  counts.
+- **Buzzard: Show Block Diagram** shows a picture of the block diagram of a `.vi` or `.ctl` file.
+- **Buzzard: Find Callers** lists the files that use a file. Select one to reveal it in Explorer.
+- **Buzzard: Restart Server** restarts the language server. A click on the status bar item does
+  the same.
+- **Buzzard Viewer** is a read-only editor for `.vi` and `.ctl` files with the summary and the
+  diagram. "Open With..." offers it. To make it the default, set `"workbench.editorAssociations"` to
   `{ "*.vi": "buzzard.viewer", "*.ctl": "buzzard.viewer" }`.
 
 The three file commands are in the Explorer context menu of the matching files and in the Command
@@ -42,7 +44,7 @@ Palette, where they apply to the active tab or ask for a file.
 
 ## Security and privacy
 
-- No telemetry. The extension makes no network request.
+- The extension has no telemetry and makes no network request.
 - The extension never writes to a workspace file. `buzzard lsp` and `buzzard inspect` only read.
 - The executable is started directly, without a shell. A bare name is only looked up in the absolute
   directories of `PATH`, never in the current directory.
@@ -58,7 +60,7 @@ Palette, where they apply to the active tab or ask for a file.
   in the main README.
 - Clicking a problem in the Problems panel opens the file, which VS Code cannot show as text. Choose
   the Buzzard Viewer when asked how to open it.
-- Callers, symbols and diagnostics need an open folder, because the server analyzes workspace
+- Callers, symbols, and diagnostics need an open folder, because the server analyzes workspace
   folders. The viewer and the two "Show" commands also work on a single file.
 
 ## Development

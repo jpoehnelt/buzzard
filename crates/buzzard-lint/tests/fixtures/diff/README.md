@@ -1,8 +1,9 @@
 # Revision pair fixtures
 
-Two consecutive git revisions of one file each, copied unmodified from two
-public repositories, for the semantic diff tests. Each directory holds the
-license of the repository its files come from.
+The semantic diff tests read these files. For each of two public
+repositories, the directory holds two consecutive git revisions of one
+file, copied unmodified. Each directory holds the license of the repository
+its files come from.
 
 | Files | Source | License |
 | --- | --- | --- |
