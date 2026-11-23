@@ -1,16 +1,22 @@
 # buzzard-lint
 
-The analysis library of [buzzard](https://github.com/jpoehnelt/buzzard), a
-static analyzer and language server for LabVIEW projects. It holds the lint
-rules, the dataflow checks, the project XML parser, the dependency graph,
-SARIF output, diagram rendering, the semantic diff, and the state machine
-verification.
+`buzzard-lint` is the analysis library of
+[buzzard](https://github.com/jpoehnelt/buzzard), a static analyzer and
+language server for LabVIEW files. The crate holds the lint rules, the
+dataflow checks, the project file parser, the dependency graph, SARIF
+output, block diagram rendering, the semantic diff, and the state machine
+checks.
 
-This crate is an internal part of the buzzard tool. Its API may change in
-any 0.x release, including patch releases. It is published so that
-`cargo install buzzard-cli` works. To use the analysis, run the `buzzard`
-binary and read its JSON or SARIF output. That output is the supported
-interface.
+## Stability
+
+This crate is an internal part of the buzzard tool, published so that
+`cargo install buzzard-cli` works. Its API may change in any 0.x release,
+patch releases included. The supported interface is the JSON and SARIF
+output of the `buzzard` binary.
+
+## Example
+
+This example scans the current directory and prints each problem.
 
 ```rust,no_run
 use std::path::PathBuf;
@@ -19,14 +25,15 @@ use buzzard_lint::{lint, DependencyGraph, LintConfig, Workspace};
 
 let workspace = Workspace::scan(&[PathBuf::from(".")]);
 let graph = DependencyGraph::build(&workspace);
-for finding in lint(&workspace, &graph, &LintConfig::default()) {
-    println!("{} {} {}", finding.path.display(), finding.code, finding.message);
+for problem in lint(&workspace, &graph, &LintConfig::default()) {
+    println!("{} {} {}", problem.path.display(), problem.code, problem.message);
 }
 ```
 
 ## License
 
-Apache-2.0. See `LICENSE` and `NOTICE` in this package.
+The license is Apache-2.0. The `LICENSE` and `NOTICE` files of this package
+hold the texts.
 
 LabVIEW, NI, and National Instruments are trademarks of National Instruments
 Corporation, used only to identify the file formats that buzzard reads.

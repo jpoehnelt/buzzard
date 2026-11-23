@@ -1,8 +1,8 @@
 # Project file fixtures
 
-These are real project XML files, copied unmodified from two public
-repositories. Each directory holds the license of the repository its files
-come from.
+These are real project files, copied unmodified from two public
+repositories. Each directory holds the license of the repository that its
+files come from.
 
 | File | Source | License |
 | --- | --- | --- |
@@ -10,5 +10,6 @@ come from.
 | `jki-smo/URI.lvlib` | same repository, `src/URI Parsing/` | BSD 3-Clause, `jki-smo/LICENSE` |
 | `grpc-labview/helloworld.lvproj` | [ni/grpc-labview](https://github.com/ni/grpc-labview) at `2f07f03`, `examples/helloworld/` | MIT, `grpc-labview/LICENSE` |
 
-The short `NI.LVClass.ParentClassLinkInfo` strings used as test vectors in
-`src/project/tests.rs` are quoted from class files in the same two repositories.
+The tests in `crates/buzzard-lint/src/project/tests.rs` use short
+`NI.LVClass.ParentClassLinkInfo` strings as test vectors. The strings are
+quoted from class files in the same two repositories.

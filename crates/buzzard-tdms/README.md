@@ -1,10 +1,15 @@
 # buzzard-tdms
 
-A read-only reader for TDMS measurement files, the format that
-data-acquisition software logs test data in, with export to Parquet and
-CSV. It is built for test-stand logs: hundreds of channels at about 1 kHz,
-a few at 100 kHz and more, in files of several gigabytes made of many small
-segments.
+buzzard-tdms reads TDMS measurement files, the format that data-acquisition
+software logs test data in, and exports their channels to Parquet and CSV.
+The crate is built for test-stand logs. Such a log has hundreds of channels
+at about 1 kHz and a few at 100 kHz and more. Its file is several gigabytes
+of many small segments. The crate does not write TDMS files.
+
+## Read a file
+
+To read a file from Rust, open it and read a range of samples from a
+channel.
 
 ```rust,no_run
 use buzzard_tdms::TdmsFile;
@@ -21,13 +26,10 @@ fn main() -> Result<(), buzzard_tdms::Error> {
 }
 ```
 
-The crate is at 0.x. A minor release (0.1 to 0.2) may change the API, and a
-patch release does not. `build::FileBuilder` writes synthetic files for
-tests and is not a general TDMS writer. The reader follows the vendor's
-[TDMS File Format Internal Structure](https://www.ni.com/en/support/documentation/supplemental/07/tdms-file-format-internal-structure.html).
-
-The `buzzard` binary of the `buzzard-cli` crate in the same
-[repository](https://github.com/jpoehnelt/buzzard) runs the reader:
+To read a file from the command line, use the `buzzard` binary. The
+`buzzard-cli` crate of the
+[buzzard repository](https://github.com/jpoehnelt/buzzard) builds that
+binary.
 
 ```sh
 buzzard tdms info hotfire-0042.tdms                 # or --format json
@@ -35,28 +37,35 @@ buzzard tdms export hotfire-0042.tdms --out slow.parquet --channels Chamber
 buzzard tdms export hotfire-0042.tdms --out pt101.csv --format csv --channels Chamber/PT-101
 ```
 
-## How it reads
+An export has as many rows as its longest channel. To export channels of
+different sample rates, run one export for each rate.
+
+## How the reader opens a file
 
 `TdmsFile::open` reads the 28-byte lead-in and the metadata of every
-segment, and no raw data. Values are read per channel and per range of
-samples, and large reads are split over the rayon thread pool.
+segment, and no raw data. You read values per channel and per range of
+samples. The reader splits a large read over the rayon thread pool.
 
-When a `.tdms_index` file lies beside the data file, the reader takes the
-metadata from it after comparing its lead-ins and metadata with the data
-file's, byte for byte. It compares every segment of a file of up to 64
-segments, and the first, the last, and up to 64 evenly spaced segments of a
-longer file. A difference in a segment that is not compared goes unnoticed.
-The reader ignores an index file that fails the comparison.
-`TdmsFile::index_source` says which file it used, and
-`OpenOptions::index_file(false)` turns the index file off.
+When a `.tdms_index` file lies beside the data file, the reader compares
+the lead-ins and metadata of the index file with the data file's, byte for
+byte. It compares every segment of a file of up to 64 segments. Of a longer
+file it compares the first, the last, and up to 64 evenly spaced segments,
+so it does not notice a difference in a segment that it skips. If the
+comparison passes, the reader takes the metadata from the index file. If
+not, it ignores the index file. `TdmsFile::index_source` says which file
+the reader used, and `OpenOptions::index_file(false)` turns the index file
+off.
 
-The crate has no `unsafe` code and does not map files into memory. It reads
-with positional reads through the `ReadAt` trait, so a file that shrinks
-while it is open gives an I/O error.
+The crate has no `unsafe` code and does not map files into memory. The
+reader uses positional reads through the `ReadAt` trait, so a file that
+shrinks while the reader has it open gives an I/O error.
 
-## What is supported
+The reader follows the vendor's
+[TDMS File Format Internal Structure](https://www.ni.com/en/support/documentation/supplemental/07/tdms-file-format-internal-structure.html).
 
-Supported:
+## What the reader supports
+
+The reader supports these parts of the format in full:
 
 - Segments: all six table-of-contents flags, little-endian and big-endian
   segments (also mixed in one file), versions 4712 and 4713, padding,
@@ -75,19 +84,17 @@ Supported:
   (`Channel::read_scaler`), and chains of linear scales
   (`Channel::read_scaled`).
 
-Partly supported:
+The reader supports these parts with limits:
 
 - Scaling other than linear. `Channel::scaling` names the scale and does
   not apply it. The raw values are readable.
 - Driver raw data. All driver channels of a segment must have the same
-  number of values, or none. A timestamp scaler is read as a 16-byte
-  timestamp, which no available file confirms.
-- A channel of type void (type code 0) that declares no values has length
-  0. Void with values is `Error::Unsupported`.
-- Text that is not UTF-8 is read with the bad bytes replaced by U+FFFD and
-  reported as an anomaly. `Channel::read_string_bytes` returns the bytes.
+  number of values, or none. The reader takes a timestamp scaler to be a
+  16-byte timestamp, and no available file confirms that layout.
+- A channel of type void (type code 0). A void channel that declares no
+  values has length 0. A void channel with values is `Error::Unsupported`.
 
-Not supported:
+The reader does not support these parts:
 
 - Extended-precision floats (type codes 11 and 0x1B) and fixed-point
   numbers (0x4F). Their layout is not published, and a file with values of
@@ -99,61 +106,67 @@ Not supported:
   other than 1, string channels in interleaved segments, and interleaved
   channels of different lengths. All are errors.
 - Writing files, the XML-based TDM and TDX formats, and following a file
-  while it is being written (the reader takes the file size once, at open).
+  while another program writes it. The reader takes the file size once, at
+  open.
 
-## Damaged and hostile files
+## What the reader does with a damaged file
 
 A crashed writer leaves a last segment that is unfinished or cut short. The
-reader recovers what is there and lists what it found in
-`TdmsFile::anomalies` (at most 1024 are kept). `OpenOptions::strict` turns
-any anomaly into an error.
+reader recovers what is there and lists each anomaly in
+`TdmsFile::anomalies`. It keeps at most 1,024 anomalies.
+`OpenOptions::strict` turns any anomaly into an error.
 
-| Found | Result |
+In the table, a partial chunk is raw data that is not a whole number of
+chunks.
+
+| The file has | The reader |
 | --- | --- |
-| The length field of the last segment was never written (all bits set), or the segment ends beyond the end of the file | read to the end of the file |
-| The file ends inside a lead-in or inside a segment's metadata | that segment is ignored, and the segments before it are intact |
-| Raw data that is not a whole number of chunks, in a segment that was cut short and is contiguous | channels are complete in order until the bytes run out |
-| The same, interleaved | the whole rows are kept |
-| The same, in driver buffers | the buffers are complete in order until the bytes run out, and each channel keeps the whole rows of the buffers that hold its scalers |
-| The same, in a finished contiguous segment | every channel is shortened in proportion (what npTDMS does) |
-| The same, with a string channel | the incomplete chunk is skipped |
-| Bytes that no channel accounts for, or raw data in a segment whose table of contents says it has none | skipped and reported |
+| A last segment whose length field was never written (all bits set), or a segment that ends beyond the end of the file | reads to the end of the file |
+| An end inside a lead-in or inside a segment's metadata | ignores that segment. The segments before it are intact |
+| A partial chunk in a contiguous segment that was cut short | reads the channels in order until the bytes run out |
+| A partial chunk in an interleaved segment that was cut short | keeps the whole rows |
+| A partial chunk of driver buffers in a segment that was cut short | reads the buffers in order until the bytes run out. Each channel keeps the whole rows of the buffers that hold its scalers |
+| A partial chunk in a finished contiguous segment | shortens every channel in proportion, as npTDMS does |
+| A partial chunk in a contiguous segment with a string channel | skips the incomplete chunk |
+| Bytes that no channel accounts for, or raw data in a segment whose table of contents says it has none | skips the bytes and reports them |
+| A segment version other than 4712 or 4713 | reads the segment and reports the version where it first appears |
+| Text that is not UTF-8 | replaces the bad bytes with U+FFFD. `Channel::read_string_bytes` returns the bytes |
 
 Anything else that contradicts the format is an `Error` with the byte
-offset and the segment number. The reader allocates nothing from a count
-that a file declares, and a channel is never longer than the bytes the file
-has for it. Channel positions that the reader derives beyond what the
-metadata spells out count against `OpenOptions::max_layout_entries`
+offset and the segment number.
+
+The reader allocates nothing from a count that a file declares, and a
+channel is never longer than the bytes the file has for it. Some channel
+positions are not spelled out in the metadata, and the reader derives them.
+Each derived position counts against `OpenOptions::max_layout_entries`
 (16,777,216 by default). Past the limit, `open` fails with
 `Error::IndexTooLarge`.
 
-## Export
+## What an export holds
 
 `export::parquet::write_parquet` (feature `parquet`) and `export::write_csv`
 write the chosen channels as one table. Each channel is one column named
-`group/channel`, or two for a complex channel (`.re` and `.im`). The table
-has as many rows as the longest channel, so export channels of different
-sample rates separately.
+`group/channel`, or two for a complex channel (`.re` and `.im`).
 
 - When every exported channel has the same `wf_start_time`,
   `wf_start_offset`, and `wf_increment`, a leading `time_s` column holds
   `wf_start_offset + row * wf_increment`.
 - Parquet key-value metadata holds every property of the file, the groups,
   and the channels. The rustdoc of `export::parquet` lists the keys.
-- A channel with linear scaling is exported in engineering units as 64-bit
-  floats unless `ExportOptions::scaled` is off.
+- The export writes a channel with linear scaling in engineering units, as
+  64-bit floats, unless `ExportOptions::scaled` is off.
 - The same input and options give the same bytes.
 
 The `parquet` feature is off by default. Without it the crate depends on
 `bytemuck`, `rayon`, and `thiserror` only. Compression is Snappy or none.
 
-## Speed
+## How fast the reader is
 
-Measured with `tools/tdms-bench.sh 400` from the repository on a 4-core
-virtual machine (Xeon at 2.1 GHz). The script generates one file of about
-415 MB per shape and reads it from the page cache. Each number is the best
-of three reads in one process, and the slower of two runs of the script.
-MB/s is file bytes over wall time.
+The numbers come from `tools/tdms-bench.sh 400`, run from the repository on
+a 4-core virtual machine (Xeon at 2.1 GHz). The script generates one file
+of about 415 MB per shape and reads it from the page cache. Each number is
+the best of three reads in one process, and the slower of two runs of the
+script. MB/s is file bytes over wall time.
 
 | Shape | Measurement | 1 thread | 4 threads |
 | --- | --- | --- | --- |
@@ -167,26 +180,33 @@ MB/s is file bytes over wall time.
 | | read one channel (1.4 MB of 418 MB of rows) | 61 ms | 17 ms |
 | | export to Parquet, Snappy | 585 MB/s | 1,070 MB/s |
 
-`Channel::read` and `Channel::read_into` on an interleaved file walk every
-row of the range for one channel. To read many channels of such a file, use
-`TdmsFile::read_columns`, which walks the rows once for all of them.
+On an interleaved file, `Channel::read` and `Channel::read_into` walk every
+row of the range for one channel. `TdmsFile::read_columns` walks the rows
+once for all the channels it is given.
 
 The script also reads each file from a copy in memory, as a memory-mapped
 backend would. Positional reads were 6 to 23% slower than that on one
-thread and at most 14% slower on four. A file that is not in the page cache
-was not measured.
+thread and at most 14% slower on four. No number here covers a file that is
+not in the page cache.
 
-## Tests and license
+## Stability
+
+The crate is at 0.x. A minor release, such as 0.1 to 0.2, may change the
+API. A patch release does not. `build::FileBuilder` writes synthetic files
+for tests and is not a general TDMS writer.
 
 The tests in the repository read generated files back against the
 generator's own model, compare the reader with
 [npTDMS](https://github.com/adamreeve/npTDMS), damage and truncate files at
 every byte, and read one real measurement file.
 
-This crate is Apache-2.0 (see `LICENSE` and `NOTICE`). npTDMS is LGPL-3.0,
-runs only as a separate test program, and none of its code, tests, or
-fixtures is in this repository. See the
-[oracle README](https://github.com/jpoehnelt/buzzard/blob/main/crates/buzzard-tdms/tests/oracle/README.md).
+## License
+
+The license is Apache-2.0. The `LICENSE` and `NOTICE` files of this package
+hold the texts. npTDMS is LGPL-3.0 and runs only as a separate test
+program. None of its code, tests, or fixtures is in this repository. The
+[README of the npTDMS oracle](https://github.com/jpoehnelt/buzzard/blob/main/crates/buzzard-tdms/tests/oracle/README.md)
+records the boundary.
 
 "TDMS", "DAQmx", "LabVIEW", and "NI" name the format and the software that
 writes it. buzzard is not affiliated with, endorsed by, or sponsored by National

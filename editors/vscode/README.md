@@ -1,81 +1,81 @@
 # Buzzard for VS Code
 
-This extension is a client for the [`buzzard`](https://github.com/jpoehnelt/buzzard#readme) language
-server. It shows what `buzzard` finds in LabVIEW `.vi`, `.ctl`, `.lvproj`, `.lvlib`, and `.lvclass`
-files inside VS Code. LabVIEW does not have to be installed. All analysis comes from the `buzzard` executable, which
-only reads the files.
+This extension is a client for the language server of
+[`buzzard`](https://github.com/jpoehnelt/buzzard#readme). It shows in VS Code what `buzzard` reports
+about LabVIEW `.vi`, `.ctl`, `.lvproj`, `.lvlib`, and `.lvclass` files. LabVIEW does not have to be
+installed. The `buzzard` executable, the binary that `cargo install` builds, does all the analysis,
+and it only reads the files.
 
-## Requirements
+## Install the `buzzard` executable
 
-The extension needs the `buzzard` executable, on `PATH` or named by the `buzzard.path` setting. To
-install it from a checkout of the repository, run:
+The extension looks for the `buzzard` executable on `PATH`, or where the `buzzard.path` setting
+says. To install the executable from a checkout of the
+[buzzard repository](https://github.com/jpoehnelt/buzzard), run this command:
 
 ```bash
 cargo install --path crates/buzzard-cli
 ```
 
-Without the executable, the status bar shows "Buzzard: not found" and a notification gives that
-command.
+When the extension does not find the executable, the status bar shows "Buzzard: not found" and a
+notification gives that command.
 
-## Features
+## What the extension adds
 
-- **Problems panel.** It lists the `BZxxx` findings of every file in the workspace folders and
-  updates when a file is saved. The files do not have to be open.
+The extension adds these views and commands:
+
+- **Problems panel** lists the `BZxxx` problems of every file in the workspace folders. The files
+  do not have to be open. The list updates when you save a file.
 - **Go to Symbol in Workspace** (`Ctrl+T`) finds VIs, controls, classes, libraries, and projects.
 - **Buzzard: Show File Summary** shows the saved version, execution flags, dependencies, and caller
-  counts.
+  counts of a file.
 - **Buzzard: Show Block Diagram** shows a picture of the block diagram of a `.vi` or `.ctl` file.
-- **Buzzard: Find Callers** lists the files that use a file. Select one to reveal it in Explorer.
+- **Buzzard: Find Callers** lists the files that use a file. Selecting a caller reveals it in
+  Explorer.
 - **Buzzard: Restart Server** restarts the language server. A click on the status bar item does
   the same.
-- **Buzzard Viewer** is a read-only editor for `.vi` and `.ctl` files with the summary and the
-  diagram. "Open With..." offers it. To make it the default, set `"workbench.editorAssociations"` to
-  `{ "*.vi": "buzzard.viewer", "*.ctl": "buzzard.viewer" }`.
+- **Buzzard Viewer** is a read-only editor for `.vi` and `.ctl` files. It shows the summary and the
+  block diagram, and it reloads when another program saves the file.
 
-The three file commands are in the Explorer context menu of the matching files and in the Command
-Palette, where they apply to the active tab or ask for a file.
+Show File Summary, Show Block Diagram, and Find Callers are in the Explorer context menu of the
+files they apply to. They are also in the Command Palette, where they apply to the active tab or
+ask for a file.
+
+## Open a file in the Buzzard Viewer
+
+VS Code cannot show a `.vi` or `.ctl` file as text, so it asks how to open one.
+
+- To open one file in the viewer, right-click the file, choose "Open With...", and choose Buzzard
+  Viewer.
+- To open a file from the Problems panel, click the problem. Choose Buzzard Viewer when VS Code
+  asks how to open the file.
+- To make the viewer the default, set `"workbench.editorAssociations"` to
+  `{ "*.vi": "buzzard.viewer", "*.ctl": "buzzard.viewer" }`.
 
 ## Settings
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `buzzard.path` | `buzzard` | The executable. A bare name is looked up on `PATH`. `~/...` is taken from the home directory. A relative path with a directory in it is taken from the first workspace folder. |
-| `buzzard.trace.server` | `off` | `messages` or `verbose` logs the protocol messages to the output panel. |
+| `buzzard.path` | `buzzard` | The executable. The extension looks up a bare name on `PATH`. It takes `~/...` from the home directory. It takes a relative path with a directory in it from the first workspace folder. |
+| `buzzard.trace.server` | `off` | `messages` or `verbose` logs the messages between the extension and the language server to the output panel. |
 
 ## Security and privacy
 
 - The extension has no telemetry and makes no network request.
 - The extension never writes to a workspace file. `buzzard lsp` and `buzzard inspect` only read.
-- The executable is started directly, without a shell. A bare name is only looked up in the absolute
-  directories of `PATH`, never in the current directory.
-- In an untrusted workspace, a `buzzard.path` set by the workspace is ignored, so opening a folder
-  cannot choose the program that is run.
+- The extension starts the executable directly, without a shell. It looks up a bare name in the
+  absolute directories of `PATH` only, never in the current directory.
+- In an untrusted workspace, the extension ignores a `buzzard.path` that the workspace sets. Opening
+  a folder therefore cannot choose the program that runs.
 - The webviews run no script. Their Content-Security-Policy is `default-src 'none'` plus one
-  stylesheet (by nonce) and `data:` images. Text taken from files is escaped. The diagram is shown
-  as an image and is never inserted as markup.
+  stylesheet (by nonce) and `data:` images. The extension escapes text taken from files. It shows
+  the block diagram as an image and never inserts it as markup.
 
 ## Limitations
 
-- The summary and diagram are as complete as `buzzard inspect` is for the file. See the limitations
-  in the main README.
-- Clicking a problem in the Problems panel opens the file, which VS Code cannot show as text. Choose
-  the Buzzard Viewer when asked how to open it.
-- Callers, symbols, and diagnostics need an open folder, because the server analyzes workspace
-  folders. The viewer and the two "Show" commands also work on a single file.
-
-## Development
-
-```bash
-npm ci
-npm run compile     # type-check, then bundle to dist/extension.js
-npm run lint
-npm test            # unit tests in plain Node
-npm run package     # builds the .vsix and publishes nothing
-BUZZARD_BIN=<absolute path> xvfb-run -a npm run test:integration   # tests inside VS Code
-```
-
-`npm test` also runs the real tool when `BUZZARD_BIN` names a built `buzzard` and `BUZZARD_FIXTURE`
-names a `.vi` file. The tests inside VS Code need a display, which `xvfb-run` gives on Linux.
+- The summary and the block diagram are as complete as `buzzard inspect` is for the file. See the
+  [limitations of buzzard](https://github.com/jpoehnelt/buzzard#limitations).
+- Callers, symbols, and problems need an open folder, because the language server analyzes
+  workspace folders. The viewer and the two "Show" commands also work on a single file.
 
 ## Trademark
 
@@ -85,4 +85,4 @@ sponsored by that company.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+The license is Apache-2.0. [LICENSE](LICENSE) holds the text.
