@@ -33,7 +33,7 @@ const REAL_LINKS: [(&str, u32, &[&str], &str); 5] = [
         &["SMO.UI.lvclass"],
         "../../../../src/SMO.UI/SMO.UI.lvclass",
     ),
-    // A parent that lives in a library installed under <vilib>.
+    // A parent that is in a library installed under <vilib>.
     (
         r#"'1#!!!!!!!)!"1!&!!!-!%!!!@````]!!!!"!!%!!!#$!!!!!BNH5F"$,8.F=H:J9W6S,8*F<'6B=W5O<(:M;7)45W6S>GFD:5*B=W5O<(:D<'&T=V"53$!!!!"(!!!!"1=]>GFM;7)_"'>35%-64'&C6EF&6S"H5F"$)&.F=H:J9W6S#V.F=H:J9W6#98.F%V.F=H:J9W6#98.F,GRW9WRB=X-!!!!!"#,
         0x1900_8000,
@@ -91,11 +91,11 @@ fn bin_encoding_round_trips_every_length() {
 fn bin_decoder_rejects_foreign_characters_and_stray_bits() {
     assert_eq!(decode_bin(""), Some(Vec::new()));
     assert_eq!(decode_bin("!!"), Some(vec![0]));
-    // Lowercase letters, space and newline are outside the alphabet.
+    // Lowercase letters, space, and newline are outside the alphabet.
     for bad in ["a!", "! !", "!\n!", "!\u{e9}", "~~"] {
         assert_eq!(decode_bin(bad), None, "{bad:?}");
     }
-    // Twelve bits make one byte; the four left over must be zero.
+    // Twelve bits make one byte. The four left over must be zero.
     assert_eq!(decode_bin("!\""), None);
 }
 
@@ -322,7 +322,7 @@ fn accepts_minimal_and_unusual_but_valid_files() {
     let empty = ProjectFile::parse(Path::new("App.lvproj"), "<Project/>").unwrap();
     assert_eq!(empty.kind, ProjectKind::Project);
     assert_eq!((empty.lv_version, empty.members.len()), (None, 0));
-    // The kind follows the extension; a class file with a library root is
+    // The kind follows the extension. A class file with a library root is
     // still listed as a class.
     let class = ProjectFile::parse(Path::new("M.LVCLASS"), "<Library/>").unwrap();
     assert_eq!(class.kind, ProjectKind::Class);
@@ -385,7 +385,7 @@ fn truncated_real_files_are_errors_not_panics() {
             ProjectFile::parse_bytes(&path, &bytes[..=end]).unwrap(),
             whole
         );
-        // Corrupt single bytes: any outcome but a panic is acceptable.
+        // Corrupt single bytes. Any outcome but a panic is acceptable.
         for at in (0..bytes.len()).step_by(step) {
             let mut damaged = bytes.clone();
             damaged[at] = b'<';
@@ -410,7 +410,7 @@ fn entity_expansion_bombs_are_rejected_immediately() {
     assert!(err.contains("invalid XML"), "{err}");
     assert!(started.elapsed() < std::time::Duration::from_secs(2));
 
-    // An external entity is never fetched: the DTD is refused outright.
+    // An external entity is never fetched, because the DTD is refused.
     let external = "<!DOCTYPE p [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>\
                     <Project><Item Name=\"a\" URL=\"&x;\"/></Project>";
     assert!(ProjectFile::parse(Path::new("App.lvproj"), external).is_err());

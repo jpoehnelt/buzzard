@@ -1,14 +1,16 @@
 //! A writer of synthetic TDMS files for tests and benchmarks, with a model
 //! of what each file holds.
 //!
-//! This is test support, not a general writer. It is public on purpose:
-//! the crate's tests, its benchmark and the tests of the `buzzard` binary
-//! build their files with it, and a program built on this crate can test
-//! against it the same way. It is written from the
-//! format description alone and shares no code with the reader: it has its
-//! own encoder and its own account of which channels a segment carries, so
-//! that the contents it [expects](Built::channels) are an independent
-//! statement of what a reader must find.
+//! This module is test support, not a general writer. It is public because
+//! the crate's tests, its benchmark, and the tests of the `buzzard` binary
+//! build their files with it. A program built on this crate can test
+//! against it the same way.
+//!
+//! The module is written from the format description alone and shares no
+//! code with the reader. It has its own encoder and its own account of
+//! which channels a segment carries, so the contents it
+//! [expects](Built::channels) are an independent statement of what a reader
+//! must find.
 //!
 //! A file is a list of [`Segment`]s. Each lists the [`Object`]s whose
 //! metadata it writes. A channel that an earlier segment gave a raw data
@@ -41,12 +43,12 @@ const TOC_DAQMX: u32 = 1 << 7;
 /// One scaler of a channel in a driver's raw buffers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScalerSpec {
-    /// The scaler's values; an integer or float column. For a digital line
-    /// the values must be 0 or 1.
+    /// The scaler's values, as an integer or float column. For a digital
+    /// line the values must be 0 or 1.
     pub values: Values,
     /// Which raw buffer the values are in.
     pub buffer: u32,
-    /// Byte offset of the value in a row of the buffer; for a digital line,
+    /// Byte offset of the value in a row of the buffer. For a digital line,
     /// the bit offset.
     pub offset: u32,
     /// The number scaling properties refer to the scaler by.
@@ -128,7 +130,7 @@ impl Object {
         self
     }
 
-    /// Writes the "same raw data index as before" marker; the values are
+    /// Writes the "same raw data index as before" marker. The values are
     /// generated.
     #[must_use]
     pub fn same(mut self) -> Self {
@@ -145,8 +147,8 @@ impl Object {
     }
 
     /// Writes a raw data index for a driver's raw buffers. `raw_type`
-    /// gives the channel the raw-data type code; otherwise it has the type
-    /// of its single scaler. `digital` writes digital line scalers.
+    /// gives the channel the raw-data type code. Without it the channel has
+    /// the type of its single scaler. `digital` writes digital line scalers.
     #[must_use]
     pub fn daqmx(mut self, raw_type: bool, digital: bool, scalers: Vec<ScalerSpec>) -> Self {
         self.index = IndexSpec::Daqmx {
@@ -250,15 +252,15 @@ impl Segment {
         self
     }
 
-    /// Sets or clears the "new object list" flag: the segment's channels
-    /// are then exactly the objects it lists. By default the first segment
-    /// sets it and the others do not.
+    /// Sets or clears the "new object list" flag. When the flag is set, the
+    /// segment's channels are exactly the objects it lists. By default the
+    /// first segment sets the flag and the others do not.
     pub fn new_object_list(&mut self, yes: bool) -> &mut Self {
         self.new_object_list = Some(yes);
         self
     }
 
-    /// Writes no metadata at all; the segment's objects are ignored.
+    /// Writes no metadata at all. The segment's objects are ignored.
     pub fn no_metadata(&mut self) -> &mut Self {
         self.metadata = false;
         self
@@ -282,7 +284,7 @@ impl Segment {
         self
     }
 
-    /// Leaves the segment's length field as a crashed writer does: all
+    /// Leaves the segment's length field as a crashed writer does, with all
     /// bits set.
     pub fn unfinished(&mut self) -> &mut Self {
         self.unfinished = true;
@@ -332,13 +334,13 @@ pub struct ExpectedChannel {
     pub group: String,
     /// Name of the channel.
     pub name: String,
-    /// The type code the file gives the channel; `None` when it never had
-    /// a raw data index.
+    /// The type code the file gives the channel, or `None` when it never
+    /// had a raw data index.
     pub dtype: Option<DataType>,
     /// Every value, in order. For a driver channel, those of its first
     /// scaler.
     pub values: Option<Values>,
-    /// For a driver channel: every scaler's values by scale id.
+    /// For a driver channel, every scaler's values by scale id.
     pub scalers: Vec<(u32, Values)>,
     /// The properties, in the order they were first set.
     pub props: Props,
@@ -481,11 +483,11 @@ fn seed_of(path: &str) -> u64 {
 }
 
 /// The values number `start..start + n` of the generated sequence for a
-/// seed: every bit pattern for integers, finite numbers for floats.
+/// seed. Integers take every bit pattern, and floats are finite.
 ///
 /// # Panics
 ///
-/// For a type without a fixed size.
+/// Panics for a type without a fixed size.
 pub fn generate(dtype: DataType, seed: u64, start: u64, n: u64) -> Values {
     let x = |k: u64| mix(seed ^ mix(start + k));
     let f = |k: u64| (x(k) >> 11) as f64 / (1u64 << 53) as f64 * 2000.0 - 1000.0;
@@ -568,7 +570,7 @@ pub fn prefix(values: &Values, n: usize) -> Values {
 ///
 /// # Panics
 ///
-/// When the two columns have different types.
+/// Panics when the two columns have different types.
 pub fn append(to: &mut Values, more: &Values) {
     match (to, more) {
         (Values::I8(a), Values::I8(b)) => a.extend(b),
@@ -618,7 +620,7 @@ enum Remembered {
     Daqmx {
         digital: bool,
         n: u64,
-        /// With empty value columns.
+        /// The scalers, with empty value columns.
         scalers: Vec<ScalerSpec>,
     },
 }
@@ -642,8 +644,8 @@ enum Payload {
 }
 
 fn names_of(path: &str) -> Option<(String, Option<String>)> {
-    // Paths made by `Object::group` and `Object::channel`; a raw path is
-    // not modelled.
+    // Parses a path of the form that `Object::group` and `Object::channel`
+    // write. A raw path of any other form is not modeled.
     let mut names = Vec::new();
     let mut rest = path;
     while let Some(after) = rest.strip_prefix("/'") {
@@ -682,7 +684,7 @@ impl FileBuilder {
     ///
     /// # Panics
     ///
-    /// Never; the segment was just added.
+    /// Never panics. The segment was just added.
     pub fn segment(&mut self) -> &mut Segment {
         self.segments.push(Segment::new());
         self.segments.last_mut().expect("just pushed")
@@ -692,10 +694,10 @@ impl FileBuilder {
     ///
     /// # Panics
     ///
-    /// When a segment asks for something that cannot be written: values
+    /// Panics when a segment asks for something that cannot be written: values
     /// that do not divide evenly over the chunks, interleaved channels of
-    /// different lengths or with strings, a "same index" marker for an
-    /// object that never had an index, or string chunks of unequal size.
+    /// different lengths or with strings, a "same index" marker for an object
+    /// that never had an index, or string chunks of unequal size.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass over the segments, kept in file order"
@@ -943,7 +945,7 @@ impl FileBuilder {
             }
             raw.out.extend(&segment.extra);
 
-            // The model takes the values.
+            // Add the segment's values to the model.
             for (at, payload) in payloads {
                 let model = &mut models[at];
                 match payload {

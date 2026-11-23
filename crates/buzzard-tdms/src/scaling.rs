@@ -1,10 +1,10 @@
 //! Scaling of raw values to engineering units, as channel properties
 //! describe it.
 //!
-//! The format description shows only the linear scale. The other kinds
-//! (polynomial, thermocouple, RTD, strain, table, thermistor, add,
-//! subtract) are recognized by name and reported as unsupported; nothing is
-//! guessed.
+//! The format description shows only the linear scale. A scale of any other
+//! type (polynomial, thermocouple, RTD, strain, table, thermistor, add, or
+//! subtract, for example) is reported as unsupported under the type name
+//! that the file gives it. The reader does not guess how to apply it.
 
 use crate::types::{Property, PropertyValue};
 
@@ -12,8 +12,8 @@ use crate::types::{Property, PropertyValue};
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Scaling {
-    /// Nothing: the channel has no scaling properties, or says that its
-    /// values are already scaled.
+    /// No scaling. The channel has no scaling properties, or its properties
+    /// say that the values are already scaled.
     None,
     /// `raw * slope + intercept`. A chain of linear scales is folded into
     /// one.
@@ -22,7 +22,7 @@ pub enum Scaling {
         slope: f64,
         /// The offset.
         intercept: f64,
-        /// For a channel in a driver's raw buffers: the scaler whose raw
+        /// For a channel in a driver's raw buffers, the scaler whose raw
         /// values the chain starts from.
         scaler: Option<u32>,
     },
@@ -35,11 +35,11 @@ fn find<'a>(props: &'a [Property], name: &str) -> Option<&'a PropertyValue> {
 }
 
 impl Scaling {
-    /// Reads the `NI_Scaling_Status`, `NI_Number_Of_Scales` and
+    /// Reads the `NI_Scaling_Status`, `NI_Number_Of_Scales`, and
     /// `NI_Scale[n]_...` properties.
     ///
     /// The last scale is the channel's output. Each scale names its input
-    /// by number; a number without a scale type is the raw data (for a
+    /// by number. A number without a scale type is the raw data (for a
     /// driver channel, the scaler with that id).
     pub(crate) fn of(props: &[Property], has_scalers: bool) -> Self {
         let Some(count) = find(props, "NI_Number_Of_Scales").and_then(PropertyValue::as_u64) else {
@@ -89,7 +89,8 @@ impl Scaling {
             None
         };
         if has_scalers && scaler.is_none() {
-            // The chain does not end at a scaler: nothing to start from.
+            // The chain does not end at a scaler, so it has no raw values
+            // to start from.
             return Self::Unsupported("a chain without a raw input".to_owned());
         }
         Self::Linear {

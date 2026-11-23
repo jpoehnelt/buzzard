@@ -185,7 +185,8 @@ fn bz002_tie_reports_nothing() {
     dir.vi("older.vi", 0x2000_8000, &CLEAN, &[]);
     assert_eq!(dir.check(), []);
 
-    // One more file makes 23.0 a strict plurality, and the others stand out.
+    // One more file makes 23.0 a strict plurality, and the files of the
+    // other versions are reported.
     dir.vi("new2.vi", V23, &CLEAN, &[]);
     let found = dir.check();
     assert_eq!(codes(&found), [("old.vi", "BZ002"), ("older.vi", "BZ002")]);
@@ -197,7 +198,7 @@ fn bz002_tie_reports_nothing() {
 
 #[test]
 fn bz003_own_path_is_measured_from_the_scan_root() {
-    // 64 characters from the root, wherever the root is.
+    // The path is 64 characters long from the root, wherever the root is.
     let rel = format!("{}/{}/a.vi", "d".repeat(29), "e".repeat(29));
     let config = LintConfig {
         max_path_length: 63,
@@ -611,7 +612,7 @@ fn bz006_missing_member() {
         .iter()
         .all(|d| d.severity == buzzard_lint::Severity::Warning));
 
-    // Creating the file fixes the finding; the rule can also be ignored.
+    // Creating the file fixes the finding. The rule can also be ignored.
     dir.vi("src/nope.vi", V23, &CLEAN, &[]);
     assert_eq!(
         codes(&dir.check()),
@@ -732,8 +733,8 @@ fn graph_answers_membership_and_inheritance() {
         ["Leaf.lvclass"]
     );
 
-    // Callers and callees keep meaning "uses": neither membership nor
-    // inheritance shows up there.
+    // Callers and callees mean "uses". Neither membership nor inheritance
+    // counts as a call.
     assert_eq!(file_names(&graph.callers(&at("Base/Init.vi"))), ["Run.vi"]);
     assert_none(&graph.callers(&at("Base/Base.lvclass")));
     assert_none(&graph.callees(&at("Zeta/Zeta.lvclass")));
@@ -858,14 +859,15 @@ fn real_project_fixtures_scan_without_parse_errors() {
 fn symbolic_links_never_bind_to_a_workspace_file_of_the_same_name() {
     let dir = TempDir::new("symbolic");
     let name = "Path To Command Line String.vi";
-    // A wrapper named like the installed VI it calls.
+    // A wrapper has the name of the installed VI it calls.
     let vilib = LvPath::absolute(&["<vilib>", "AdvancedString", name]);
     dir.linked(name, &[(name, vilib.clone())]);
-    // Common names: an unrelated project file must not become the callee.
+    // `Open.vi` is a common name. An unrelated project file must not
+    // become the callee.
     dir.linked("drivers/Open.vi", &[]);
     let open = LvPath::absolute(&["<userlib>", "instr", "Open.vi"]);
     dir.linked("main.vi", &[("Open.vi", open), (name, vilib)]);
-    // Neither does a link that is not a path at all.
+    // A link that is not a path at all must not bind to it either.
     let not_a_path = LvPath {
         kind: PathKind::NotAPath,
         components: vec!["Open.vi".into()],
@@ -882,10 +884,10 @@ fn symbolic_links_never_bind_to_a_workspace_file_of_the_same_name() {
 fn stale_links_fall_back_to_a_unique_name_but_never_to_the_file_itself() {
     let dir = TempDir::new("stale");
     dir.linked("lib/util.vi", &[]);
-    // Absolute path from another machine.
+    // This link is an absolute path from another machine.
     let foreign = LvPath::absolute(&["Volumes", "old", "util.vi"]);
     dir.linked("a.vi", &[("util.vi", foreign)]);
-    // Relative path that no longer leads anywhere.
+    // This link is a relative path that no longer leads anywhere.
     dir.linked("b.vi", &[("util.vi", LvPath::sibling("util.vi"))]);
     // A stale link to something with the file's own name is not a
     // self-reference.
@@ -937,7 +939,8 @@ fn absolute_links_match_files_scanned_under_another_spelling() {
         "absolute root"
     );
 
-    // The root spelled with a detour, and relative to the current directory.
+    // The root is spelled with a detour, and relative to the current
+    // directory.
     let spellings = [
         dir.0.join("a/.."),
         #[cfg(unix)]
@@ -1003,7 +1006,7 @@ fn a_file_reached_through_two_roots_is_analyzed_once() {
     );
     assert_eq!(found.len(), 1);
 
-    // With the roots in the other order the first spelling still wins.
+    // With the roots in the other order the first spelling is still kept.
     #[cfg(unix)]
     {
         let relative = dir.relative_spelling();
@@ -1018,17 +1021,17 @@ fn a_file_reached_through_two_roots_is_analyzed_once() {
 #[test]
 fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
     let dir = TempDir::new("case");
-    // The link was stored as `Util.vi`; the file is now `util.vi`.
+    // The link was stored as `Util.vi`, and the file is now `util.vi`.
     dir.linked("a.vi", &[("Util.vi", LvPath::sibling("Util.vi"))]);
     dir.linked("util.vi", &[("A.VI", LvPath::sibling("A.VI"))]);
-    // A directory component that differs in case.
+    // A directory component of this link differs in case.
     let nested = LvPath {
         kind: PathKind::Relative,
         components: vec![String::new(), "Lib".into(), "Deep.vi".into()],
     };
     dir.linked("b.vi", &[("Deep.vi", nested)]);
     dir.linked("lib/deep.vi", &[]);
-    // A stale path whose name differs in case.
+    // The file name of this stale path differs in case.
     let stale = LvPath::absolute(&["Volumes", "old", "DEEP.VI"]);
     dir.linked("c.vi", &[("DEEP.VI", stale)]);
 
@@ -1046,7 +1049,7 @@ fn case_insensitive_lookup_is_a_fallback_for_the_exact_one() {
             "util.vi -> a.vi"
         ]
     );
-    // The cycle a.vi <-> util.vi is now visible.
+    // The cycle between a.vi and util.vi is now found.
     assert_eq!(insensitive.cycles().len(), 1);
     // Queries find a file whatever the case of the path they are given.
     assert_eq!(insensitive.callers(&dir.0.join("UTIL.vi")).len(), 1);
@@ -1110,7 +1113,8 @@ fn links_stored_in_a_legacy_code_page_resolve() {
     );
 
     let workspace = Workspace::scan(std::slice::from_ref(&dir.0));
-    // The parser shows the bytes one character each; the graph recovers them.
+    // The parser shows each byte as one character, and the graph recovers
+    // the name.
     let stored = &workspace.get(&dir.0.join("main.vi")).unwrap();
     let stored = stored.metadata().unwrap().links[0].name().unwrap();
     assert_eq!(stored, "\u{83}e\u{83}X\u{83}g.vi");
@@ -1130,7 +1134,7 @@ fn links_stored_in_a_legacy_code_page_resolve() {
 
 #[test]
 fn code_page_recovery_needs_a_single_candidate() {
-    // 0xC4 0xE3 is `你` in GBK, `Дг` in Windows-1251 and `Äã` in Windows-1252.
+    // 0xC4 0xE3 is `你` in GBK, `Дг` in Windows-1251, and `Äã` in Windows-1252.
     let name: &[u8] = b"\xc4\xe3.vi";
     let link = byte_links(&[(name, PathKind::Relative, &[b"", name])]);
 
@@ -1140,7 +1144,7 @@ fn code_page_recovery_needs_a_single_candidate() {
     let graph = dir.graph(CaseSensitivity::Sensitive);
     assert_eq!(dir.edges(&graph), ["main.vi -> 你.vi"]);
 
-    // With a file for each reading there is no telling which one is meant.
+    // With a file for each reading the link is ambiguous and matches nothing.
     dir.linked("Дг.vi", &[]);
     let graph = dir.graph(CaseSensitivity::Sensitive);
     assert_none(&dir.edges(&graph));

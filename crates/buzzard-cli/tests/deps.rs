@@ -115,7 +115,8 @@ fn project(name: &str) -> TempDir {
 #[test]
 fn symbolic_links_are_grouped_by_root_and_package() {
     let dir = project("deps-grouped");
-    // Paths of the file system follow the platform; stored paths never do.
+    // File system paths use the separator of the platform. Stored paths do
+    // not.
     assert_eq!(
         deps(&[], &dir.0).replace('\\', "/"),
         "<resource> (not checked: no directory was given for root resource)
@@ -170,7 +171,7 @@ fn machine_absolute_and_missing_relative_links_are_listed() {
             path(PathKind::Unc, "server/share/net.vi"),
             LvPath::sibling("b.vi"),
             LvPath::sibling("gone.vi"),
-            // On disk but not a file this tool analyzes.
+            // This file is on disk, but buzzard does not analyze it.
             LvPath::sibling("notes.txt"),
             // A bare name is not a location.
             path(PathKind::Relative, "user32.dll"),
@@ -200,7 +201,7 @@ fn machine_absolute_and_missing_relative_links_are_listed() {
 fn a_root_with_a_directory_reports_found_and_missing() {
     let dir = project("deps-roots");
     let install = TempDir::new("deps-roots-install");
-    // An `.llb` is opened: a link into it is found only if the archive
+    // An `.llb` is opened. A link into it is found only if the archive
     // holds that member, whatever the letter case of its name.
     write(
         &install,
@@ -279,7 +280,8 @@ fn a_root_with_a_directory_reports_found_and_missing() {
     assert!(text.contains("    unchecked <resource>/lvanlys.dll\n"));
     assert!(text.contains("(2 found, 2 missing, 2 unchecked)"), "{text}");
 
-    // Several roots, and a directory relative to the working directory.
+    // Several roots may be given, and a directory may be relative to the
+    // working directory.
     write(
         &dir,
         "user.lib/_OpenG.lib/error/error.llb",
@@ -521,7 +523,7 @@ fn markdown_has_a_table_per_root() {
 }
 
 /// A file cut at any length and a file with any one byte changed are
-/// reported or listed as unparsed; the command never panics.
+/// reported or listed as unparsed. The command never panics.
 #[test]
 fn truncated_and_corrupted_files_never_panic() {
     let dir = TempDir::new("deps-hostile");

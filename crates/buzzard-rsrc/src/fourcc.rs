@@ -9,7 +9,7 @@ use serde::{Serialize, Serializer};
 pub struct FourCc(pub [u8; 4]);
 
 impl FourCc {
-    /// Make a code from its four bytes; usable in `const` items.
+    /// Make a code from its four bytes. The function works in `const` items.
     pub const fn new(code: &[u8; 4]) -> Self {
         Self(*code)
     }

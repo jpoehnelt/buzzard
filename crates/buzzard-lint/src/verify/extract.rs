@@ -5,70 +5,72 @@
 //! A machine is a while loop `W`, a shift register of `W`, and a case
 //! structure `C` somewhere inside `W` whose selector is wired from the
 //! register's left terminal, either directly or through tunnels that pass
-//! a value in unchanged. The selector must be an enumeration, a string or
+//! a value in unchanged. The selector must be an enumeration, a string, or
 //! an integer. Every such `(W, register, C)` is one [`Machine`]:
 //!
-//! * a state is a frame of `C`, named by its case label (item names,
-//!   strings, or numbers and ranges, joined with `, `; a default frame
-//!   without values of its own is named `Default`). The machine is "in" a
-//!   state during an iteration whose register value selects that frame;
-//! * the successors of a state are the frames selected by the values
+//! * A state is a frame of `C`, named by its case label: item names,
+//!   strings, or numbers and ranges, joined with `, `. A default frame
+//!   without values of its own is named `Default`. The machine is "in" a
+//!   state during an iteration whose register value selects that frame.
+//! * The successors of a state are the frames selected by the values
 //!   that can reach the register's right terminal during such an
-//!   iteration;
-//! * the stop behaviour of a state is what can reach the loop's
-//!   condition terminal during such an iteration;
-//! * the initial states are the frames selected by the values wired
+//!   iteration.
+//! * The stop behavior of a state is what can reach the loop's
+//!   condition terminal during such an iteration.
+//! * The initial states are the frames selected by the values wired
 //!   to the register's left terminal from outside the loop.
 //!
 //! # How a value is followed
 //!
 //! A value is followed backwards from the terminal that consumes it. Only
-//! these steps are understood; they are the only things found between a
-//! constant and the register in the nine real state machine files the
-//! pattern was studied on (editor versions 13, 17, 20 and 25):
+//! the steps below are understood. They are the only things found between
+//! a constant and the register in the nine real state machine files the
+//! pattern was studied on (editor versions 13, 17, 20, and 25).
 //!
-//! * a constant of a simple type ends the walk with its value;
-//! * the left terminal of the machine's own register means "the
-//!   current state", so the successor is the state itself;
-//! * an input tunnel of any structure that passes its value unchanged
-//!   continues at the wire outside;
-//! * the built-in Select function gives either of its two inputs;
-//! * an output tunnel of a case, event or disable structure gives the
-//!   value any of its frames provides, except that for `C` itself only
-//!   the frame of the state in question counts. A frame that leaves the
-//!   tunnel unwired provides the type's default (zero, which is the first
-//!   item of an enumeration; False; the empty string), but only when the
+//! * A constant of a simple type ends the walk with its value.
+//! * The left terminal of the machine's own register means "the
+//!   current state", so the successor is the state itself.
+//! * An input tunnel of any structure that passes its value unchanged
+//!   continues at the wire outside.
+//! * The built-in Select function gives either of its two inputs.
+//! * An output tunnel of a case, event, or disable structure gives the
+//!   value any of its frames provides. For `C` itself only the frame of
+//!   the state in question counts. A frame that leaves the tunnel unwired
+//!   provides the type's default. The default is zero (the first item of
+//!   an enumeration), False, or the empty string. It does so only when the
 //!   file marks the tunnel as using the default, and only on a diagram
-//!   that decoded completely (see "A complete decode" below);
-//! * an output tunnel of a stacked sequence gives what its one wired
-//!   frame provides, and one of a nested while loop what the loop's
-//!   diagram provides.
+//!   that decoded completely (see "A complete decode" below).
+//! * An output tunnel of a stacked sequence gives what its one wired
+//!   frame provides. An output tunnel of a nested while loop gives what
+//!   the loop's diagram provides.
 //!
 //! A structure is taken for what its class says only when the rest of
-//! it agrees: a case structure has a selector table with an entry per
+//! it agrees. A case structure has a selector table with an entry per
 //! frame, and a while loop has no count terminal. Otherwise the value is
 //! unknown.
 //!
 //! Anything else makes the result unknown: a subVI, any other function
 //! (arithmetic, comparison, string functions), a control or indicator, a
 //! local or global variable, a property node, a bundle or unbundle, an
-//! auto-indexing, concatenating or conditional loop tunnel, the output
+//! auto-indexing, concatenating, or conditional loop tunnel, the output
 //! tunnel of a for loop (which yields a default when the loop runs zero
 //! times), a flat sequence, a feedback node, another shift register, a
 //! constant of a type that is not decoded, a wire whose two ends
 //! contradict what the file says about their direction, and a walk that
 //! gets too deep or too long. An unknown successor is
-//! [`Successors::Unknown`], an unknown stop value [`Stop::Maybe`] and an
-//! unknown initial value `None`. The model therefore over-approximates
-//! the diagram: it never leaves out a transition the diagram can make.
+//! [`Successors::Unknown`], an unknown stop value is [`Stop::Maybe`], and
+//! an unknown initial value is `None`. The model therefore
+//! over-approximates the diagram. It never leaves out a transition the
+//! diagram can make.
 //!
 //! # From a value to a state
 //!
 //! A written value is resolved through the selector table of `C`, never
-//! by comparing label text: a number selects the frame whose value or
-//! range contains it, a string the frame that lists it, and a value no
-//! frame lists selects the default frame. So a frame that handles several
-//! values is one state, whichever of its values is written.
+//! by comparing label text. A number selects the frame whose value or
+//! range contains it, a string selects the frame that lists it, and a
+//! value no frame lists selects the default frame. A frame that handles
+//! several values is therefore one state, whichever of its values is
+//! written.
 //!
 //! * A constant counts only when its numeric type is exactly the type of
 //!   the selector and of both register terminals, so that no hidden
@@ -76,46 +78,48 @@
 //!   the name the selector's own item list has at its value.
 //! * Supported selector types. A selector table stores every value
 //!   as a 32-bit signed number. How a narrower or an unsigned value is
-//!   widened into it was only observed for some types, so only these are
-//!   resolved; any other gives [`Successors::Unknown`] for every state:
-//!   strings; enumerations of 8, 16 and 32 bits (9, 52 and 43 tables in
-//!   1,773 real files) whose table holds no negative number; `I32` (67
-//!   tables, 27 of them with negative numbers); and `U8` (5 tables) and
-//!   `I16` (1 table) as long as every number in the table is between 0
-//!   and the type's largest value, where sign and zero extension agree.
-//!   Not resolved: `I8`, `U16`, `U32`, the 64-bit types, and a `U8` or
-//!   `I16` table with a number outside that range. No table of those
-//!   kinds was available to check.
+//!   widened into it was observed for some types only, so only those
+//!   types are resolved. Any other type gives [`Successors::Unknown`] for
+//!   every state. The resolved types are strings; enumerations of 8, 16,
+//!   and 32 bits (9, 52, and 43 tables in 1,773 real files) whose table
+//!   holds no negative number; `I32` (67 tables, 27 of them with negative
+//!   numbers); and `U8` (5 tables) and `I16` (1 table) as long as every
+//!   number in the table is between 0 and the type's largest value, where
+//!   sign and zero extension agree. The types that are not resolved are
+//!   `I8`, `U16`, `U32`, the 64-bit types, and a `U8` or `I16` table with
+//!   a number outside that range. No table of those kinds was available
+//!   to check.
 //! * A string that is not plain ASCII is not resolved, because its bytes
 //!   cannot be compared reliably after decoding. Whether a case structure
-//!   matches case-insensitively is not read from the file; a string that
-//!   equals a label only when case is ignored is modelled as selecting
-//!   either that frame or the default one.
+//!   matches case-insensitively is not read from the file, so a string
+//!   that equals a label only when case is ignored is modeled as
+//!   selecting either that frame or the default one.
 //! * A non-empty string no label matches, even ignoring case, is recorded
-//!   in [`State::unmatched`]: it runs the default frame, which is what
-//!   the "undefined state name" finding reports. The empty string and a
-//!   type default fall to the default frame without a finding, since
-//!   leaving a tunnel unwired to return to the default state is an idiom.
+//!   in [`State::unmatched`]. It runs the default frame, and the
+//!   "undefined state name" finding reports it. The empty string and a
+//!   type default fall to the default frame without a finding, because
+//!   leaving a tunnel unwired to return to the default state is common
+//!   practice.
 //!
 //! # Assumptions and limits
 //!
-//! * **Uninitialised registers.** A register with nothing wired to its
+//! * **Uninitialized registers.** A register with nothing wired to its
 //!   left terminal keeps its value from the previous call of the VI, so
 //!   its first state is unknown and nothing is claimed about
 //!   reachability.
 //! * **Stacked registers.** A register with several left terminals is
-//!   unverified: none of 634 loops in 1,773 real files has one, so how
-//!   the file stores them is known from third-party notes only. A loop gives no
-//!   machine unless its registers pair one to one: every register has
-//!   exactly one left side, and the loop and its diagram each carry
-//!   exactly as many left and as many right register terminals as the
-//!   loop has registers. A stacked register stored in any way that adds a
-//!   left terminal is refused by this; one stored without any trace on
-//!   the loop's terminals would not be noticed.
+//!   unverified. None of 634 loops in 1,773 real files has one, so how
+//!   the file stores them is known from third-party notes only. A loop
+//!   gives no machine unless its registers pair one to one. Every
+//!   register must have exactly one left side, and the loop and its diagram
+//!   each carry exactly as many left and as many right register terminals
+//!   as the loop has registers. That check refuses a stacked register
+//!   stored in any way that adds a left terminal. It would not notice one
+//!   stored without any trace on the loop's terminals.
 //! * **A complete decode.** The decoder skips objects it cannot resolve.
 //!   A diagram with any recorded [`buzzard_rsrc::Loss`], anywhere in the
-//!   file, is not searched for classic machines: a wire that was lost
-//!   would look like a tunnel left unwired, and a node that was lost
+//!   file, is not searched for classic machines, because a wire that was
+//!   lost would look like a tunnel left unwired, and a node that was lost
 //!   could be the one that stops the program. No loss is recorded for any
 //!   of the 1,773 real files.
 //! * **Values are taken as they are.** Damage that leaves the structure
@@ -125,44 +129,45 @@
 //!   loss. The file then describes another program completely, and the
 //!   findings are about that program.
 //! * **Size.** A case structure with more than [`MAX_STATES`] (1,024)
-//!   frames is not modelled.
+//!   frames is not modeled.
 //! * **Several case structures.** Case structures in one loop that
-//!   select on the same register give one machine each. Each is sound on its own; a case
-//!   structure other than `C` on the path is treated as any other case
-//!   structure (all frames).
-//! * **Several registers.** Only the register that feeds the selector is
-//!   the state; every other register is opaque data.
+//!   select on the same register give one machine each. Each is sound on
+//!   its own. A case structure other than `C` on the path of a value is
+//!   treated as any other case structure, so every frame counts.
+//! * **Several registers.** The state is the register that feeds the
+//!   selector. The analysis does not follow any other register.
 //! * **Event structures.** An event structure inside a frame contributes
 //!   every one of its frames, whichever event they handle. When its
 //!   timeout terminal is wired it also contributes the type's default,
 //!   because a timeout that no frame handles ends the structure without
 //!   running a frame, and which frame handles the timeout is not decoded.
-//!   That it may wait forever is not modelled; it only removes behaviours.
+//!   The model ignores that the structure may wait forever. Waiting only
+//!   removes behaviors.
 //! * **Nesting.** `C` may sit inside other structures of `W`. In an
 //!   iteration that does not execute `C` at all the state is still the
 //!   frame the register value selects, and the values the other
 //!   structures provide are included.
 //! * **Stopping.** A state stops the machine through the loop's own
-//!   condition terminal. A state stops
-//!   `Always` or `Never` only when nothing but Boolean constants (and
-//!   unwired-default tunnels) can reach the terminal in that state, read
-//!   with the terminal's "stop if true" or "continue if true" setting.
-//!   When the diagram calls the built-in Stop or Quit function anywhere,
-//!   every state is `Maybe`. Any other node that could end the program
-//!   or abort the VI (a subVI call, a call by reference, an invoke or
-//!   property node, a call into a library, an `XNode`, a node of a class
-//!   that is not known to be harmless) is listed in
-//!   [`Machine::other_exits`], wherever it sits on the block diagram,
-//!   and keeps a "cannot stop" finding from being labelled as proven. An
-//!   error dialog or an abort by the user is outside the model.
+//!   condition terminal. A state stops `Always` or `Never` only when
+//!   nothing but Boolean constants (and unwired-default tunnels) can
+//!   reach the terminal in that state, read with the terminal's "stop if
+//!   true" or "continue if true" setting. When the diagram calls the
+//!   built-in Stop or Quit function anywhere, every state is `Maybe`. Any
+//!   other node that could end the program or abort the VI (a subVI call,
+//!   a call by reference, an invoke or property node, a call into a
+//!   library, an `XNode`, or a node of a class that is not known to be
+//!   harmless) is listed in [`Machine::other_exits`], wherever it sits on
+//!   the block diagram, and keeps a "cannot stop" finding from being
+//!   labeled as proven. An error dialog or an abort by the user is
+//!   outside the model.
 //! * **Integer selectors.** A machine with an integer selector is
 //!   reported only when at least one frame writes a constant successor.
 //!   Otherwise the register is more likely a counter than a state.
-//! * **Not machines.** Selectors that are Booleans or error clusters,
-//!   selectors fed by a subVI, a function, a control or the loop counter,
-//!   for loops, timed loops, and a state held in a cluster or a feedback
-//!   node. A selector type or table encoding that `buzzard-rsrc` does not
-//!   decode gives no machine.
+//! * **Not machines.** These give no machine: selectors that are Booleans
+//!   or error clusters, selectors fed by a subVI, a function, a control,
+//!   or the loop counter, for loops, timed loops, and a state held in a
+//!   cluster or a feedback node. A selector type or table encoding that
+//!   `buzzard-rsrc` does not decode gives no machine either.
 //! * **Wire direction.** The file lists a wire's source first in all but
 //!   a handful of wires per ten thousand. Every step checks the role of
 //!   both ends against independent facts (tunnel direction flags,
@@ -170,13 +175,13 @@
 //! * **Stale type definitions.** An enumeration's item list is the copy
 //!   stored in the file. The type definition file is never opened, so a
 //!   change to it since the VI was saved is not seen, and how the editor
-//!   then remaps constants and case labels on load is not modelled. Every
-//!   result about such a machine is about the VI as saved;
+//!   then remaps constants and case labels on load is not modeled. Every
+//!   result about such a machine is about the VI as saved.
 //!   [`Machine::type_definition`] names the file and the findings say so.
 //! * **Unwired tunnels of an enumeration.** They are taken to provide
 //!   item 0, the default of the data type, also when the type is a type
-//!   definition whose control has another default value. That is what
-//!   the product documentation says and it was not checked in an editor.
+//!   definition whose control has another default value. The product
+//!   documentation says so. It was not checked in an editor.
 //! * **No comparison with a running editor.** The semantics above come
 //!   from the file format and the product documentation.
 //!
@@ -185,19 +190,19 @@
 //! In a string/queue state machine, the style of the JKI State Machine,
 //! the register holds a whole queue of state names as one string, and
 //! subVIs split and extend it. That is a pushdown system computed by
-//! library code, not a finite automaton, and it is not modelled.
+//! library code, not a finite automaton, and it is not modeled.
 //! [`QueueMachine`] carries one heuristic check only: names in string
 //! constants wired (directly, or through the steps above) into an
 //! `Add State(s) to Queue` call, or into the queue register from outside,
 //! that match no case label and so run the default case. A queue string
 //! is read the way the real files use it: one state per line, the name
-//! ending at `>>` (arguments follow), `//` starting a comment and `/* */`
-//! enclosing one. In 16 of the 17 real string/queue state machines
-//! studied, every enqueued name read this way has a case. The other, a
-//! documentation example, enqueues three names it has no case for. The
-//! check proves nothing: names built at run time or enqueued by other VIs
-//! are not seen, the comment syntax is inferred from those files alone,
-//! and the library is recognised by the names of its subVIs.
+//! ending at `>>` (arguments follow), `//` starting a comment, and
+//! `/* */` enclosing one. In 16 of the 17 real string/queue state
+//! machines studied, every enqueued name read this way has a case. The
+//! other, a documentation example, enqueues three names it has no case
+//! for. The check proves nothing. Names built at run time or enqueued by
+//! other VIs are not seen, the comment syntax is inferred from those
+//! files alone, and the library is recognized by the names of its subVIs.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -209,24 +214,26 @@ use serde::Serialize;
 
 use super::model::{Machine, State, Stop, Successors};
 
-/// Resource id of the built-in Select function. Its parameters are 0 the
-/// output, 1 the value when false, 2 the selector, 3 the value when true
-/// (164 instances in files of versions 13 to 25).
+/// Resource id of the built-in Select function. Parameter 0 is the
+/// output, 1 is the value when false, 2 is the selector, and 3 is the
+/// value when true (164 instances in files of versions 13 to 25).
 const SELECT: u32 = 1516;
 /// Built-in functions that end the program: Stop and Quit.
 const ABORTS: [u32; 2] = [1350, 1352];
-/// Most frames a case structure may have to be modelled as a machine.
+/// The largest number of frames a case structure may have and still be
+/// modeled as a machine.
 ///
 /// The work per frame is bounded (20,000 steps per traced value), so
 /// this bounds the whole extraction, and the model of a machine at the
 /// limit stays small (at most a million successor names). The largest
 /// case structure in 1,773 real files has 28 frames.
 pub const MAX_STATES: usize = 1_024;
-/// Most kinds of node named in [`Machine::other_exits`].
+/// The largest number of kinds of node named in
+/// [`Machine::other_exits`].
 const MAX_EXITS_NAMED: usize = 8;
 /// Node classes that cannot end the program or abort the VI: structures,
 /// the diagram boundary, and nodes that only compute on their inputs.
-/// Checked against the classes met in 1,773 real files; every class not
+/// Checked against the classes met in 1,773 real files. Every class not
 /// listed here counts as a possible way out.
 const HARMLESS: [&str; 32] = [
     "aBuild",
@@ -262,16 +269,16 @@ const HARMLESS: [&str; 32] = [
     "subset",
     "whileLoop",
 ];
-/// Deepest chain of steps followed for one value.
+/// The longest chain of steps followed for one value.
 const MAX_DEPTH: usize = 128;
-/// Most steps spent on one value, so that a diagram built to branch
-/// exponentially cannot stall the analysis.
+/// The largest number of steps spent on one value, so that a diagram
+/// built to branch exponentially cannot stall the analysis.
 const MAX_STEPS: usize = 20_000;
-/// Name prefixes of the subVIs of the JKI state machine library.
+/// Name prefixes of the subVIs of the JKI State Machine library.
 const PARSE_QUEUE: &str = "Parse State Queue";
 const ADD_TO_QUEUE: &str = "Add State(s) to Queue";
 
-/// A string/queue state machine, which is recognised but not modelled.
+/// A string/queue state machine, which is recognized but not modeled.
 /// See the module documentation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct QueueMachine {
@@ -293,11 +300,11 @@ pub struct Extraction {
     /// Classic state machines: a while loop whose shift register selects
     /// the case that runs.
     pub machines: Vec<Machine>,
-    /// String/queue machines, which are recognised but not modelled.
+    /// String/queue machines, which are recognized but not modeled.
     pub queue_machines: Vec<QueueMachine>,
     /// The diagram did not decode completely
     /// ([`BlockDiagram::is_complete`]), so it was not searched for
-    /// classic machines: nothing could be proven about one.
+    /// classic machines, because nothing could be proven about one.
     pub incomplete: bool,
 }
 
@@ -337,7 +344,7 @@ pub fn extract(diagram: &BlockDiagram) -> Extraction {
             queues.push((case, origin, machine));
         }
     }
-    // The parser also hands out the arguments of a state, and the case
+    // The parser also returns the arguments of a state, and the case
     // structures that select on those sit inside the case structure of
     // the states. Only the outermost one is the machine.
     let nested = |case: usize, parser: usize| {
@@ -393,9 +400,9 @@ fn union(a: Values, b: Values) -> Values {
 /// registers can be trusted.
 ///
 /// Registers must pair one to one. A stacked register has several left
-/// sides; how the file stores one was never seen, so any left or right
-/// register terminal beyond one per register refuses the loop, whichever
-/// list it is or is not named in.
+/// sides. How the file stores one was never seen, so the loop is refused
+/// when it has any left or right register terminal beyond one per
+/// register, whichever list names or omits that terminal.
 fn state_register<'a>(
     info: &'a buzzard_rsrc::LoopInfo,
     looping: &Node,
@@ -564,7 +571,7 @@ impl<'a> Index<'a> {
     /// Whether a node is a while loop by more than its class: it has one
     /// diagram and no count terminal, which only a for loop has. The
     /// classes of the two loops differ in one bit, and a for loop that
-    /// runs zero times hands out defaults that a while loop never does.
+    /// runs zero times gives defaults that a while loop never does.
     fn is_while(&self, node: usize) -> bool {
         let looping = self.nodes[node];
         let counts = |node: &Node| {
@@ -678,7 +685,7 @@ impl<'a> Index<'a> {
 
         tracer.frame = None;
         tracer.state = None;
-        // An unwired left terminal is an uninitialised register.
+        // An unwired left terminal is an uninitialized register.
         let first = tracer.values(left_outer);
         let initial = resolver.as_ref().and_then(|resolver| {
             let mut initial = BTreeSet::new();
@@ -748,9 +755,10 @@ impl<'a> Index<'a> {
         false
     }
 
-    /// Recognise a string/queue machine: a string case structure with a
+    /// Recognize a string/queue machine: a string case structure with a
     /// default case whose selector is an output of the library's queue
-    /// parser. Only the heuristic check is made; see the module docs.
+    /// parser. Only the heuristic check is made. See the module
+    /// documentation.
     fn queue_machine(
         &self,
         case: usize,
@@ -793,7 +801,7 @@ impl<'a> Index<'a> {
         let is_string_input = |t: &&Terminal| {
             t.data_type == Some(DataType::String) && self.source.contains_key(&t.uid)
         };
-        // Constants handed to the library call that extends the queue.
+        // Constants wired to the library call that extends the queue.
         for (number, node) in self.nodes.iter().enumerate() {
             let in_scope = looping.is_none_or(|looping| self.is_inside(number, looping));
             if in_scope && is_call(node, ADD_TO_QUEUE) {
@@ -857,8 +865,8 @@ impl<'a> Index<'a> {
 }
 
 /// State names in a queue string: one per line, ending at `>>`, with
-/// `//` and `/* */` comments removed. See the module documentation for
-/// where this syntax was established.
+/// `//` and `/* */` comments removed. The module documentation says which
+/// files this syntax was read from.
 pub fn queued_names(text: &str) -> Vec<String> {
     let mut clean = String::with_capacity(text.len());
     let mut rest = text;
@@ -880,7 +888,7 @@ pub fn queued_names(text: &str) -> Vec<String> {
 }
 
 /// What a node could do to end the program or abort the VI without the
-/// model seeing it, as a description to show; `None` for a node of a
+/// model seeing it, as a description to show. `None` for a node of a
 /// class that cannot.
 fn exit(node: &Node) -> Option<String> {
     let class = node.class.as_str();
@@ -902,9 +910,10 @@ fn exit(node: &Node) -> Option<String> {
 }
 
 /// One name per frame, unique within the machine. `None` when a frame
-/// has no value and is not the default frame: no value selects it, which
-/// the decoder refuses, so a table like that was built some other way
-/// and is not given a made-up name.
+/// has no value and is not the default frame. No value selects such a
+/// frame, and the decoder refuses a table that has one. A table like that
+/// was therefore built some other way, and its frame is not given a
+/// made-up name.
 fn state_names(selector: &CaseSelector) -> Option<Vec<String>> {
     let value = |value: i32| match selector.kind {
         SelectorKind::Enum => usize::try_from(value)
@@ -989,7 +998,8 @@ fn stop_of(values: Values, stop_if_true: bool) -> Stop {
 /// What a written value selects.
 enum Target {
     Frame(usize),
-    /// A string no case is labelled with; the default case runs.
+    /// A string that no case is labeled with. The default case runs for
+    /// it.
     Unmatched(String),
 }
 
@@ -1017,7 +1027,7 @@ impl<'s> Resolver<'s> {
             }
         } else {
             // The numbers a table of this type may hold for it to be
-            // read; see "Supported selector types" in the module docs.
+            // read. See "Supported selector types" in the module docs.
             // Only `I32` was seen with negative numbers. For the narrow
             // types the range is the one in which sign extension and
             // zero extension give the same 32-bit number.
@@ -1099,7 +1109,7 @@ impl<'s> Resolver<'s> {
     }
 
     /// The frames a value selects. `current` is the frame of the state
-    /// being analysed, for a value that is the register's own.
+    /// being analyzed, for a value that is the register's own.
     fn resolve(&self, atom: &Atom, current: Option<usize>) -> Option<Vec<Target>> {
         match (atom, self.selector.kind) {
             (Atom::Current, _) => Some(vec![Target::Frame(current?)]),
@@ -1147,7 +1157,7 @@ struct Tracer<'i, 'a> {
     /// The boundary node and data object of the machine's left register
     /// terminal, whose value is the current state.
     state: Option<(usize, i32)>,
-    /// The machine's case structure and the frame being analysed.
+    /// The machine's case structure and the frame being analyzed.
     frame: Option<(usize, usize)>,
     steps: usize,
 }
@@ -1159,8 +1169,8 @@ impl<'a> Tracer<'_, 'a> {
         self.sink(sink, None, 0)
     }
 
-    /// The values a sink terminal can receive; `unwired` when nothing is
-    /// wired to it.
+    /// The values a sink terminal can receive. Returns `unwired` when
+    /// nothing is wired to it.
     fn sink(&mut self, sink: &Terminal, unwired: Values, depth: usize) -> Values {
         if !sink.wired && !self.index.source.contains_key(&sink.uid) {
             return unwired;
@@ -1211,9 +1221,9 @@ impl<'a> Tracer<'_, 'a> {
             ("select" | "eventStruct", "selTun") | ("commentNode", "commentTun") => {
                 // A case structure has a selector table with an entry
                 // for each of its frames. One without is not read as a
-                // case structure: it may be another structure whose
+                // case structure. It may be another structure whose
                 // class was misread, with other rules for what its
-                // tunnels hand out.
+                // tunnels give.
                 let is_case = |selector: &CaseSelector| selector.frames.len() == inner.len();
                 if node.class == "select" && !node.selector.as_ref().is_some_and(is_case) {
                     return None;
@@ -1231,7 +1241,7 @@ impl<'a> Tracer<'_, 'a> {
                 }
                 // An event structure whose timeout is wired can time out
                 // without running any frame when no frame handles the
-                // timeout; its tunnels then carry the type's default.
+                // timeout. Its tunnels then carry the type's default.
                 // Which frame handles which event is not decoded.
                 if node.class == "eventStruct" && !index.waits_forever(node) {
                     all = union(all, Some(one(Atom::TypeDefault)));

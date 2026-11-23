@@ -7,8 +7,8 @@ use crate::reader::{decode_text, Reader};
 ///
 /// # Errors
 ///
-/// If the count is larger than the rest of the block or a name runs past
-/// its end.
+/// Returns an error if the count is larger than the rest of the block or a
+/// name runs past its end.
 pub fn parse(data: &[u8]) -> Result<Vec<String>> {
     let mut r = Reader::new(data, "LIBN");
     let count = r.u32()? as usize;

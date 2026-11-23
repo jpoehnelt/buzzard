@@ -1,14 +1,14 @@
 //! Conformance suite: every real binary under `tests/fixtures` is parsed and
 //! compared against a golden JSON snapshot in `tests/snapshots`.
 //!
-//! To add coverage for a new editor version or file kind, drop the file into
+//! To add coverage for a new editor version or file kind, copy the file into
 //! `tests/fixtures/<source>/` and run:
 //!
 //! ```bash
 //! BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance
 //! ```
 //!
-//! then review the generated snapshot before committing it.
+//! Then review the generated snapshot before you commit it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -104,8 +104,7 @@ fn parsing_is_deterministic() {
     }
 }
 
-/// Every resource payload must lie inside the data section, and together the
-/// directory must account for every type the file declares.
+/// Every resource payload lies inside the data section.
 #[test]
 fn directory_is_consistent() {
     for path in fixtures() {
@@ -148,7 +147,7 @@ fn compressed_blocks_inflate() {
 }
 
 /// Truncated or corrupted input must produce an error or a value, never a
-/// panic, hang or out-of-bounds read.
+/// panic, hang, or out-of-bounds read.
 #[test]
 fn hostile_input_never_panics() {
     for path in fixtures() {
@@ -162,8 +161,8 @@ fn hostile_input_never_panics() {
         for len in (0..bytes.len()).step_by(7) {
             analyze(&bytes[..len]);
         }
-        // Deterministic corruption: overwrite each byte of the directory and
-        // a sample of the data section with hostile values.
+        // The corruption is deterministic. It overwrites each byte of the
+        // directory and a sample of the data section with 0x00, 0x7f, and 0xff.
         let info = u32::from_be_bytes(bytes[16..20].try_into().unwrap()) as usize;
         let positions = (0..64)
             .chain((64..info).step_by(13))
@@ -178,8 +177,9 @@ fn hostile_input_never_panics() {
     }
 }
 
-/// Corrupt the *decompressed* heap and type table, which the test above
-/// cannot reach through the zlib checksum.
+/// Corrupt the decompressed heap and type table. The test above cannot reach
+/// them, because a changed byte of a compressed block fails the zlib
+/// checksum.
 #[test]
 fn hostile_heap_and_types_never_panic() {
     use buzzard_rsrc::blocks::heap::Heap;
@@ -316,8 +316,9 @@ fn empty_diagram_and_files_without_one() {
     assert!(BlockDiagram::from_rsrc(&file).unwrap().is_none());
 }
 
-// Hand-written expectations, independent of the snapshots. Each fixture was
-// saved from the editor with exactly the named setting changed.
+// These expectations are written by hand and do not depend on the
+// snapshots. Each fixture was saved from the editor with exactly the named
+// setting changed.
 
 #[test]
 fn baseline_vi() {
@@ -473,7 +474,7 @@ const ARCHIVES: [&str; 2] = [
     "pylabview/blank_project1_extr_from_exe_lv14f1.llb",
 ];
 
-/// What the archive reader makes of each `.llb` fixture: its members, or
+/// How the archive reader reads each `.llb` fixture: its members, or
 /// the reason it is not opened.
 #[test]
 fn archive_snapshots_match() {
@@ -501,14 +502,15 @@ fn archive_snapshots_match() {
 
 #[test]
 fn the_real_archives_are_what_they_are() {
-    // Saved by the editor with nothing in it: a directory of no entries.
+    // The first archive was saved by the editor with nothing in it, so its
+    // directory has no entries.
     let bytes = fs::read(root().join("fixtures").join(ARCHIVES[0])).unwrap();
     let llb = Llb::parse(&bytes).unwrap();
     assert_eq!(llb.members().len(), 0);
     assert_eq!(llb.unlisted(), 0);
-    // Taken out of a built application: no directory, and its files are
-    // in a zipped program tree that is not opened. That is an error, not
-    // an archive without members.
+    // The second archive was taken out of a built application. It has no
+    // directory, and its files are in a zipped program tree that is not
+    // opened. That is an error, not an archive without members.
     let bytes = fs::read(root().join("fixtures").join(ARCHIVES[1])).unwrap();
     let error = Llb::parse(&bytes).unwrap_err().to_string();
     assert!(error.contains("zipped program tree"), "{error}");
@@ -574,7 +576,7 @@ fn a_synthetic_archive_reads_back() {
 }
 
 /// An archive cut at any length, or with any one byte changed, gives an
-/// error or a value: never a panic, a hang or a huge allocation.
+/// error or a value, never a panic, a hang, or a huge allocation.
 #[test]
 fn hostile_archives_never_panic() {
     let mut archives = vec![synthetic_archive()];
@@ -606,7 +608,7 @@ fn damage_to_one_member_does_not_hide_the_others() {
     let packed = llb.read(&llb.members()[1]).unwrap();
     assert_ne!(packed.len(), 0);
     // The zlib stream of `Packed.vi` starts with its `u32` size and the
-    // two bytes 0x78 0x9c; break the stream behind them.
+    // two bytes 0x78 0x9c. The test breaks the stream behind them.
     let stream = bytes
         .windows(2)
         .position(|pair| pair == [0x78, 0x9c])
@@ -621,9 +623,10 @@ fn damage_to_one_member_does_not_hide_the_others() {
     assert_eq!(open_archive(&damaged), 5);
 }
 
-// State machine facts. The files live with the tests that use them most,
-// `crates/buzzard-lint/tests/fixtures/verify`; its README records where
-// each comes from and its licence.
+// The tests below check state machine facts. Their files are in
+// `crates/buzzard-lint/tests/fixtures/verify`, with the tests that use them
+// most. The README of that directory records the source and the license of
+// each file.
 
 fn machine_fixture(name: &str) -> Vec<u8> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -646,7 +649,7 @@ fn machine_diagram(name: &str) -> BlockDiagram {
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "one real diagram read from the loop inwards; each step uses the nodes found by the previous ones"
+    reason = "one real diagram read from the loop inwards, where each step uses the nodes found by the previous ones"
 )]
 fn diagram_of_a_state_machine() {
     use buzzard_rsrc::{SelectorKind, SelectorMatch, ShiftRegister, TunnelMode, Value};
@@ -753,7 +756,7 @@ fn diagram_of_a_state_machine() {
             name: Some("Stopped".to_owned())
         })
     );
-    // Every constant of a simple type decodes; the rest stay `None`.
+    // Every constant of a simple type decodes. The rest stay `None`.
     for terminal in bd.nodes().flat_map(|n| &n.terminals) {
         let is_constant = terminal.dco_class.as_deref() == Some("bDConstDCO");
         let simple = matches!(
@@ -805,8 +808,8 @@ fn terminals_carry_their_parameter_index() {
 
 /// Corrupt the fields the state machine decoders read: selector tables,
 /// constant values, shift register links, the loop condition, tunnel
-/// flags and parameter indices. Each is overwritten in the decoded heap,
-/// where a byte-level corruption of the file cannot aim.
+/// flags, and parameter indices. The test overwrites each in the decoded
+/// heap, because a changed byte of the file cannot target one field.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -858,7 +861,7 @@ fn hostile_state_machine_fields_never_panic() {
         seen: &mut usize,
         change: &Change,
     ) -> bool {
-        // Class 930 is a selector table entry; its fields are tags 0 to 4.
+        // Class 930 is a selector table entry. Its fields are tags 0 to 4.
         let entry = node.class() == Some(930);
         if tags.contains(&node.tag) || (in_entry && (0..5).contains(&node.tag)) {
             if *seen == target {
@@ -935,7 +938,9 @@ fn hostile_state_machine_fields_never_panic() {
             }
         }
 
-        // The decompressed heap and type table, byte by byte in samples.
+        // Change single bytes of the decompressed heap and type table, at
+        // 400 to 800 evenly spaced positions each (every byte of a buffer
+        // shorter than 800 bytes).
         for pos in (0..heap.len()).step_by((heap.len() / 400).max(1)) {
             for value in [0x00, 0x7f, 0xff] {
                 let mut copy = heap.clone();
@@ -965,9 +970,9 @@ fn hostile_state_machine_fields_never_panic() {
     }
 }
 
-// What the decoder cannot carry over. The state machine verification
-// treats a missing wire as evidence that a tunnel is unwired, which is
-// only sound when nothing was lost on the way.
+// The tests below cover what the decoder cannot carry over. The state
+// machine verification treats a missing wire as evidence that a tunnel is
+// unwired. That is sound only when the decoder lost nothing.
 
 /// The first node, depth first, that satisfies a condition.
 fn first_mut<'t, 'a>(
@@ -1076,9 +1081,9 @@ fn every_loss_of_the_decoder_is_recorded() {
     };
     assert_eq!(losses(&|_| {}), []);
 
-    // A signal the decoder cannot resolve: the wire is dropped. This is
-    // what one changed byte did to a real state machine, where the
-    // dropped wire fed the next-state tunnel.
+    // A signal that the decoder cannot resolve is a dropped wire. One
+    // changed byte has this effect on a real state machine, where the
+    // dropped wire feeds the next-state tunnel.
     assert_eq!(
         losses(&|root| dangle(&mut list_mut(root, wires).children[0])),
         [Loss::Wire]
@@ -1103,8 +1108,8 @@ fn every_loss_of_the_decoder_is_recorded() {
         ),
         [Loss::Wire]
     );
-    // A wire end that names no terminal of its diagram: the other thing
-    // one changed byte did, by renumbering the terminal of a tunnel.
+    // A wire end names no terminal of its diagram. One changed byte also
+    // has this effect, when it renumbers the terminal of a tunnel.
     assert_eq!(
         losses(&|root| {
             let ends = own_list(&mut list_mut(root, wires).children[0], terms);
@@ -1126,7 +1131,7 @@ fn every_loss_of_the_decoder_is_recorded() {
             Loss::RepeatedObject
         ]
     );
-    // Two wires into one terminal.
+    // Two wires lead into one terminal.
     assert_eq!(
         losses(&|root| {
             let list = &mut list_mut(root, wires).children;
@@ -1135,16 +1140,17 @@ fn every_loss_of_the_decoder_is_recorded() {
         }),
         [Loss::WireConflict]
     );
-    // A whole signal list out of sight behind a damaged field tag: no
-    // element fails to resolve, but the signals are not accounted for,
-    // and the tag is not one an object has.
+    // A damaged field tag hides a whole signal list. No element fails to
+    // resolve, but the signals are not accounted for, and the tag is not
+    // one an object has.
     assert_eq!(
         losses(&|root| list_mut(root, wires).tag = NO_FIELD),
         [Loss::Wire, Loss::Field]
     );
 
-    // An element gone from a list that still states its old length: the
-    // heap no longer holds the object at all, so only the length tells.
+    // An element is gone from a list that still states its old length. The
+    // heap no longer holds the object at all, so only the length shows
+    // the loss.
     assert_eq!(
         losses(&|root| drop(list_mut(root, wires).children.pop())),
         [Loss::Wire]
@@ -1187,10 +1193,10 @@ fn every_loss_of_the_decoder_is_recorded() {
 
     // A heap whose byte stream is irregular. One changed byte can make
     // the count of a node's attributes larger, and the entries that
-    // follow are then read as attributes: the tree is whole, the nodes
-    // are gone, and nothing in the tree tells. Here the first list
-    // element with a class and an id (`10 19 02 fe`: open, two
-    // attributes, the first of them the class) gets a count of 18.
+    // follow are then read as attributes. Every node of the tree is
+    // closed, the nodes are gone, and nothing in the tree shows it. Here
+    // the first list element with a class and an id (`10 19 02 fe`: open,
+    // two attributes, the first of them the class) gets a count of 18.
     let streamed = |change: &dyn Fn(&mut Vec<u8>)| -> Vec<Loss> {
         let mut copy = heap.clone();
         change(&mut copy);
@@ -1212,7 +1218,8 @@ fn every_loss_of_the_decoder_is_recorded() {
         .unwrap();
     let found = streamed(&|bytes| bytes[element + 2] = 0x12);
     assert!(found.contains(&Loss::Stream), "{found:?}");
-    // A node the decoder cannot resolve takes its terminals with it.
+    // When the decoder cannot resolve a node, the node's terminals are
+    // lost too.
     let found = losses(&|root| dangle(&mut list_mut(root, nodes).children[1]));
     assert!(found.contains(&Loss::Node), "{found:?}");
     assert!(found.contains(&Loss::Terminal), "{found:?}");
@@ -1222,12 +1229,13 @@ fn every_loss_of_the_decoder_is_recorded() {
         list.push(list[1].clone());
     });
     assert!(found.contains(&Loss::RepeatedNode), "{found:?}");
-    // A node list out of sight: its terminals are not accounted for.
+    // A damaged tag hides a node list, and its terminals are not
+    // accounted for.
     let found = losses(&|root| list_mut(root, nodes).tag = NO_FIELD);
     assert!(found.contains(&Loss::Terminal), "{found:?}");
 
     // A terminal the decoder cannot resolve, one without an id, one
-    // listed twice and something that is not a terminal. The first node
+    // listed twice, and something that is not a terminal. The first node
     // of a diagram defines its terminals in its own list.
     let found = losses(&|root| {
         dangle(&mut own_list(&mut list_mut(root, nodes).children[0], terms)[0]);
@@ -1252,8 +1260,8 @@ fn every_loss_of_the_decoder_is_recorded() {
     });
     assert!(found.contains(&Loss::Terminal), "{found:?}");
 
-    // A frame of a structure that the decoder cannot resolve, the frames
-    // of a structure out of sight, and a frame listed twice.
+    // A frame of a structure that the decoder cannot resolve, a frame list
+    // hidden by a damaged tag, and a frame listed twice.
     let found = losses(&|root| dangle(&mut list_mut(root, frames).children[1]));
     assert!(found.contains(&Loss::Frame), "{found:?}");
     let found = losses(&|root| list_mut(root, frames).tag = NO_FIELD);
@@ -1306,7 +1314,7 @@ fn a_selector_table_that_is_not_whole_is_absent() {
         Some("SMOState --Enum.ctl")
     );
 
-    // An entry that lost its frame index must not read as frame 0: that
+    // An entry that lost its frame index must not read as frame 0. That
     // would move its value to another case and leave its own frame
     // without any. The table is refused.
     assert_eq!(
@@ -1363,8 +1371,8 @@ fn a_selector_table_that_is_not_whole_is_absent() {
     });
     let doubled = doubled.unwrap();
     assert_eq!(doubled.frames.iter().map(Vec::len).sum::<usize>(), 3);
-    // But not when the list holds another number of entries than it
-    // states: an entry was lost or made up on the way.
+    // The table is refused when the list holds another number of entries
+    // than it states, because an entry was lost or added.
     assert_eq!(
         selector(&|entries| {
             let again = entries.children[0].clone();

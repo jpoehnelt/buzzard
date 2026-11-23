@@ -12,7 +12,7 @@ pub(crate) mod sha256;
 use buzzard_tdms::build::{Built, FileBuilder, Object, ScalerSpec, Values};
 use buzzard_tdms::{Complex32, Complex64, DataType, PropertyValue, TdmsFile, Timestamp};
 
-/// Every fixed-size type a channel can have, and strings.
+/// Every fixed-size type a channel can have.
 pub(crate) const FIXED: [DataType; 14] = [
     DataType::I8,
     DataType::I16,
@@ -72,7 +72,8 @@ pub(crate) struct Shape {
     pub(crate) padding: usize,
 }
 
-/// Every combination; strings only where the format allows them.
+/// Every combination of the choices. A string channel is never interleaved,
+/// because the format does not allow that.
 pub(crate) fn shapes() -> Vec<Shape> {
     let mut out = Vec::new();
     for dtype in FIXED.into_iter().chain([DataType::String]) {
@@ -154,8 +155,8 @@ pub(crate) fn scenario(shape: Shape) -> Built {
     let segment = builder.segment();
     set(segment);
     let mut root = Object::root();
-    // Complex properties are left to a test of their own: the oracle
-    // refuses a file that has one.
+    // Complex properties have a test of their own, because npTDMS refuses a
+    // file that has one.
     for (name, value) in every_property() {
         if !matches!(
             value,
@@ -225,7 +226,7 @@ pub(crate) fn scenario(shape: Shape) -> Built {
     builder.build()
 }
 
-/// The properties of a linear scale: scale `number` is `slope * x +
+/// The properties of a linear scale. Scale `number` is `slope * x +
 /// intercept` of scale (or scaler) `source`.
 fn linear(object: Object, number: u32, slope: f64, intercept: f64, source: u32) -> Object {
     object
@@ -257,7 +258,7 @@ fn unscaled(object: Object, scales: u32) -> Object {
 }
 
 /// A file with channels in a driver's raw buffers: two buffers, a channel
-/// with one scaler, a channel with two, a typed channel and a channel with
+/// with one scaler, a channel with two, a typed channel, and a channel with
 /// a chain of two linear scales, followed by a segment without metadata.
 /// Every channel of the raw type has scaling properties, as in files
 /// written by acquisition drivers.
@@ -346,7 +347,7 @@ pub(crate) fn bit_pattern(salt: u64, n: usize) -> Vec<u8> {
 
 /// A file with digital lines: all sixteen lines of one two-byte port, typed
 /// as acquisition drivers write them. Every line has a pattern of its own,
-/// so a reader that lets a neighbouring bit through reads a wrong value.
+/// so a reader that takes the bit of a neighboring line reads a wrong value.
 pub(crate) fn digital_scenario() -> Built {
     let mut builder = FileBuilder::new();
     let segment = builder.segment().daqmx_widths(&[2]);
@@ -428,7 +429,7 @@ pub(crate) fn feature_cases() -> Vec<(&'static str, Built)> {
     };
 
     // The interleaved flag on a segment of a single string channel means
-    // nothing; in a big-endian segment the offsets are big-endian.
+    // nothing. In a big-endian segment the string offsets are big-endian.
     case("be_interleaved_single_string", &|b| {
         b.segment()
             .big_endian(true)
@@ -546,8 +547,8 @@ pub(crate) fn feature_cases() -> Vec<(&'static str, Built)> {
                 .no_metadata();
         });
     }
-    // In version 2.0 of the format a `name` property renames the object;
-    // this reader keeps the path and the property (see the README).
+    // In version 2.0 of the format a `name` property renames the object.
+    // This reader keeps the path and the property (see the README).
     case("name_property", &|b| {
         b.segment().object(channel("a").generated(DataType::I32, 2));
         b.segment().object(
@@ -567,7 +568,8 @@ pub(crate) fn feature_cases() -> Vec<(&'static str, Built)> {
     });
     // An object that a new object list dropped joins the list again with
     // the "same as before" marker, and another with an index equal to its
-    // last one: neither is news about the object, both change the list.
+    // last one. Neither entry says anything new about the object, and both
+    // add it to the list.
     case("dropped_objects_return_to_a_used_list", &|b| {
         b.segment()
             .object(channel("a").generated(DataType::I32, 4))
@@ -605,9 +607,9 @@ pub(crate) fn feature_cases() -> Vec<(&'static str, Built)> {
 }
 
 /// A file with two driver channels: `a` (16-bit) and `b` (32-bit). With
-/// one width they share a raw buffer; with two, `a` is in the first and
-/// `b` in the second. Four values of each, and then `tail` to add
-/// segments.
+/// one width they share a raw buffer. With two widths, `a` is in the first
+/// buffer and `b` in the second. Each channel has four values, and `tail`
+/// adds segments after them.
 pub(crate) fn two_driver_channels(widths: &[u32], tail: &dyn Fn(&mut FileBuilder)) -> Built {
     use buzzard_tdms::build::generate;
     let scaler = |dtype, seed, buffer, offset| ScalerSpec {
@@ -648,8 +650,8 @@ pub(crate) fn after_nth(bytes: &[u8], needle: &[u8], nth: usize) -> usize {
 }
 
 /// A file whose driver channel `a` declares other scalers in its second
-/// segment than in its first: `more` adds a scaler, `type` changes the
-/// scaler's type, `id` changes its number.
+/// segment than in its first. `more` adds a scaler, `type` changes the
+/// scaler's type, and `id` changes its number.
 pub(crate) fn scalers_change(how: &str) -> Built {
     let scaler = |values, offset, scale_id| ScalerSpec {
         values,
@@ -675,8 +677,8 @@ pub(crate) fn scalers_change(how: &str) -> Built {
         .object(Object::channel("g", "a").daqmx(true, false, second));
     let mut built = builder.build();
     if how == "type" {
-        // After the path: the marker, the channel's type, the dimension,
-        // the count (8 bytes), the number of scalers, the scaler's type.
+        // After the path come the marker, the channel's type, the dimension,
+        // the count (8 bytes), the number of scalers, and the scaler's type.
         for bytes in [&mut built.bytes, &mut built.index_bytes] {
             let at = after_nth(bytes, b"/'g'/'a'", 1) + 24;
             bytes[at..at + 4].copy_from_slice(&5u32.to_le_bytes());

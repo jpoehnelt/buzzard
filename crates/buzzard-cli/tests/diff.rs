@@ -60,7 +60,7 @@ fn exit_status_follows_diff() {
         (1, ADD_TO_EMPTY, "")
     );
 
-    // Not an RSRC file, on either side.
+    // A file that is not an RSRC file is an error on either side.
     let readme = fixtures().join("../README.md");
     let readme = readme.to_string_lossy();
     for args in [
@@ -203,7 +203,7 @@ fn formats_carry_the_same_report() {
     let value: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(value["identical"], true);
 
-    // Byte-identical on every run.
+    // The output is byte-identical on every run.
     for format in ["text", "markdown", "json"] {
         let args = [
             "diff",
@@ -257,7 +257,7 @@ fn git_calling_convention_always_exits_zero() {
         "{stdout}"
     );
 
-    // An added file: git passes /dev/null and a mode of ".".
+    // For an added file, git passes /dev/null and a mode of ".".
     let (code, stdout, _) = run(&[
         "diff",
         "--git",
@@ -370,10 +370,10 @@ fn git_diff_runs_the_external_driver() {
     let dir = repository("diff-git-driver");
     let driver = format!("diff.buzzard.command={} diff --git", quoted_bin());
 
-    // Unchanged: git does not call the driver at all.
+    // For an unchanged file, git does not call the driver.
     assert_eq!(git_ok(&dir.0, &["-c", &driver, "diff"]), "");
 
-    // Modified in the working tree.
+    // The file is modified in the working tree.
     fs::copy(pylavi("empty.vi"), dir.0.join("Main.vi")).unwrap();
     assert_eq!(
         git_ok(&dir.0, &["-c", &driver, "diff"]),
@@ -390,7 +390,7 @@ fn git_diff_runs_the_external_driver() {
         "{out}"
     );
 
-    // A new file and a deleted file, staged.
+    // A new file and a deleted file are staged.
     fs::copy(pylavi("empty.vi"), dir.0.join("New.vi")).unwrap();
     fs::remove_file(dir.0.join("Main.vi")).unwrap();
     git_ok(&dir.0, &["add", "-A"]);
@@ -410,7 +410,7 @@ fn git_diff_runs_the_external_driver() {
          added: diagram boundary #7\n"
     );
 
-    // History: `git log -p` and `git show` need --ext-diff.
+    // For history, `git log -p` and `git show` need --ext-diff.
     git_ok(&dir.0, &["commit", "-q", "-m", "second"]);
     let shown = git_ok(
         &dir.0,
@@ -429,7 +429,8 @@ fn git_diff_runs_the_external_driver() {
         "{shown}"
     );
 
-    // A file git tracks as a VI but that is not one does not break git.
+    // A file that git tracks as a VI but that is not one does not make git
+    // fail.
     fs::write(dir.0.join("New.vi"), "not a resource file\n").unwrap();
     let (code, out, stderr) = git(&dir.0, &["-c", &driver, "diff"]);
     assert_eq!(code, 0, "{stderr}");

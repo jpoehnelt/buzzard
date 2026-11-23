@@ -1,8 +1,8 @@
 //! Static analysis rules and the workspace dependency graph.
 //!
-//! Everything here is deterministic: files are kept in path order and every
-//! result list is sorted, so two runs over the same tree give identical
-//! output regardless of thread scheduling.
+//! The crate keeps files in path order and sorts every result list, so two
+//! runs over the same tree give identical output whatever the thread
+//! scheduling.
 
 pub mod archive;
 pub mod dataflow;

@@ -1,11 +1,11 @@
 //! The one place where the analyzed state changes.
 //!
-//! Every mutation (the initial scan, file-watcher batches and
+//! Every mutation (the initial scan, file-watcher batches, and
 //! `workspace/didChangeWatchedFiles`) is queued as a [`Job`] and handled by
-//! a single task, one job after the other: read the files, apply the
-//! result, publish the diagnostics. Nothing else writes the state or
-//! publishes, so both are totally ordered and the last thing a client sees
-//! for a file is the newest.
+//! a single task, one job after the other. For each job the task reads the
+//! files, applies the result, and publishes the diagnostics. Nothing else
+//! writes the state or publishes, so both are totally ordered and the last
+//! thing a client sees for a file is the newest.
 //!
 //! Requests never wait for that task. They read an immutable [`Snapshot`]
 //! that is swapped in when a job has finished computing the next one.
@@ -40,7 +40,8 @@ const RETRY_DELAYS: [Duration; 3] = [
     Duration::from_millis(240),
 ];
 
-/// A file modified longer ago than this is at rest: a failure is final.
+/// A file modified longer ago than this is at rest, and a failure to parse
+/// it is final.
 const SETTLED_AFTER: Duration = Duration::from_secs(2);
 
 /// Below this many files, reading them on one thread is quicker.
@@ -58,7 +59,7 @@ type Signature = Option<(SystemTime, u64)>;
 pub(crate) enum Job {
     /// The workspace folders named by `initialize`.
     Roots(Vec<PathBuf>),
-    /// The client is ready: read every root, unless that was done already.
+    /// The client is ready. Read every root, unless that was done already.
     Scan,
     /// Read every root from scratch again.
     Rescan,
@@ -85,7 +86,7 @@ struct Core {
     signatures: BTreeMap<PathBuf, Signature>,
 }
 
-/// The analyzed state: written by the worker, read by request handlers.
+/// The analyzed state. The worker writes it, and request handlers read it.
 pub(crate) struct State {
     core: Mutex<Core>,
     view: RwLock<Arc<Snapshot>>,
@@ -100,7 +101,7 @@ fn signature(path: &Path) -> Signature {
 /// True if the file may still be in the middle of being written.
 fn is_unsettled(signature: &Signature) -> bool {
     match signature {
-        // Gone or unreadable: the next look decides what it is.
+        // The file is gone or unreadable. The next read decides what it is.
         None => true,
         // A time in the future (clock skew) counts as recent.
         Some((modified, _)) => SystemTime::now()
@@ -122,14 +123,14 @@ impl State {
         }
     }
 
-    /// Only the worker takes this lock; a panic while it was held must not
-    /// take the server down with it.
+    /// Only the worker takes this lock. A poisoned lock is used all the
+    /// same, so that a panic while it was held does not end the server.
     fn core(&self) -> MutexGuard<'_, Core> {
         self.core.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The current state. Never waits for a scan: the lock is only held
-    /// while a pointer is copied or swapped.
+    /// The current state. This never waits for a scan, because the lock is
+    /// held only while a pointer is copied or swapped.
     pub(crate) fn view(&self) -> Arc<Snapshot> {
         self.view
             .read()
@@ -152,7 +153,7 @@ impl State {
         self.core().engine.roots().to_vec()
     }
 
-    /// Read every root from scratch. Blocking.
+    /// Read every root from scratch. This call blocks.
     pub(crate) fn scan(&self) -> Vec<Update> {
         let mut core = self.core();
         core.roots = Roots::new(core.engine.roots());
@@ -167,26 +168,27 @@ impl State {
     }
 
     /// Bring the state in line with the disk for every path in `batch`.
-    /// Blocking; `runtime` drives the inspector backend.
+    /// This call blocks, and `runtime` drives the inspector backend.
     ///
-    /// A path is taken for what a fresh scan would make of it now, whatever
-    /// the event said: a directory stands for everything below it, and a
-    /// path that discovery would skip (hidden, behind a symbolic link,
+    /// A path is treated as a fresh scan would treat it now, whatever the
+    /// event said. A directory stands for everything below it, and a path
+    /// that discovery would skip (hidden, behind a symbolic link, or
     /// outside the roots) is not in the workspace.
     pub(crate) fn process(&self, runtime: &Handle, batch: Batch) -> Outcome {
         let mut core = self.core();
         let before = core.engine.snapshot();
 
         // Every path whose state may have changed. `Some(attempt)` forces a
-        // read; `None` reads only if the file is new or looks different.
+        // read. `None` reads only if the file is new or its signature
+        // changed.
         let mut candidates: BTreeMap<PathBuf, Option<usize>> = BTreeMap::new();
         for (raw, attempt) in batch {
             let Some(path) = core.roots.localize(&raw) else {
                 continue;
             };
             for below in before.paths_under(&path) {
-                // A member of an archive is not on disk: it comes and goes
-                // with its archive, which is a candidate itself.
+                // A member of an archive is not on disk. It appears and
+                // disappears with its archive, which is a candidate itself.
                 if !before.is_member(&below) {
                     candidates.entry(below).or_insert(None);
                 }
@@ -245,12 +247,13 @@ impl State {
 type Read = (PathBuf, usize, Signature, Vec<(PathBuf, FileState)>);
 
 fn read_one(runtime: &Handle, inspector: &dyn ViInspector, path: PathBuf, attempt: usize) -> Read {
-    // Taken before reading: if the file changes meanwhile, the signature is
-    // stale and the file is read again rather than trusted.
+    // The signature is taken before the read. If the file changes during
+    // the read, the signature is stale, so a later event reads the file
+    // again.
     let signature = signature(&path);
     let states = if is_project_file(&path) || is_archive(&path) {
-        // Project-level XML and archives are always read from disk; the
-        // inspector backend only knows binary files.
+        // Project-level XML and archives are always read from disk here,
+        // because the inspector backend handles only binary files.
         FileState::load_all(&path)
     } else {
         let state = FileState::from_inspection(runtime.block_on(inspector.inspect(&path)));
@@ -286,7 +289,7 @@ fn read_all(
                 })
             })
             .collect();
-        // A reader that panicked contributes nothing; its files keep their
+        // A reader that panicked contributes nothing. Its files keep their
         // previous state.
         handles
             .into_iter()
@@ -296,7 +299,7 @@ fn read_all(
 }
 
 /// Where the worker sends diagnostics. The server publishes them to the
-/// client; tests record them.
+/// client, and tests record them.
 #[tower_lsp::async_trait]
 pub(crate) trait Publisher: Send + Sync {
     async fn publish(&self, updates: Vec<Update>);
@@ -307,7 +310,8 @@ fn start_watcher(roots: &[PathBuf], jobs: &UnboundedSender<Job>) -> Option<Watch
     let mut debouncer = new_debouncer(DEBOUNCE, move |result: DebounceEventResult| {
         let _ = jobs.send(match result {
             Ok(events) => Job::Paths(events.into_iter().map(|e| e.path).collect()),
-            // Events were lost (for example a queue overflow): start over.
+            // Events were lost, for example because a queue overflowed, so
+            // scan again.
             Err(_) => Job::Rescan,
         });
     })
@@ -318,8 +322,8 @@ fn start_watcher(roots: &[PathBuf], jobs: &UnboundedSender<Job>) -> Option<Watch
     Some(debouncer)
 }
 
-/// Everything queued at one moment, merged: one pass over the disk serves
-/// any number of events.
+/// Everything queued at one moment, merged, so that one pass over the disk
+/// serves any number of events.
 #[derive(Default)]
 struct Pending {
     roots: Option<Vec<PathBuf>>,
@@ -379,8 +383,8 @@ pub(crate) async fn run(
             watcher = None;
         }
         // `initialized` may be seen before `initialize` has delivered the
-        // roots; the scan then waits for them. It is asked for more than
-        // once (see `server::Handshake`) and done once.
+        // roots. The scan then waits for them. A scan is asked for more
+        // than once (see `server::Handshake`) and done once.
         want_scan |= (pending.scan && !scanned) || (pending.rescan && scanned);
         if want_scan && have_roots {
             want_scan = false;

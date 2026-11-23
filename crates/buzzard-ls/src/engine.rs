@@ -1,4 +1,4 @@
-//! Protocol-independent analysis state behind the language server.
+//! The analysis state of the language server, independent of the protocol.
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -28,7 +28,7 @@ pub enum SymbolKind {
     Project,
 }
 
-/// One result of a workspace symbol search: a file.
+/// One result of a workspace symbol search. Every result is a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Symbol {
     /// File name, which is what the query is matched against.
@@ -37,18 +37,18 @@ pub struct Symbol {
     pub kind: SymbolKind,
     /// Path of the file, as the workspace stores it. For a member of an
     /// `.llb` archive this is the path of the archive followed by the
-    /// member's name, which is not a file an editor can open; see
+    /// member's name, which is not a file an editor can open. See
     /// [`Snapshot::document`].
     pub path: PathBuf,
 }
 
-/// Diagnostics to publish for one file; an empty list clears them.
+/// Diagnostics to publish for one file. An empty list clears them.
 ///
 /// The path is always a file on disk. The findings about the members of
 /// an `.llb` archive are published for the archive, each with the
 /// member's name at the start of its message
-/// ([`Diagnostic::on_disk`]): an editor cannot open a member, and would
-/// show diagnostics for a document it cannot open nowhere.
+/// ([`Diagnostic::on_disk`]). An editor cannot open a member, so it would
+/// show the diagnostics of a member nowhere.
 pub type Update = (PathBuf, Vec<Diagnostic>);
 
 /// An immutable view of the analyzed workspace. Readers (hover, references,
@@ -79,7 +79,7 @@ impl std::ops::Deref for Engine {
 }
 
 impl Engine {
-    /// An engine for `roots` that has not scanned anything yet; see
+    /// An engine for `roots` that has not scanned anything yet. See
     /// [`Engine::scan`].
     pub fn new(roots: Vec<PathBuf>, config: LintConfig) -> Self {
         Self {
@@ -109,15 +109,16 @@ impl Engine {
         is_analyzable(path)
     }
 
-    /// Record freshly loaded states for changed files (`None` = deleted) and
-    /// return only the diagnostics that differ from what was last published.
-    /// Project-level XML files are handled like any other file: pass the
-    /// state from [`FileState::load`]. For an `.llb` archive pass every
-    /// entry of [`FileState::load_all`], the archive first: storing an
-    /// archive drops the members it had before, and so does deleting it.
+    /// Record freshly loaded states for changed files and return only the
+    /// diagnostics that differ from what was last published. A state of
+    /// `None` means that the file was deleted. For a project-level XML file,
+    /// pass the state from [`FileState::load`], as for any other file. For
+    /// an `.llb` archive, pass every entry of [`FileState::load_all`], the
+    /// archive first, because storing an archive drops the members it had
+    /// before. Deleting an archive drops them too.
     ///
     /// The next state is built beside the current one and swapped in at the
-    /// end; snapshots handed out earlier are not affected.
+    /// end. Snapshots handed out earlier are not affected.
     pub fn apply(&mut self, changes: Vec<(PathBuf, Option<FileState>)>) -> Vec<Update> {
         let mut workspace = self.snapshot.workspace.clone();
         for (path, state) in changes {
@@ -177,7 +178,7 @@ impl Snapshot {
     pub fn paths_under(&self, dir: &Path) -> Vec<PathBuf> {
         let dir = normalize(dir);
         // Paths order by component, so everything below `dir` sits in one
-        // run right after it: no need to look at the whole workspace.
+        // run right after it. The rest of the workspace is not searched.
         let after = (Bound::Excluded(dir.as_path()), Bound::Unbounded);
         self.workspace
             .files()
@@ -209,7 +210,7 @@ impl Snapshot {
         self.workspace.get(path)?.metadata()
     }
 
-    /// The parsed project, library or class at `path`.
+    /// The parsed project, library, or class at `path`.
     pub fn project(&self, path: &Path) -> Option<&ProjectFile> {
         self.workspace.get(path)?.project()
     }
@@ -219,7 +220,7 @@ impl Snapshot {
         to_owned(self.graph.members(path))
     }
 
-    /// Projects, libraries and classes that list `path` as a member.
+    /// Projects, libraries, and classes that list `path` as a member.
     pub fn owners(&self, path: &Path) -> Vec<PathBuf> {
         to_owned(self.graph.owners(path))
     }
@@ -271,7 +272,8 @@ impl Snapshot {
         }
     }
 
-    /// Fuzzy symbol search, best match first, ties broken by name then path.
+    /// A fuzzy search for symbols. The best match comes first, and ties are
+    /// ordered by name, then path.
     pub fn symbols(&self, query: &str, limit: usize) -> Vec<Symbol> {
         let files = self.workspace.files().iter().map(|(path, state)| {
             // A project file that failed to parse is still a project file.

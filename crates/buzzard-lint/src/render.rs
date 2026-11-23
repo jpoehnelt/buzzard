@@ -3,7 +3,7 @@
 //! * [`to_svg`] places every node where the editor drew it, using the
 //!   positions stored in the file. Wires are drawn as simple elbows between
 //!   their end points, not along their original routes, and built-in
-//!   functions are labelled boxes because their icons are not in the file.
+//!   functions are labeled boxes because their icons are not in the file.
 //!   The label is the function's name where the vendored table has it.
 //! * [`to_dot`] and [`to_mermaid`] emit the graph for tools that do their
 //!   own layout (Graphviz, Mermaid).
@@ -55,7 +55,7 @@ fn type_label(data_type: Option<DataType>) -> String {
     }
 }
 
-/// Wire colour, loosely following the editor's conventions.
+/// Wire color, loosely following the editor's conventions.
 fn colour(data_type: Option<DataType>) -> &'static str {
     match data_type {
         Some(DataType::Numeric) => "#d9761a",
@@ -72,7 +72,8 @@ fn colour(data_type: Option<DataType>) -> &'static str {
 }
 
 /// Name of a structure's frame: its number and, for a case structure
-/// with a decoded selector, the case label, e.g. `frame 2: "Idle", Default`.
+/// with a decoded selector, the case label, for example
+/// `frame 2: "Idle", Default`.
 pub fn frame_title(node: &Node, index: usize) -> String {
     let label = node
         .selector
@@ -146,8 +147,8 @@ fn anchor(node: &Node, terminal: &Terminal, origin: Point) -> Option<Point> {
     let (left, right) = (i32::from(b.left), i32::from(b.right));
     let middle = i32::midpoint(i32::from(b.top), i32::from(b.bottom));
     if node.class == "sRN" {
-        // A front-panel terminal is its own box: leave from the right, enter
-        // on the left.
+        // A front-panel terminal is its own box. A wire leaves it on the
+        // right and enters it on the left.
         let x = if terminal.direction == Direction::Output {
             right
         } else {
@@ -184,7 +185,8 @@ fn draw_panels(diagram: &BlockDiagram) -> Vec<(String, Canvas)> {
                 r#"<rect x="0" y="0" width="{w}" height="{h}" class="structure"/>"#
             );
         }
-        // Explicit stack: a structure's first frame is drawn inside it.
+        // An explicit stack. A structure's first frame is drawn inside the
+        // structure.
         let mut stack: Vec<(&Diagram, Point, HashMap<i32, Point>)> = vec![(
             queue[next].diagram,
             (0, 0),
@@ -318,7 +320,7 @@ fn draw_node(
         }
     }
     if node.class == "sRN" {
-        // The boundary itself has no shape; its front-panel terminals do.
+        // The boundary itself has no shape, but its front-panel terminals do.
         for terminal in &node.terminals {
             let Some(b) = terminal.bounds else { continue };
             let (x, y) = (origin.0 + i32::from(b.left), origin.1 + i32::from(b.top));
@@ -438,7 +440,7 @@ fn edges(diagram: &BlockDiagram) -> BTreeSet<(i32, i32, String)> {
 }
 
 /// Walk the diagram as nested groups: a structure and each of its frames
-/// open and close a group; every node is visited once, in a stable order.
+/// open and close a group. Every node is visited once, in a stable order.
 fn walk<'a>(diagram: &'a BlockDiagram, mut visit: impl FnMut(Step<'a>)) {
     enum Todo<'a> {
         Node(&'a Node),
@@ -474,7 +476,8 @@ enum Step<'a> {
 }
 
 /// Render the diagram as a Graphviz `digraph`. Structures and their frames
-/// become nested clusters; a structure's own node stands for its tunnels.
+/// become nested clusters, and a structure's own node stands for its
+/// tunnels.
 pub fn to_dot(diagram: &BlockDiagram) -> String {
     let quote = |text: &str| text.replace('\\', "\\\\").replace('"', "\\\"");
     let mut out = String::from(
@@ -749,7 +752,8 @@ mod tests {
         for (index, (_, entry)) in names.iter().enumerate() {
             let (uid, name) = (index + 10, entry.name);
             let escaped = name.replace('&', "&amp;");
-            // The box shows a long name cut short; the tooltip has all of it.
+            // The box shows a long name cut short, and the tooltip has all of
+            // it.
             let shown = shorten(name, 34).replace('&', "&amp;");
             assert!(svg.contains(&format!(">{shown}</text>")), "{name}");
             assert!(svg.contains(&format!(
@@ -759,7 +763,7 @@ mod tests {
             assert!(mermaid.contains(&format!("n{uid}[\"{name} #{uid}\"]")));
             assert!(markdown.contains(&format!("- built-in function `{name}` #{uid}\n")));
         }
-        // Nothing in a name opened a tag, an entity or a second line.
+        // Nothing in a name opened a tag, an entity, or a second line.
         assert!(!svg.contains("&amp;amp;"));
         assert_eq!(svg.matches("<text ").count(), names.len());
         for piece in svg.split('&').skip(1) {

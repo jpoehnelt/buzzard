@@ -6,40 +6,44 @@
 //!
 //! ```text
 //! ADir resource (one, the directory)
-//!   u32            0 in every sample; meaning unknown
+//!   u32            0 in every sample, meaning unknown
 //!   "adir"
 //!   u32            directory version, 2
-//!   u32, u32       0 in every sample; meaning unknown
+//!   u32, u32       0 in every sample, meaning unknown
 //!   u32            member count
 //!   per member:
 //!     u32          id: the resource id of the member's content
-//!     fourcc       file type of the member, e.g. LVIN or LVCC
+//!     fourcc       file type of the member, such as LVIN or LVCC
 //!     u32          version that saved the member, packed as in `vers`
 //!     20 bytes     not read: a flags word (0x10 on the members the editor
 //!                  shows as top level), eight bytes that are 0 in every
 //!                  sample, and what looks like a time stamp
-//!     pstr         file name, padded to a multiple of 4 bytes; the
+//!     pstr         file name, padded to a multiple of 4 bytes. The
 //!                  padding is not always zero and is not read
 //! UCRF resource    a member's file, stored as it is
 //! ZCRF resource    a member's file: u32 size, then a zlib stream
 //! CPRF resource    a member's file: u32 size, then one mask byte for
-//!                  every 8 bytes of the file (bit n set: byte n is in the
-//!                  stream; clear: it is zero), then the non-zero bytes
+//!                  every 8 bytes of the file (a set bit n means that byte
+//!                  n is in the stream, a clear bit that it is zero), then
+//!                  the non-zero bytes
 //! ```
 //!
 //! A content resource has the id of its directory entry and carries the
 //! member's name as its resource name. The archive's other resources
 //! (`PALM`, `PLM2`, `CPST`, icons, `STR#`, `CONP`) describe palettes and
-//! are not read here. `CPRF` is what LabVIEW 5 and 7 wrote; every archive
+//! are not read here. `CPRF` is what LabVIEW 5 and 7 wrote. Every archive
 //! seen from LabVIEW 8 on stores its members as `UCRF`.
 //!
-//! Everything in an archive is untrusted. The member count is checked
-//! against the bytes the directory has, the size a compressed member
-//! declares is checked against [`MAX_MEMBER_BYTES`] and against what its
-//! stream could hold before anything is inflated, two content resources
-//! may not share bytes of the file (so that what all members inflate to
-//! is bounded by the size of the archive), and an archive inside an
-//! archive is a member like any other: it is never opened.
+//! Everything in an archive is untrusted:
+//!
+//! - The member count is checked against the bytes the directory has.
+//! - The size a compressed member declares is checked against
+//!   [`MAX_MEMBER_BYTES`] and against what its stream could hold, before
+//!   anything is inflated.
+//! - Two content resources may not share bytes of the file, so the size of
+//!   the archive bounds what all members inflate to.
+//! - An archive inside an archive is a member like any other and is never
+//!   opened.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -81,7 +85,8 @@ pub enum Storage {
     /// As a zlib stream behind its inflated size (`ZCRF`).
     Zlib,
     /// With its zero bytes left out, behind its size and a mask that
-    /// says where they were (`CPRF`): the compression older than zlib.
+    /// says where they were (`CPRF`). This is the compression older than
+    /// zlib.
     Legacy,
 }
 
@@ -109,16 +114,16 @@ impl Storage {
 pub struct LlbMember {
     /// File name as the directory stores it. It is text of the saving
     /// machine's code page, shown one character per byte when it is not
-    /// UTF-8. It is data, not a path: it may hold separators or be `..`.
+    /// UTF-8. It is data, not a path, and may hold separators or be `..`.
     pub name: String,
     /// Id of the entry and of its content resource.
     pub id: i32,
-    /// File type code of the member, e.g. `LVIN`.
+    /// File type code of the member, such as `LVIN`.
     pub file_type: FourCc,
     /// What the member is, decided by [`file_type`](Self::file_type).
     pub kind: FileKind,
     /// Version of the editor that saved the member, as the directory
-    /// states it; `None` when the field is zero.
+    /// states it, or `None` when the field is zero.
     pub version: Option<Version>,
     /// How the member's file is stored.
     pub storage: Storage,
@@ -146,7 +151,8 @@ impl<'a> Llb<'a> {
     ///
     /// # Errors
     ///
-    /// Any error of [`RsrcFile::parse`] or [`from_rsrc`](Self::from_rsrc).
+    /// Returns any error of [`RsrcFile::parse`] or
+    /// [`from_rsrc`](Self::from_rsrc).
     pub fn parse(bytes: &'a [u8]) -> Result<Self> {
         Self::from_rsrc(&RsrcFile::parse(bytes)?)
     }
@@ -155,13 +161,13 @@ impl<'a> Llb<'a> {
     ///
     /// # Errors
     ///
-    /// [`RsrcError::MalformedBlock`] if the container is not an archive
-    /// (its file type is not `LVAR`), has no `ADir` directory or more than
-    /// one, the directory has another version or layout than the one
-    /// described in the [module documentation](self), an entry has no
-    /// content resource, two entries or two content resources share an
-    /// id, or two content resources share bytes of the file;
-    /// [`RsrcError::OutOfBounds`] if the directory is shorter than its
+    /// Returns [`RsrcError::MalformedBlock`] when the container is not an
+    /// archive (its file type is not `LVAR`), has no `ADir` directory or more
+    /// than one, the directory has another version or layout than the one
+    /// described in the [module documentation](self), an entry has no content
+    /// resource, two entries or two content resources share an id, or two
+    /// content resources share bytes of the file. Returns
+    /// [`RsrcError::OutOfBounds`] when the directory is shorter than its
     /// member count needs.
     pub fn from_rsrc(file: &RsrcFile<'a>) -> Result<Self> {
         if file.file_type() != file_type::LIBRARY {
@@ -285,11 +291,11 @@ impl<'a> Llb<'a> {
     ///
     /// # Errors
     ///
-    /// [`RsrcError::MalformedBlock`] if `member` is not an entry of this
-    /// archive, its file is over [`MAX_MEMBER_BYTES`] or declares to be,
+    /// Returns [`RsrcError::MalformedBlock`] when `member` is not an entry of
+    /// this archive, its file is over [`MAX_MEMBER_BYTES`] or declares to be,
     /// it declares more bytes than its stream could hold, or the stream
-    /// holds another number of bytes than declared;
-    /// [`RsrcError::Decompress`] if the zlib stream is corrupt.
+    /// holds another number of bytes than declared.
+    /// Returns [`RsrcError::Decompress`] when the zlib stream is corrupt.
     pub fn read(&self, member: &LlbMember) -> Result<Vec<u8>> {
         self.read_within(member, MAX_MEMBER_BYTES as u64)
     }
@@ -318,8 +324,8 @@ impl<'a> Llb<'a> {
 
 /// Whether a container is an archive without a directory of members: the
 /// zipped program tree (`LVzp`) that the application builder writes in
-/// place of one. [`Llb::from_rsrc`] refuses such a file; it is still a
-/// resource file like any other.
+/// place of one. [`Llb::from_rsrc`] refuses such a file. The file is still
+/// a resource file like any other.
 pub fn is_program_tree(file: &RsrcFile<'_>) -> bool {
     file.file_type() == file_type::LIBRARY
         && file.first(b"ADir").is_none()
@@ -336,8 +342,8 @@ fn foreign(member: &LlbMember) -> RsrcError {
     )
 }
 
-/// A member name on one line, for an error message: ASCII control
-/// characters are escaped, everything else is as the archive spells it.
+/// A member name on one line, for an error message. ASCII control
+/// characters are escaped, and everything else is as the archive spells it.
 fn printable(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
@@ -351,8 +357,8 @@ fn printable(name: &str) -> String {
 }
 
 /// Refuse an archive in which two content resources share bytes of the
-/// file. A resource table may point any number of entries at one stream;
-/// an archive of a few kilobytes could then name one compressed stream
+/// file. A resource table may point any number of entries at one stream.
+/// An archive of a few kilobytes could then name one compressed stream
 /// thousands of times, and reading its members would inflate without any
 /// relation to its size. The editor never writes such an archive.
 fn refuse_shared_content<'a>(contents: impl Iterator<Item = &'a [u8]>) -> Result<()> {
@@ -385,10 +391,10 @@ fn check_size(block: &'static str, size: u64, limit: u64) -> Result<()> {
 
 /// Inflate a `ZCRF` member: a `u32` size and a zlib stream.
 ///
-/// Nothing is allocated from the declared size. It is refused when it is
-/// over the limit or more than the stream could inflate to; the output
-/// then grows only as the stream delivers bytes, and stops one byte past
-/// the declared size.
+/// Nothing is allocated from the declared size. The declared size is
+/// refused when it is over the limit or more than the stream could inflate
+/// to. The output then grows only as the stream delivers bytes, and stops
+/// one byte past the declared size.
 fn inflate(block: &'static str, content: &[u8], limit: u64) -> Result<Vec<u8>> {
     let mut r = Reader::new(content, block);
     let declared = u64::from(r.u32()?);
@@ -430,7 +436,7 @@ fn inflate(block: &'static str, content: &[u8], limit: u64) -> Result<Vec<u8>> {
 /// The declared size is refused when it is over the limit or needs more
 /// mask bytes than the stream has, so the output is never more than eight
 /// times the stream. Bytes after the last one the masks ask for are not
-/// read: nothing is known about them.
+/// read, because nothing is known about them.
 fn unmask(block: &'static str, content: &[u8], limit: u64) -> Result<Vec<u8>> {
     let mut r = Reader::new(content, block);
     let declared = u64::from(r.u32()?);
@@ -641,8 +647,8 @@ mod tests {
 
     #[test]
     fn odd_names_are_data() {
-        // Shift-JIS bytes, separators, parent steps, an empty name and a
-        // name of the longest length a Pascal string holds.
+        // The names hold Shift-JIS bytes, separators, parent steps, an
+        // empty name, and a name of the longest length a Pascal string holds.
         let long = vec![b'x'; 255];
         let odd: [&[u8]; 8] = [
             b"\x83\x65\x83\x58\x83\x67.vi",
@@ -834,15 +840,16 @@ mod tests {
 
     #[test]
     fn a_declared_size_the_stream_cannot_hold_is_refused_without_inflating() {
-        // Under the limit, but 100 MiB from a stream of a few bytes.
+        // The declared 100 MiB is under the limit, but the stream is a few
+        // bytes.
         let bytes = with_zcrf(zcrf(100 * 1024 * 1024, &[0; 64]));
         assert!(reason(read_only_member(&bytes)).contains("can hold"));
     }
 
     #[test]
     fn a_stream_that_inflates_beyond_what_it_declares_is_cut_off() {
-        // A bomb: 32 MiB of zeros in about 32 KiB, declared as 100 bytes
-        // and then as its true size plus and minus one.
+        // A decompression bomb of 32 MiB of zeros in about 32 KiB, declared
+        // as 100 bytes and then as its true size plus and minus one.
         let big = vec![0u8; 32 * 1024 * 1024];
         let started = Instant::now();
         let bytes = with_zcrf(zcrf(100, &big));
@@ -858,7 +865,7 @@ mod tests {
     #[test]
     fn a_stream_over_the_cap_is_refused_whatever_it_holds() {
         let over = u32::try_from(MAX_MEMBER_BYTES + 1).unwrap();
-        // Enough stream bytes that only the cap can refuse it.
+        // The stream has enough bytes that only the cap can refuse it.
         let mut content = over.to_be_bytes().to_vec();
         content.extend(vec![0u8; 200_000]);
         assert!(reason(read_only_member(&with_zcrf(content))).contains("over the limit"));
@@ -885,7 +892,7 @@ mod tests {
     #[test]
     fn the_bytes_of_an_entry_that_are_not_read_may_hold_anything() {
         // The builder writes them as the editor does: a flags word, a
-        // time stamp and padding that is not zero. An archive with zeros
+        // time stamp, and padding that is not zero. An archive with zeros
         // there, and one with every such byte set, read the same.
         let as_saved = crate::builder::encode_adir(&[
             (1, FourCc::new(b"LVIN"), 0x1700_8000, b"a.vi"),
@@ -925,9 +932,10 @@ mod tests {
 
     #[test]
     fn content_resources_that_share_bytes_are_refused() {
-        // Many resource entries on one stream: a small file that would
-        // inflate without end. The resource table is rewritten so that
-        // the second content resource points at the data of the first.
+        // Many resource entries that point at one stream make a small file
+        // inflate without relation to its size. The resource table is
+        // rewritten so that the second content resource points at the data
+        // of the first.
         let big = vec![0u8; 1024 * 1024];
         let good = LlbBuilder::default()
             .compressed("a.vi", &big)
@@ -989,8 +997,8 @@ mod tests {
 
     #[test]
     fn the_compression_older_than_zlib_reads_back() {
-        // Lengths around the eight bytes one mask covers, with zeros at
-        // the start, the end and in runs.
+        // The lengths are around the eight bytes that one mask covers, with
+        // zeros at the start, at the end, and in runs.
         for len in [0usize, 1, 7, 8, 9, 15, 16, 17, 1000] {
             for pattern in [0usize, 1, 2, 3] {
                 let data: Vec<u8> = (0..len)
@@ -1012,7 +1020,8 @@ mod tests {
                 );
             }
         }
-        // By hand: 10 bytes, masks 0b0000_0101 and 0b10, bytes 1 2 3.
+        // A stream written by hand: 10 bytes, masks 0b0000_0101 and 0b10,
+        // bytes 1 2 3.
         let content = vec![0, 0, 0, 10, 0b101, 0b10, 1, 2, 3];
         assert_eq!(
             read_only_member(&with_cprf(content)).unwrap(),
@@ -1023,13 +1032,14 @@ mod tests {
     #[test]
     fn a_legacy_member_cannot_declare_more_than_its_stream_holds() {
         let started = Instant::now();
-        // No mask bytes for the size, at any size up to the limit.
+        // The stream has too few mask bytes for the declared size, at any
+        // size up to the limit.
         for declared in [9u32, 1 << 20, 100 * 1024 * 1024] {
             let mut content = declared.to_be_bytes().to_vec();
             content.push(0);
             assert!(reason(read_only_member(&with_cprf(content))).contains("can hold"));
         }
-        // Masks that ask for more bytes than follow them.
+        // The masks ask for more bytes than follow them.
         let content = vec![0, 0, 0, 8, 0xff, 1, 2, 3];
         assert!(reason(read_only_member(&with_cprf(content))).contains("can hold"));
         let over = u32::MAX.to_be_bytes().to_vec();
@@ -1038,8 +1048,7 @@ mod tests {
             assert!(read_only_member(&with_cprf(vec![0; cut])).is_err());
         }
         assert!(started.elapsed().as_secs() < 2);
-        // Every cut of a good stream is an error or a shorter stream's
-        // own answer, never a panic.
+        // Every cut of a good stream is an error, never a panic.
         let good = vec![0, 0, 0, 10, 0b101, 0b10, 1, 2, 3];
         for cut in 0..good.len() {
             assert!(read_only_member(&with_cprf(good[..cut].to_vec())).is_err());

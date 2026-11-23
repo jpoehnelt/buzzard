@@ -58,7 +58,8 @@ pub(crate) fn run(args: &Args) -> Result<String, String> {
     let workspace = Workspace::scan(&args.paths);
     let graph = DependencyGraph::build(&workspace);
     let report = deps::scan(&workspace, &graph, &roots);
-    // The report says so too; on stderr it is seen whatever reads stdout.
+    // The report lists the unused roots too. The warning on stderr reaches
+    // the user even when a program reads stdout.
     let used: Vec<String> = report.roots.iter().map(|r| r.root.clone()).collect();
     for root in &report.unused_roots {
         eprintln!(

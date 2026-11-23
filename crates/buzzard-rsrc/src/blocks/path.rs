@@ -33,7 +33,7 @@ pub enum PathKind {
 pub struct LvPath {
     /// How the path is anchored.
     pub kind: PathKind,
-    /// Path components in order; an empty one means the parent directory.
+    /// Path components in order. An empty one means the parent directory.
     pub components: Vec<String>,
 }
 
@@ -42,9 +42,10 @@ impl LvPath {
     ///
     /// # Errors
     ///
-    /// If `data` is truncated, the signature is not `PTH0`, `PTH1` or `PTH2`,
-    /// the declared size is over [`MAX_PATH_BYTES`], the path type is
-    /// unknown, or the components do not match the declared size or count.
+    /// Returns an error if `data` is truncated, the signature is not `PTH0`,
+    /// `PTH1`, or `PTH2`, the declared size is over [`MAX_PATH_BYTES`], the
+    /// path type is unknown, or the components do not match the declared size
+    /// or count.
     pub fn parse(data: &[u8]) -> Result<(Self, usize)> {
         let mut r = Reader::new(data, "path");
         let format = r.fourcc()?;
@@ -238,11 +239,11 @@ mod tests {
     fn rejects_malformed() {
         assert!(LvPath::parse(b"PTH9\x00\x00\x00\x00").is_err());
         assert!(LvPath::parse(b"PTH0\x00\x00\x00\x10\x00\x00").is_err());
-        // Declared two components but only one present.
+        // The path declares two components and holds one.
         let mut bytes = pth0(1, &["a.vi"]);
         bytes[11] = 2;
         assert!(LvPath::parse(&bytes).is_err());
-        // Type out of range.
+        // The path type is out of range.
         assert!(LvPath::parse(&pth0(9, &["a.vi"])).is_err());
     }
 }

@@ -47,7 +47,7 @@ pub(crate) enum Expr {
     },
     /// A diagram disable structure.
     Disable(Vec<Expr>),
-    /// A stacked sequence; at most one frame should be wired.
+    /// A stacked sequence. At most one frame should be wired.
     Sequence(Vec<Expr>),
     /// A nested while loop passing the value out through a plain tunnel.
     While(Box<Expr>),
@@ -152,7 +152,8 @@ pub(crate) fn label(value: &str) -> SelectorMatch {
 
 impl Spec {
     /// An enumeration machine with one frame per item, in item order.
-    /// Every frame holds its state and never stops until told otherwise.
+    /// Every frame keeps its state and never stops, until `next`, `goes`,
+    /// or `stop` changes it.
     pub(crate) fn enumeration(items: &[&'static str]) -> Self {
         Self {
             kind: SelectorKind::Enum,
@@ -417,8 +418,8 @@ impl Build {
                 let mut node = self.function(SELECT, ty, 3);
                 node.terminals[2].data_type = Some(DataType::Boolean);
                 node.terminals[2].numeric = None;
-                // Listed in an order other than the parameter order, as a
-                // reminder that the order of terminals means nothing.
+                // List the terminals in an order other than the parameter
+                // order, because the order of terminals means nothing.
                 node.terminals.swap(1, 3);
                 let by = |param: u32| {
                     let found = node.terminals.iter().find(|t| t.param == Some(param));
@@ -512,7 +513,7 @@ impl Build {
     /// Returns the position of the structure in `diagram.nodes`.
     #[expect(
         clippy::too_many_arguments,
-        reason = "each argument is one part of the structure to build; a struct would only be filled in at the two call sites"
+        reason = "each argument is one part of the structure to build, and a struct would only be filled in at the call sites"
     )]
     fn structure(
         &mut self,
@@ -535,8 +536,8 @@ impl Build {
             uid: self.id(),
             class: class.to_owned(),
             terminals: vec![outer],
-            // A case structure has a selector table: here a Boolean or,
-            // for another number of frames, an integer one.
+            // A case structure has a selector table. It is a Boolean one
+            // for two frames and an integer one for any other number.
             selector: (class == "select").then(|| CaseSelector {
                 kind: match frames.len() {
                     2 => SelectorKind::Boolean,
@@ -799,7 +800,8 @@ pub(crate) fn with_node(diagram: &mut BlockDiagram, uid: i32, change: impl FnOnc
     assert!(change.is_none(), "no node #{uid}");
 }
 
-/// Change every terminal that satisfies a condition; returns how many.
+/// Change every terminal that satisfies a condition. Returns how many
+/// it changed.
 pub(crate) fn with_terminals(
     diagram: &mut BlockDiagram,
     wanted: impl Fn(&Terminal) -> bool,

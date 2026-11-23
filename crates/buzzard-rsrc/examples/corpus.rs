@@ -56,7 +56,7 @@ fn main() {
     let (mut failures, mut heaps, mut protected) = (0, 0, 0);
     let (mut diagrams, mut nodes, mut wires) = (0, 0, 0);
     for path in &files {
-        let bytes = std::fs::read(path).expect("read");
+        let bytes = std::fs::read(path).expect("read file");
         let fail = |what: &str, err: &dyn std::fmt::Display| {
             println!("FAIL {what}: {}: {err}", path.display());
         };

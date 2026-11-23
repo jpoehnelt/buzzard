@@ -1,9 +1,9 @@
-//! What every crate must carry to be published: the licence text, a notice
+//! What every crate must carry to be published: the license text, a notice
 //! that covers what the package holds and no more, and its own README.
 //!
 //! `cargo package` takes files from the crate's directory only, so each
 //! crate has real copies (no symbolic links, which Windows checkouts lack).
-//! These tests keep the copies from drifting apart.
+//! These tests fail when a copy no longer matches the root file.
 
 use std::fs;
 use std::path::PathBuf;
@@ -21,15 +21,15 @@ const CRATES: [&str; 6] = [
 /// (Apache-2.0) and the pylabview tables (MIT).
 const WITH_THIRD_PARTY: &str = "buzzard-rsrc";
 
-/// The sentence every copy of the MIT licence has.
+/// The sentence every copy of the MIT license has.
 const MIT_PERMISSION: &str = "Permission is hereby granted, free of charge";
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// A text file, with the line endings a Windows checkout may have added
-/// taken out.
+/// A text file, with the `\r\n` line endings that a Windows checkout may
+/// have added replaced by `\n`.
 fn read(relative: &str) -> String {
     let path = root().join(relative);
     fs::read_to_string(&path)
@@ -37,8 +37,8 @@ fn read(relative: &str) -> String {
         .replace("\r\n", "\n")
 }
 
-/// The part of the root NOTICE from the line `start` up to the next section
-/// heading (a line of `=` under a title), or to the end.
+/// The part of the root NOTICE from `title` up to the next section heading
+/// (a line of `=` under a title), or to the end.
 fn notice_section(notice: &str, title: &str) -> String {
     let start = notice
         .find(title)
@@ -138,8 +138,9 @@ fn every_package_is_its_source_and_its_documents() {
             .lines()
             .find(|line| line.starts_with("include = "))
             .unwrap_or_else(|| panic!("crates/{name}/Cargo.toml has an `include` list"));
-        // The leading slash matters: without it a pattern matches at any
-        // depth, and `README.md` would take the READMEs of the fixtures.
+        // The leading slash matters. Without it, a pattern matches at any
+        // depth, and `README.md` would also match the READMEs of the
+        // fixtures.
         let mut patterns: Vec<&str> = include
             .trim_start_matches("include = [")
             .trim_end_matches(']')
@@ -162,7 +163,7 @@ fn every_package_is_its_source_and_its_documents() {
 }
 
 /// The data in `primitives.rs` and `tables.rs` is why `buzzard-rsrc` has
-/// the longer notice; if a table moves, the notices move with it.
+/// the longer notice. If a table moves, the notice must name its new path.
 #[test]
 fn the_third_party_tables_are_where_the_notice_says() {
     let notice = read(&format!("crates/{WITH_THIRD_PARTY}/NOTICE"));
@@ -175,7 +176,7 @@ fn the_third_party_tables_are_where_the_notice_says() {
 }
 
 /// A source file that says it comes from another project is one the
-/// notices must cover. This is the list of those files; a new one fails
+/// notices must cover. This is the list of those files. A new one fails
 /// here until it is added, with its section in the NOTICE of its crate.
 #[test]
 fn no_other_packaged_source_claims_a_third_party_origin() {

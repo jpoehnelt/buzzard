@@ -87,7 +87,7 @@ impl Session {
         reply["result"].clone()
     }
 
-    /// Close stdin and wait for the process; returns `(exit ok, stderr)`.
+    /// Closes stdin and waits for the process. Returns `(exit ok, stderr)`.
     fn finish(mut self) -> (bool, String) {
         drop(self.stdin.take());
         let status = self.child.wait().expect("wait for the server");
@@ -136,7 +136,8 @@ fn full_session_over_real_pipes() {
         init["result"]["serverInfo"]["version"],
         env!("CARGO_PKG_VERSION")
     );
-    // A notification produces no output; the next reply is the ping's.
+    // A notification produces no output, so the next reply answers the
+    // ping.
     session.send_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
     assert_eq!(session.request("ping", Value::Null)["result"], json!({}));
 
@@ -205,7 +206,8 @@ fn full_session_over_real_pipes() {
     let rules = session.call("buzzard_rules", json!({}));
     assert!(text(&rules).contains("`BZ000`"));
 
-    // Failures: a tool error, a protocol error and a parse error, in a row.
+    // Three failures in a row: a tool error, a protocol error, and a parse
+    // error.
     let missing = session.call("buzzard_inspect", json!({ "path": "missing.vi" }));
     assert_eq!(missing["isError"], true);
     assert_eq!(text(&missing), "file does not exist: missing.vi");

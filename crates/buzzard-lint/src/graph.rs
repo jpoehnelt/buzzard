@@ -1,9 +1,9 @@
 //! Directed graph of file-to-file references inside a workspace.
 //!
-//! Edges come in three kinds (see [`EdgeKind`]). "Dependency" below means a
-//! `Uses` or `Inherits` edge; `Contains` edges describe ownership and never
-//! take part in cycle detection, because a member routinely refers back to
-//! the library or class that owns it. Callers and callees follow `Uses`
+//! An edge has one of three kinds (see [`EdgeKind`]). "Dependency" below
+//! means a `Uses` or `Inherits` edge. `Contains` edges describe ownership
+//! and take no part in cycle detection, because a member often refers back
+//! to the library or class that owns it. Callers and callees follow `Uses`
 //! edges only.
 //!
 //! # Matching a link to a workspace file
@@ -16,16 +16,16 @@
 //!
 //! * A relative path, or an absolute path of another machine, falls back
 //!   to the file name if exactly one workspace file has that name. A path
-//!   under a symbolic root such as `<vilib>` never does: it names an
-//!   installed file, not a workspace file that shares its name. The parent
-//!   of a class is the exception and is still looked up by name.
+//!   under a symbolic root such as `<vilib>` never does, because it names
+//!   an installed file, not a workspace file that shares its name. The
+//!   parent of a class is the exception and is still looked up by name.
 //! * With [`CaseSensitivity::Insensitive`] (Windows and macOS), a match
 //!   that differs only in letter case counts when it is the only one. With
 //!   [`CaseSensitivity::Sensitive`], letter case always matters.
 //! * Paths older than the `PTH2` form hold the bytes of the saving
 //!   machine's code page. A name with bytes outside ASCII is read as
 //!   Windows-1252, Shift-JIS, GBK, Big5, EUC-KR, Windows-1251,
-//!   Windows-1250 and Mac Roman. The link is followed when every reading
+//!   Windows-1250, and Mac Roman. The link is followed when every reading
 //!   that matches a workspace file matches the same one.
 
 use std::borrow::Cow;
@@ -47,9 +47,10 @@ use crate::workspace::{identity_from, normalize, Workspace};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EdgeKind {
-    /// `a` references `b` in its link info (caller -> callee).
+    /// `a` references `b` in its link info, as a caller references a
+    /// callee.
     Uses,
-    /// `a` is a project, library or class that lists `b` as a member, or
+    /// `a` is a project, library, or class that lists `b` as a member, or
     /// an `.llb` archive that holds `b`.
     Contains,
     /// `a` is a class whose parent class is `b`.
@@ -85,7 +86,7 @@ impl CaseSensitivity {
 }
 
 /// Code pages a file name may have been saved in. Only `PTH2` paths are
-/// UTF-8; older forms hold the bytes of the saving machine's code page.
+/// UTF-8. Older forms hold the bytes of the saving machine's code page.
 static CODE_PAGES: [&Encoding; 8] = [
     encoding_rs::WINDOWS_1252,
     encoding_rs::SHIFT_JIS,
@@ -207,10 +208,9 @@ impl Lookup {
     /// The workspace file that is the parent of the class `from`.
     ///
     /// Unlike a call to an installed VI, a parent class stored by its
-    /// installed location is still looked up by name: class hierarchies
-    /// are developed in one workspace and used from another, and class
-    /// names are distinctive. No class is its own parent, whatever its
-    /// name suggests.
+    /// installed location is still looked up by name, because class
+    /// hierarchies are developed in one workspace and used from another,
+    /// and class names are distinctive. A class is never its own parent.
     fn parent(&self, from: NodeIndex, from_path: &Path, parent: &ParentClass) -> Option<NodeIndex> {
         self.link(from, from_path, &parent.link, Some(&parent.name))
             .or_else(|| self.name(&parent.name).filter(|&to| to != from))
@@ -228,9 +228,10 @@ impl Lookup {
         }
         // A stale path (moved checkout, absolute path from another machine)
         // still identifies its target when the file name is unique. A
-        // symbolic path such as `<vilib>/...` is never stale: it names a
-        // file of the installation, not a workspace file that happens to
-        // share its name. Nothing references itself through a stale path.
+        // symbolic path such as `<vilib>/...` is never stale, because it
+        // names a file of the installation, not a workspace file that
+        // shares its name. A file never references itself through a stale
+        // path.
         if !can_be_stale(link) {
             return None;
         }
@@ -240,7 +241,7 @@ impl Lookup {
 }
 
 /// True for a link whose stored location may be out of date: a
-/// relative path, or one pinned to a machine's file system layout.
+/// relative path, or a machine-absolute path.
 fn can_be_stale(link: &LvPath) -> bool {
     !link.is_empty() && (link.kind == PathKind::Relative || link.is_machine_absolute())
 }
@@ -434,14 +435,14 @@ impl DependencyGraph {
         self.neighbors(path, Direction::Outgoing, EdgeKind::Uses)
     }
 
-    /// Workspace files that the project, library or class at `path` lists
+    /// Workspace files that the project, library, or class at `path` lists
     /// as members. Items under a project's `Dependencies` node are not
     /// members.
     pub fn members(&self, path: &Path) -> Vec<&Path> {
         self.neighbors(path, Direction::Outgoing, EdgeKind::Contains)
     }
 
-    /// Projects, libraries and classes that list `path` as a member.
+    /// Projects, libraries, and classes that list `path` as a member.
     pub fn owners(&self, path: &Path) -> Vec<&Path> {
         self.neighbors(path, Direction::Incoming, EdgeKind::Contains)
     }
@@ -564,8 +565,8 @@ impl DependencyGraph {
 pub struct Cycle {
     /// Every file in the strongly connected group, sorted.
     pub members: Vec<PathBuf>,
-    /// One concrete cycle: each file uses or inherits from the next, the
-    /// last from the first.
+    /// One cycle through the group. Each file uses or inherits from the
+    /// next, and the last from the first.
     pub example: Vec<PathBuf>,
 }
 
@@ -681,7 +682,7 @@ mod tests {
             resolve(Path::new("main.vi"), &link).unwrap(),
             Path::new(r"C:\Users\me\a.vi")
         );
-        // The result is a full path: it has a drive and a root.
+        // The result is a full path, with a drive and a root.
         assert!(resolve(Path::new("main.vi"), &link).unwrap().is_absolute());
         // A lower-case drive letter is kept as stored.
         let lower = LvPath::absolute(&["d", "a.vi"]);

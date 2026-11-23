@@ -1,4 +1,4 @@
-//! Conformance against files written by the crate's own generator, whose
+//! Conformance tests on files written by the crate's own generator, whose
 //! model of each file's contents is independent of the reader.
 
 mod common;
@@ -59,7 +59,7 @@ fn a_stale_or_foreign_index_file_is_ignored() {
         );
         assert_matches(&built, &file, what);
     }
-    // An index file that describes a file since appended to.
+    // An index file of a data file that has had segments appended since.
     let mut grown = built.bytes.clone();
     grown.extend_from_slice(&built.bytes);
     let file = open(&grown, Some(&built.index_bytes)).unwrap();
@@ -245,8 +245,8 @@ fn many_identical_segments_collapse_in_the_index() {
     for i in 0..40 {
         segment.object(Object::channel("g", &format!("c{i}")).generated(DataType::F64, 10));
     }
-    // A string channel between them: every segment has strings of the same
-    // lengths and other contents.
+    // A string channel between them. Every segment has strings of the same
+    // lengths with different contents.
     let strings = ["ab", "cd", "", "efg", "h"].map(str::to_owned).to_vec();
     segment.object(Object::channel("g", "text").data(Values::String(strings)));
     for i in 40..45 {
@@ -492,15 +492,16 @@ fn a_channel_alone_in_its_chunks_is_one_read_per_segment() {
         Values::F64(values),
         *built.channels[0].values.as_ref().unwrap()
     );
-    // The chunks of a segment follow one another without a gap.
+    // The chunks of a segment follow one another without a gap, so each of
+    // the three segments takes one read.
     assert_eq!(source.reads.load(Ordering::Relaxed), 3);
     source.reads.store(0, Ordering::Relaxed);
     channel.read::<f64>(150..450).unwrap();
     assert_eq!(source.reads.load(Ordering::Relaxed), 1);
 }
 
-/// A file of `segments` segments that each hold four values of `/'g'/'a'`;
-/// with `metadata`, every segment declares the channel again.
+/// A file of `segments` segments that each hold four values of `/'g'/'a'`.
+/// With `metadata`, every segment declares the channel again.
 fn run_of_segments(segments: usize, metadata: bool) -> Built {
     let mut builder = FileBuilder::new();
     for number in 0..segments {
@@ -533,8 +534,9 @@ fn an_index_file_with_a_different_lead_in_is_rejected() {
     assert_eq!(offsets.len(), 5);
     let file = open(&built.bytes, Some(&built.index_bytes)).unwrap();
     assert_eq!(file.index_source(), IndexSource::IndexFile);
-    // The first, a middle and the last segment; the version number and a
-    // bit of the table of contents that means nothing.
+    // The first, a middle, and the last segment. In each, one bit changes in
+    // the table of contents (a bit that means nothing) and one in the
+    // version number.
     for segment in [0, 2, 4] {
         for field in [4, 8] {
             let mut index = built.index_bytes.clone();
@@ -551,7 +553,7 @@ fn an_index_file_with_a_different_lead_in_is_rejected() {
         }
     }
     // The index file is intact and a segment of the data file has lost its
-    // tag: the index file must not hide that.
+    // tag. The reader must still refuse the data file.
     for segment in [0, 2, 4] {
         let mut data = built.bytes.clone();
         let at = usize::try_from(built.segment_offsets[segment]).unwrap();
@@ -565,16 +567,17 @@ fn an_index_file_with_a_different_lead_in_is_rejected() {
 
 #[test]
 fn an_index_file_of_a_long_file_is_checked_in_evenly_spaced_segments() {
-    // 150 segments: more than are compared one by one. Segment 76 is one of
-    // those compared, segment 149 is the last, segment 77 is neither.
+    // The file has 150 segments, more than are compared one by one. Segment
+    // 76 is one of those compared, segment 149 is the last, and segment 77
+    // is neither.
     for metadata in [false, true] {
         let built = run_of_segments(150, metadata);
         let file = open(&built.bytes, Some(&built.index_bytes)).unwrap();
         assert_eq!(file.index_source(), IndexSource::IndexFile);
         assert_matches(&built, &file, "150 segments through the index file");
         for (segment, believed) in [(0, false), (76, false), (149, false), (77, true)] {
-            // The data file says version 4712 where the index file says
-            // 4713; both are valid.
+            // The data file has version 4712 where the index file has 4713.
+            // Both numbers are valid.
             let mut data = built.bytes.clone();
             let at = usize::try_from(built.segment_offsets[segment]).unwrap() + 8;
             assert_eq!(data[at..at + 4], 4713u32.to_le_bytes());
@@ -593,8 +596,8 @@ fn an_index_file_of_a_long_file_is_checked_in_evenly_spaced_segments() {
 
 #[test]
 fn an_index_file_with_other_metadata_is_not_believed() {
-    // The same lead-ins, the same length, and a segment whose metadata
-    // names another channel.
+    // The index file has the same lead-ins and the same length, and one
+    // segment whose metadata names another channel.
     let renamed = |built: &Built, segment: usize| {
         let mut index = built.index_bytes.clone();
         let at = common::after_nth(&index, b"/'g'/'a'", segment);
@@ -613,9 +616,9 @@ fn an_index_file_with_other_metadata_is_not_believed() {
         assert_eq!(file.anomalies(), [], "segment {segment}");
         assert_matches(&built, &file, "an index file with other metadata");
     }
-    // Where the comparison ends: of a long file only some segments are
-    // compared, and an index file that differs in another one is believed.
-    // This pins the limit that the README states; it is not a wish.
+    // The limit of the comparison. Of a long file only some segments are
+    // compared, and an index file that differs in another segment is
+    // believed. This test pins that limit, which the README states.
     let built = run_of_segments(150, true);
     for segment in [0, 76, 149] {
         let file = open(&built.bytes, Some(&renamed(&built, segment))).unwrap();
@@ -652,8 +655,8 @@ fn every_scaler_type_reads_back() {
                 assert_eq!(channel.read_column(0..21).unwrap().dtype(), dtype);
             }
         }
-        // A scaler of timestamps, which no other reader is known to read:
-        // sixteen bytes, laid out as a timestamp channel's values are.
+        // A scaler of timestamps, which no other reader is known to read. A
+        // value is sixteen bytes, laid out as a timestamp channel's values are.
         let mut builder = FileBuilder::new();
         builder
             .segment()
@@ -901,7 +904,7 @@ fn a_void_channel_with_no_values_is_accepted() {
         let raw_flag = built.bytes[4] & (1 << 3) != 0;
         assert_eq!(raw_flag, !alone);
         for bytes in [&mut built.bytes, &mut built.index_bytes] {
-            // After the path and the index length: the type code.
+            // The type code follows the path and the index length.
             let code = common::after_nth(bytes, b"/'g'/'a'", 0) + 4;
             assert_eq!(bytes[code..code + 4], DataType::I32.code().to_le_bytes());
             bytes[code..code + 4].copy_from_slice(&DataType::Void.code().to_le_bytes());
@@ -924,8 +927,9 @@ fn a_void_channel_with_no_values_is_accepted() {
 
 #[test]
 fn metadata_is_read_only_when_the_table_of_contents_says_so() {
-    // The second segment has the bytes of metadata, and a raw data offset
-    // that skips them, but not the flag: they are not metadata.
+    // The second segment has the bytes of metadata and a raw data offset
+    // that skips them, but its table of contents lacks the metadata flag.
+    // The reader does not read those bytes as metadata.
     let mut builder = FileBuilder::new();
     builder
         .segment()
@@ -952,8 +956,8 @@ fn metadata_is_read_only_when_the_table_of_contents_says_so() {
 
 #[test]
 fn a_new_object_list_without_data_objects_ends_the_old_layout() {
-    // Sixteen bytes: one whole chunk of the first segment's two channels,
-    // were its layout still in force.
+    // The sixteen extra bytes would be one whole chunk of the first segment's
+    // two channels if its layout still applied.
     for objects in [true, false] {
         let mut builder = FileBuilder::new();
         builder

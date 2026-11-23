@@ -13,9 +13,9 @@ pub struct Vers {
     pub version: Version,
     /// Language code stored after the version number.
     pub language: u16,
-    /// Human-readable version text, e.g. `21.0`.
+    /// Human-readable version text, such as `21.0`.
     pub text: String,
-    /// Pascal string after the version text; empty when the block omits it.
+    /// Pascal string after the version text, empty when the block omits it.
     pub name: String,
 }
 
@@ -24,8 +24,9 @@ impl Vers {
     ///
     /// # Errors
     ///
-    /// If the version number, language or version text is truncated, or a
-    /// name string is present but runs past the end of the block.
+    /// Returns an error if the version number, language, or version text is
+    /// truncated, or a name string is present but runs past the end of the
+    /// block.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut r = Reader::new(data, "vers");
         let version = Version::from_u32(r.u32()?);

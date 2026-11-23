@@ -1,5 +1,5 @@
-//! SHA-256 (FIPS 180-4), for comparing channel contents with the oracle
-//! without a dependency.
+//! SHA-256 (FIPS 180-4), written here so that the tests can hash channel
+//! contents without a dependency.
 
 use std::fmt::Write as _;
 

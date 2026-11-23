@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Oracle harness for buzzard-tdms: what does npTDMS make of a TDMS file?
+"""Oracle harness for buzzard-tdms. It reports how npTDMS reads a TDMS file.
 
 This script is part of buzzard and is Apache-2.0 licensed. It uses npTDMS
 (https://github.com/adamreeve/npTDMS, LGPL-3.0) only through its public
 API, as a separate program. Nothing of npTDMS is copied here or linked
-into the Rust crate; see README.md beside this file.
+into the Rust crate. See README.md beside this file.
 
 Commands:
 
@@ -36,11 +36,11 @@ is {"error": text} when npTDMS raises, else:
 
   channel: {"name", "type", "length", "properties", "raw", "scaled"}
     "type"    the name of npTDMS's type class, or null
-    "raw"     {scaler: {"dtype", "length", "sha256"}}: the unscaled data;
-              the scaler is "" except for DAQmx raw data, where it is the
+    "raw"     {scaler: {"dtype", "length", "sha256"}}: the unscaled data.
+              The scaler is "" except for DAQmx raw data, where it is the
               scale id. The hash is over the values as little-endian
-              bytes; a timestamp is its fractions (u64) then its seconds
-              (i64); a string is its UTF-8 bytes followed by a zero byte.
+              bytes. A timestamp is its fractions (u64) then its seconds
+              (i64). A string is its UTF-8 bytes followed by a zero byte.
     "scaled"  null, or the scaled values as 64-bit patterns (16 hex digits
               each, concatenated) when they differ from the raw data.
 """
@@ -141,7 +141,7 @@ def file_view(path):
                     for group in tdms.groups()
                 ],
             }
-    except Exception as e:  # the oracle's refusal is part of its view
+    except Exception as e:  # A file that npTDMS refuses is part of its view.
         return {"error": "%s: %s" % (type(e).__name__, e)}
 
 
@@ -162,7 +162,7 @@ def dump(paths):
 
 
 def write(directory):
-    """Files written through npTDMS's public writer."""
+    """Writes files through npTDMS's public writer."""
     rng = np.random.default_rng(20261116)
 
     def path(name):
@@ -298,7 +298,10 @@ def write(directory):
 
 
 def scenarios(directory):
-    """The scenario files of the installed npTDMS, run as a black box."""
+    """Writes the files of the scenarios that the installed npTDMS ships.
+
+    The scenarios are run. Their source is not read or copied.
+    """
     try:
         from nptdms.test import scenarios as shipped
     except Exception as e:

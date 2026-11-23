@@ -1,11 +1,11 @@
-//! Pass one: walk every segment's lead-in and metadata, never the raw data,
-//! and record where each channel's values are.
+//! Pass one walks every segment's lead-in and metadata, never the raw data,
+//! and records where each channel's values are.
 //!
-//! The result is small for the files data loggers write. Segments that
+//! The result is small for the files that data loggers write. Segments that
 //! repeat the same layout collapse into one [`Block`], and a layout (which
-//! channel sits where in a chunk) is stored once however often it is used,
-//! so the work per segment without changed metadata is constant and does
-//! not grow with the number of channels.
+//! channel sits where in a chunk) is stored once, however often it is used.
+//! The work for a segment whose metadata did not change is therefore
+//! constant and does not grow with the number of channels.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -69,7 +69,7 @@ pub(crate) enum Source {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Entry {
     pub(crate) obj: u32,
-    /// Values per chunk; never zero.
+    /// Values per chunk. Never zero.
     pub(crate) n: u64,
     pub(crate) source: Source,
 }
@@ -164,7 +164,7 @@ pub enum IndexSource {
     /// data file.
     IndexFile,
     /// The data file, because the `.tdms_index` file beside it is stale,
-    /// damaged or does not belong to it.
+    /// damaged, or does not belong to it.
     DataFileIndexRejected,
 }
 
@@ -394,7 +394,8 @@ fn parse_lead(bytes: &[u8]) -> Lead {
         b.copy_from_slice(&bytes[at..at + 8]);
         b
     };
-    // The table of contents is little-endian whatever it says.
+    // The table of contents is little-endian even when it sets the
+    // big-endian flag.
     let toc = u32::from_le_bytes(word(4));
     if toc & TOC_BIG_ENDIAN != 0 {
         Lead {
@@ -513,7 +514,8 @@ impl Builder {
     fn list_set(&mut self, id: u32, has_data: bool) {
         let at = self.list_at[id as usize];
         if at == ABSENT {
-            // The list cannot outgrow the objects, whose count fits.
+            // The list is no longer than the object count, which fits in a
+            // `u32`.
             self.list_at[id as usize] = u32::try_from(self.list.len()).unwrap_or(ABSENT);
             self.list.push((id, has_data));
             if has_data {
@@ -552,9 +554,10 @@ impl Builder {
                     })
                     .collect();
                 // Where a scaler's values sit may change from one segment
-                // to the next; which scalers a channel has, and their
-                // types, may not, or no single read could cover the
-                // channel. The order in which they are listed is free.
+                // to the next. Which scalers a channel has, and their
+                // types, may not change, because then no single read could
+                // cover the channel. The scalers may be listed in any
+                // order.
                 let key = |s: &ScalerInfo| (s.scale_id, s.dtype.code(), s.digital);
                 let sorted = |list: &[ScalerInfo]| {
                     let mut keys: Vec<_> = list.iter().map(key).collect();
@@ -715,7 +718,7 @@ impl Builder {
         }
         self.layout_entries += layout.entries.len() as u64;
         // A layout that the file spells out in its metadata is paid for by
-        // those bytes; only layouts beyond that count against the limit.
+        // those bytes. Only layouts beyond that count against the limit.
         if self.layout_entries > self.max_layout_entries.max(self.meta_bytes / 32) {
             return Err(Error::IndexTooLarge {
                 limit: self.max_layout_entries,
@@ -743,8 +746,9 @@ impl Builder {
             offset: seg.pos,
             segment: seg.number,
         };
-        // The same budget for time: a file cannot make the reader walk a
-        // long object list again and again with a few bytes per segment.
+        // The same budget bounds time. With it, a file cannot make the
+        // reader walk a long object list again and again with a few bytes
+        // per segment.
         self.layout_work = self.layout_work.saturating_add(self.list.len() as u64);
         if self.layout_work
             > self
@@ -927,7 +931,7 @@ impl Builder {
     }
 }
 
-/// A data object of a segment: its number, type and raw data index.
+/// A data object of a segment: its number, type, and raw data index.
 type Indexed<'a> = (u32, DataType, &'a RawIndex);
 
 /// Where a segment is, for error messages.
@@ -1129,8 +1133,9 @@ fn partial_layout(full: &Layout, available: u64, incomplete: bool) -> Option<Lay
         Kind::Daqmx => {
             // The raw buffers follow one another, so they are complete in
             // order until the bytes run out, as the channels of a
-            // contiguous chunk are. A channel has as many values as the
-            // shortest of the buffers its scalers are in has whole rows.
+            // contiguous chunk are. A channel has as many values as there
+            // are whole rows in the shortest of the buffers that hold its
+            // scalers.
             for entry in &full.entries {
                 let Source::Daqmx(scalers) = &entry.source else {
                     return None;
@@ -1164,8 +1169,8 @@ fn partial_layout(full: &Layout, available: u64, incomplete: bool) -> Option<Lay
                     return None;
                 };
                 let n = if incomplete {
-                    // The writer stopped mid-chunk: channels are complete in
-                    // order until the bytes run out.
+                    // The writer stopped mid-chunk, so channels are complete
+                    // in order until the bytes run out.
                     entry
                         .n
                         .min(available.saturating_sub(loc.offset) / loc.stride)
@@ -1333,13 +1338,13 @@ fn same_bytes(a: &dyn ReadAt, a_at: u64, b: &dyn ReadAt, b_at: u64, len: u64) ->
 /// the index file cannot be trusted for any reason.
 fn walk_index(data: &dyn ReadAt, index: &dyn ReadAt, options: &OpenOptions) -> Option<Index> {
     // How many segments of the data file are compared with the index
-    // file's: the lead-in and the metadata of each, byte for byte. Each is
-    // a read at a far-apart offset, which is what an index file is there to
-    // avoid; a stale index file almost always differs in total length or
-    // in its first or last segment already. A file of up to 64 segments is
-    // compared in full; of a longer one, evenly spaced segments and the
-    // last. An index file that differs only in a segment that is not
-    // compared is believed.
+    // file's. The lead-in and the metadata of each are compared byte for
+    // byte. Each comparison is a read at a far-apart offset, and an index
+    // file exists to avoid such reads. A stale index file almost always
+    // differs in total length or in its first or last segment. A file of
+    // up to 64 segments is compared in full. Of a longer file, evenly
+    // spaced segments and the last segment are compared. An index file
+    // that differs only in a segment that is not compared is believed.
     const MAX_CHECKS: usize = 64;
     let size = data.size();
     let index_size = index.size();

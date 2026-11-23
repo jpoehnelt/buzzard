@@ -12,7 +12,7 @@ use crate::fourcc::FourCc;
 
 /// Size of the serialized header in bytes.
 pub const HEADER_SIZE: usize = 32;
-/// The only container format version known to exist in the wild.
+/// The only container format version known to exist in real files.
 pub const FORMAT_VERSION: u16 = 3;
 
 const SIGNATURE: &[u8; 6] = b"RSRC\r\n";
@@ -22,7 +22,7 @@ pub mod file_type {
     use crate::fourcc::FourCc;
     /// A VI (`.vi`, `.vit`, `.vim`).
     pub const VI: FourCc = FourCc::new(b"LVIN");
-    /// A custom control / typedef (`.ctl`, `.ctt`).
+    /// A custom control or typedef (`.ctl`, `.ctt`).
     pub const CONTROL: FourCc = FourCc::new(b"LVCC");
     /// An LLB archive (`.llb`).
     pub const LIBRARY: FourCc = FourCc::new(b"LVAR");
@@ -34,7 +34,7 @@ pub mod file_type {
 pub struct RsrcHeader {
     /// Container format version, always [`FORMAT_VERSION`].
     pub format_version: u16,
-    /// What kind of file this is, e.g. `LVIN` for a VI.
+    /// What kind of file this is, such as `LVIN` for a VI.
     #[br(map = FourCc)]
     #[bw(map = |v: &FourCc| v.0)]
     pub file_type: FourCc,
@@ -42,7 +42,8 @@ pub struct RsrcHeader {
     #[br(map = FourCc)]
     #[bw(map = |v: &FourCc| v.0)]
     pub creator: FourCc,
-    /// Offset of the info section (second header + resource directory).
+    /// Offset of the info section (the second header and the resource
+    /// directory).
     pub info_offset: u32,
     /// Size of the info section in bytes.
     pub info_size: u32,
@@ -57,10 +58,10 @@ impl RsrcHeader {
     ///
     /// # Errors
     ///
-    /// [`RsrcError::TooSmall`] if `bytes` is shorter than [`HEADER_SIZE`],
-    /// [`RsrcError::BadSignature`] if it does not start with `RSRC\r\n`, and
-    /// [`RsrcError::UnsupportedVersion`] if the format version is not
-    /// [`FORMAT_VERSION`].
+    /// Returns [`RsrcError::TooSmall`] if `bytes` is shorter than
+    /// [`HEADER_SIZE`], [`RsrcError::BadSignature`] if it does not start with
+    /// `RSRC\r\n`, and [`RsrcError::UnsupportedVersion`] if the format version
+    /// is not [`FORMAT_VERSION`].
     #[expect(
         clippy::missing_panics_doc,
         reason = "the `expect` runs after the length and signature checks, so the fixed-size read cannot fail"
@@ -84,7 +85,8 @@ impl RsrcHeader {
     ///
     /// # Errors
     ///
-    /// [`RsrcError::OutOfBounds`] if either section ends past `file_len`.
+    /// Returns [`RsrcError::OutOfBounds`] if either section ends past
+    /// `file_len`.
     pub fn validate(&self, file_len: usize) -> Result<()> {
         check_range("info section", self.info_offset, self.info_size, file_len)?;
         check_range("data section", self.data_offset, self.data_size, file_len)
@@ -163,7 +165,7 @@ mod tests {
             RsrcHeader::parse(&bytes),
             Err(RsrcError::BadSignature)
         ));
-        // A text-mode transfer that mangled the CR LF must also be caught.
+        // A text-mode transfer that changed the CR to an LF is rejected too.
         let mut bytes = sample().to_bytes();
         bytes[4] = b'\n';
         assert!(matches!(

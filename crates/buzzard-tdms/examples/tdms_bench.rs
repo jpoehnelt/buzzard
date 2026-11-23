@@ -5,11 +5,11 @@
 //!     --dir target/tdms-bench --size-mb 400 --threads 4
 //! ```
 //!
-//! It writes a file of about `--size-mb` megabytes into `--dir`, times
-//! opening it, reading all of it, reading single channels and exporting it
-//! to Parquet, prints the best of three runs of each, and deletes what it
-//! wrote (`--keep` leaves it). `tools/tdms-bench.sh` runs it for several
-//! thread counts.
+//! The benchmark writes a file of about `--size-mb` megabytes into `--dir`.
+//! It times four operations: opening the file, reading all of it, reading
+//! single channels, and exporting it to Parquet. It prints the best of
+//! three runs of each, then deletes what it wrote unless `--keep` is set.
+//! `tools/tdms-bench.sh` runs it for every shape and two thread counts.
 //!
 //! Shapes (`--shape`):
 //!
@@ -19,8 +19,8 @@
 //! - `segments`: 300 channels of 1000 samples per segment, contiguous.
 //! - `interleaved`: 300 channels in one segment of many interleaved chunks.
 //!
-//! All times are with the file in the page cache; the reader's speed on a
-//! cold file is the speed of the disk.
+//! All times are with the file in the page cache. On a cold file the
+//! reader is as fast as the disk.
 
 #![expect(
     clippy::print_stdout,
@@ -116,14 +116,15 @@ fn signal(channel: usize, sample: usize, rate: f64, noise: &mut u64) -> f64 {
     wave + (*noise >> 40) as f64 / f64::from(1u32 << 24) * 0.05
 }
 
-/// Writes the data file and its index file; returns the data file's size.
+/// Writes the data file and its index file, and returns the data file's
+/// size.
 fn generate(path: &Path, shape: Shape, size_mb: u64) -> std::io::Result<u64> {
     let groups = groups(shape);
     let segment_bytes: usize = groups.iter().map(|g| g.1 * g.2 * 8).sum();
     let segments = ((size_mb << 20) as usize / segment_bytes).max(2);
     let start = Timestamp::new(3_877_000_000, 0);
 
-    // The first segment's lead-in and metadata come from the builder; its
+    // The first segment's lead-in and metadata come from the builder. Its
     // raw data and every later segment are streamed out here.
     let mut builder = FileBuilder::new();
     let first = builder.segment().interleaved(shape == Shape::Interleaved);
@@ -171,7 +172,8 @@ fn generate(path: &Path, shape: Shape, size_mb: u64) -> std::io::Result<u64> {
             }
         }
         if shape == Shape::Interleaved {
-            // One segment: the lead-in once, then chunk after chunk.
+            // The file is one segment. The lead-in is written once, and
+            // the chunks follow it.
             if segment == 0 {
                 let total = (head - 28 + segment_bytes * segments) as u64;
                 lead[12..20].copy_from_slice(&total.to_le_bytes());
@@ -187,7 +189,8 @@ fn generate(path: &Path, shape: Shape, size_mb: u64) -> std::io::Result<u64> {
             index.extend(&built.index_bytes);
             written += head as u64;
         } else {
-            // Raw data only: no metadata, no new object list.
+            // A later segment holds raw data only. It has no metadata and
+            // no new object list.
             let mut next = Vec::with_capacity(28);
             next.extend(b"TDSm");
             next.extend((toc & !0b110).to_le_bytes());
@@ -307,7 +310,8 @@ fn bench(args: &Args) {
         started.elapsed().as_secs_f64(),
         rayon::current_num_threads()
     );
-    // Once through, so that every run below finds the file in the cache.
+    // Read the file once, so that every run below finds it in the page
+    // cache.
     let warm = std::fs::read(&path).expect("read the file back");
 
     let no_index = OpenOptions::new().index_file(false);
@@ -333,8 +337,8 @@ fn bench(args: &Args) {
     let (took, bytes) = best(|| read_all(&file));
     report("read everything, positional reads", took, size, "");
     assert!(bytes > size * 9 / 10);
-    // The same reads from memory: what a mapped file would cost, since the
-    // values are copied out either way and only the system calls differ.
+    // The same reads from memory show what a mapped file would cost. The
+    // values are copied out either way, and only the system calls differ.
     let in_memory = OpenOptions::new()
         .open_source(Arc::new(warm), None)
         .expect("open from memory");

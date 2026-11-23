@@ -1,4 +1,4 @@
-//! Incremental behaviour of the analysis engine, without the protocol layer.
+//! Incremental behavior of the analysis engine, without the protocol layer.
 
 use std::fmt::Write;
 use std::fs;
@@ -96,14 +96,14 @@ fn publishes_only_what_changed() {
         [("util.vi".to_owned(), vec!["BZ001"])]
     );
 
-    // Nothing changed on disk: nothing to publish.
+    // Nothing changed on disk, so there is nothing to publish.
     assert_eq!(fx.touch("util.vi"), []);
 
     // Fixing the file clears its diagnostics.
     fx.vi("util.vi", &CLEAN, &[]);
     assert_eq!(fx.touch("util.vi"), [("util.vi".to_owned(), vec![])]);
 
-    // A new edge closes a cycle; both members are reported.
+    // A new edge closes a cycle, and both members are reported.
     fx.vi("util.vi", &CLEAN, &["main.vi"]);
     assert_eq!(
         fx.touch("util.vi"),
@@ -277,7 +277,8 @@ fn parses_project_files() {
         ["Child.lvclass"]
     );
 
-    // Symbols come from the parsed workspace; hidden directories stay out.
+    // Symbols come from the parsed workspace, and hidden directories stay
+    // out.
     let all = fx.engine.symbols("", 100);
     let listed: Vec<(&str, SymbolKind)> = all.iter().map(|s| (s.name.as_str(), s.kind)).collect();
     assert_eq!(
@@ -385,8 +386,8 @@ fn tracks_changes_to_project_files() {
     assert!(fx.engine.hover(&at("App.lvproj")).is_none());
 }
 
-/// A snapshot is what requests read while the next state is computed: it
-/// must not change under them.
+/// Requests read a snapshot while the next state is computed, so it must
+/// not change under them.
 #[test]
 fn snapshots_are_not_affected_by_later_changes() {
     let mut f = Fixture::new("snapshot");
@@ -439,7 +440,7 @@ fn lists_files_below_a_directory() {
 }
 
 /// The state machine rules are computed when a file is loaded, so they
-/// are published like every other diagnostic. The file is a real one;
+/// are published like every other diagnostic. The file is a real one, and
 /// `crates/buzzard-lint/tests/fixtures/verify/README.md` records its source.
 #[test]
 fn publishes_state_machine_findings() {
@@ -501,8 +502,8 @@ fn vi_bytes(words: &[u32], calls: &[LvPath]) -> Vec<u8> {
 }
 
 impl Fixture {
-    /// Tell the engine an archive changed on disk, as the worker does:
-    /// the archive first, then its members.
+    /// Tell the engine an archive changed on disk, as the worker does, with
+    /// the archive first and then its members.
     fn touch_archive(&mut self, name: &str) -> Vec<(String, Vec<String>)> {
         let path = self.dir.join(name);
         let changes = if path.is_file() {
@@ -601,7 +602,7 @@ fn findings_about_members_are_published_for_the_archive() {
         ]
     );
 
-    // Nothing changed on disk: nothing to publish.
+    // Nothing changed on disk, so there is nothing to publish.
     assert_eq!(fx.touch_archive("lib.llb"), []);
 
     // A change to the archive re-reads its members.

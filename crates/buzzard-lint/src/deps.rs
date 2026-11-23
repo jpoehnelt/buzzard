@@ -6,10 +6,10 @@
 //! * Links under a symbolic root such as `<vilib>` or `<userlib>`. They
 //!   name files of the installation, grouped here by root and by package
 //!   (see [`package`]).
-//! * Machine-absolute links, which only work on a machine laid out like
+//! * Machine-absolute links, which work only on a machine laid out like
 //!   the one that saved the file.
-//! * Relative links at whose location there is no file, neither in the
-//!   workspace nor on disk. A link that does not leave the file holding it
+//! * Relative links whose location holds no file, in the workspace or on
+//!   disk. A link that does not leave the file holding it
 //!   (a bare name such as `user32.dll`, or a generated instance of a
 //!   malleable VI) has no location and is not listed.
 //!
@@ -18,16 +18,16 @@
 //! has a target is decided by the functions the dependency graph and rule
 //! `BZ006` use, so the report never disagrees with them. A missing file
 //! under the `Dependencies` item of a project is not listed when its URL is
-//! relative: the editor computes that item from the links of the project's
-//! VIs, `BZ006` skips it too, and the link of the VI that needs the file is
-//! reported.
+//! relative. The editor computes that item from the links of the project's
+//! VIs, `BZ006` skips it too, and the report lists the link of the VI that
+//! needs the file.
 //!
-//! Nothing is reported as present or absent without a look at the disk: a
+//! Nothing is reported as present or absent without a look at the disk. A
 //! target under a root that was given no directory is [`Status::Unchecked`].
 //!
 //! Stored paths that differ only in letter case, or that print the same,
-//! are one target: links are saved on file systems that ignore case, and
-//! the same file is stored in several spellings.
+//! are one target, because links are saved on file systems that ignore
+//! case, and the same file is stored in several spellings.
 //!
 //! A package is a directory, not a product. A product whose files sit in
 //! one directory and in directories below it appears as several packages:
@@ -65,13 +65,13 @@ pub enum Status {
     Found,
     /// The root was given a directory and the target is not in it.
     Missing,
-    /// The file was not looked up: the root was given no directory, or
-    /// the stored path has a component that is not a plain file name.
+    /// The file was not looked up, because the root was given no directory
+    /// or the stored path has a component that is not a plain file name.
     Unchecked,
 }
 
 impl Status {
-    /// The word printed in every format: `found`, `missing` or `unchecked`.
+    /// The word printed in every format: `found`, `missing`, or `unchecked`.
     pub fn as_str(self) -> &'static str {
         match self {
             Status::Found => "found",
@@ -88,12 +88,14 @@ pub struct Roots {
 }
 
 impl Roots {
-    /// Split a `NAME=DIR` specification, e.g. `vilib=/opt/labview/vi.lib`.
-    /// The name is returned as written; [`Roots::add`] checks it.
+    /// Split a `NAME=DIR` specification, such as
+    /// `vilib=/opt/labview/vi.lib`. The name is returned as written.
+    /// [`Roots::add`] checks it.
     ///
     /// # Errors
     ///
-    /// When the text has no `=`, or nothing on one side of it.
+    /// Returns an error when the text has no `=`, or nothing on one side
+    /// of it.
     pub fn split(spec: &str) -> Result<(&str, &str), String> {
         match spec.split_once('=') {
             Some((name, dir)) if !name.trim().is_empty() && !dir.is_empty() => Ok((name, dir)),
@@ -108,10 +110,11 @@ impl Roots {
     ///
     /// # Errors
     ///
-    /// When the name is empty or holds anything but letters, digits, `_`,
-    /// `-` and `.`; when `dir` does not exist or is not a directory; or
-    /// when the root was already given another directory. The same
-    /// directory in another spelling (`src` and `./src`) is not another.
+    /// Returns an error when the name is empty or holds anything but
+    /// letters, digits, `_`, `-`, and `.`, when `dir` does not exist or is
+    /// not a directory, or when the root was already given another
+    /// directory. The same directory in another spelling (`src` and
+    /// `./src`) counts as the same directory.
     pub fn add(&mut self, name: &str, dir: &Path) -> Result<(), String> {
         let trimmed = name.trim();
         let bare = trimmed
@@ -180,7 +183,7 @@ pub struct DepsReport {
     /// Files that could not be read or parsed. Their links are unknown.
     pub unparsed: Vec<Unparsed>,
     /// The roots that were given a directory although no link is under
-    /// them, in lowercase and sorted: the directory was not used.
+    /// them, in lowercase and sorted. Their directories were not used.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unused_roots: Vec<String>,
 }
@@ -188,7 +191,8 @@ pub struct DepsReport {
 /// Everything linked under one symbolic root.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Root {
-    /// The root's name in lowercase without angle brackets, e.g. `vilib`.
+    /// The root's name in lowercase without angle brackets, such as
+    /// `vilib`.
     pub root: String,
     /// The directory the root was given, when it was given one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,10 +201,10 @@ pub struct Root {
     pub packages: Vec<Package>,
 }
 
-/// The targets that share a package directory; see [`package`].
+/// The targets that share a package directory (see [`package`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Package {
-    /// The package directory below the root, e.g. `Utility/error.llb`.
+    /// The package directory below the root, such as `Utility/error.llb`.
     pub name: String,
     /// The files linked in the package, sorted by path.
     pub targets: Vec<Target>,
@@ -209,7 +213,8 @@ pub struct Package {
 /// One file under a symbolic root.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Target {
-    /// The stored path, e.g. `<vilib>/Utility/error.llb/Clear Errors.vi`.
+    /// The stored path, such as
+    /// `<vilib>/Utility/error.llb/Clear Errors.vi`.
     /// Of stored paths that differ only in letter case, the one that
     /// sorts first.
     pub path: String,
@@ -264,7 +269,7 @@ impl DepsReport {
     }
 
     /// Rewrite every path of the file system in the report: referrers,
-    /// the targets of missing relative links, unparsed files and root
+    /// the targets of missing relative links, unparsed files, and root
     /// directories. Stored paths (targets under a root, machine-absolute
     /// targets) stay as they are. The lists are sorted again afterwards.
     pub fn map_paths(&mut self, show: impl Fn(&str) -> String) {
@@ -316,7 +321,7 @@ impl Totals {
 /// person would install or copy as one unit. `components` is the stored
 /// path without its root, ending in the file name.
 ///
-/// The rule reports directories and knows no product names:
+/// The rule uses directories only and no product names:
 ///
 /// 1. The package is the first two directories of the path: `Utility/x.vi`
 ///    is in `Utility` and `JKI/VIPM API/sub/x.vi` in `JKI/VIPM API`.
@@ -332,7 +337,7 @@ impl Totals {
 ///    member URL) or text with a path separator. A path with no plain name
 ///    to start from, such as the bare root, is in [`IRREGULAR`].
 ///
-/// Letter case is kept as stored; [`scan`] groups packages whose names
+/// Letter case is kept as stored. [`scan`] groups packages whose names
 /// differ only in case.
 pub fn package(components: &[String]) -> String {
     let Some((file, directories)) = components.split_last() else {
@@ -390,21 +395,21 @@ fn is_file_container(name: &str) -> bool {
 
 /// Whether there may be a file at `path`. A path that leads into an
 /// `.llb` archive is present when the archive holds that member, and also
-/// when the archive cannot be read: it is then not known to be absent. A
-/// path that leads into any other file (the private data control inside
-/// an `.lvclass` file) counts as present when that file exists: the file
-/// is not opened to look for the item.
+/// when the archive cannot be read, because the member is then not known
+/// to be absent. A path that leads into any other file (such as the
+/// private data control inside an `.lvclass` file) counts as present when
+/// that file exists, because the file is not opened to look for the item.
 fn on_disk(archives: &Archives, path: &Path) -> bool {
     archives.present(path, true) != Some(false)
 }
 
-/// Whether `components` name something below `directory`; `None` when
+/// Whether `components` name something below `directory`. `None` when
 /// they lead into an `.llb` archive that cannot be read. A name that is
-/// not there as written is looked for without regard to letter case:
-/// links are saved on file systems that ignore case, and are stored in
-/// more than one spelling. A path that leads into an archive is there
-/// when the archive holds that member; one that leads into any other
-/// file counts when that file exists.
+/// not there as written is looked for without regard to letter case,
+/// because links are saved on file systems that ignore case and are
+/// stored in more than one spelling. A path that leads into an archive is
+/// there when the archive holds that member. A path that leads into any
+/// other file is there when that file exists.
 fn below(archives: &Archives, directory: &Path, components: &[String]) -> Option<bool> {
     let Some((first, rest)) = components.split_first() else {
         return Some(true);
@@ -455,7 +460,7 @@ fn below(archives: &Archives, directory: &Path, components: &[String]) -> Option
 /// `components` is the path without its root.
 ///
 /// The path is looked for as stored and then, like a relative link, under
-/// each legacy code page its text may be the bytes of.
+/// each reading of its text as the bytes of a legacy code page.
 fn status_under(
     archives: &Archives,
     directory: Option<&Path>,
@@ -465,9 +470,10 @@ fn status_under(
     let Some(directory) = directory else {
         return Status::Unchecked;
     };
-    // Only plain names are joined to the directory: a parent step, a
-    // separator or a drive in a stored component would leave it. A path
-    // that is not stored as absolute is not one of the installation.
+    // Only plain names are joined to the directory, because a parent
+    // step, a separator, or a drive in a stored component would leave the
+    // directory. A path that is not stored as absolute is not a path of
+    // the installation.
     let plain = |component: &String| {
         let mut parts = Path::new(component).components();
         is_plain(component)
@@ -587,9 +593,9 @@ impl Collected {
             return;
         };
         // A link without a parent step stays inside the file that holds
-        // it. It is a name, not a location: an item of the file itself, a
-        // generated instance, or a shared library the system finds by
-        // name. There is no place on disk to look for it.
+        // it. It names an item of the file itself, a generated instance,
+        // or a shared library the system finds by name. There is no place
+        // on disk to look for it.
         if location.starts_with(normalize(referrer)) {
             return;
         }
@@ -609,7 +615,7 @@ impl Collected {
     /// File a member URL that the project parser does not resolve to a
     /// path beside the project file, when it has one of the shapes of a
     /// stored path: `/<vilib>/...` or `/C/Users/...` as LabVIEW writes
-    /// them, or `<vilib>/...`, `C:/...`, `C:\...` and `\\server\...` as a
+    /// them, or `<vilib>/...`, `C:/...`, `C:\...`, and `\\server\...` as a
     /// hand-edited file may hold them. It is filed like the same path
     /// stored in a binary file, so that both give one target.
     fn unresolved_url(&mut self, referrer: &str, url: &str) {
@@ -742,7 +748,8 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
                         collected.unresolved_url(&referrer, &member.url);
                     } else if !member.dependency && member_is_missing(workspace, &archives, member)
                     {
-                        // The members rule `BZ006` reports, by its test.
+                        // These are the members that rule `BZ006`
+                        // reports, decided by the same function.
                         let target = member.path.as_deref().map_or_else(String::new, text_of);
                         collected
                             .missing
@@ -759,7 +766,7 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
                     }
                 }
             }
-            // An archive holds no links; its members are files of their own.
+            // An archive holds no links. Its members are files of their own.
             FileState::Archive(_) => {}
         }
     }
@@ -910,7 +917,7 @@ fn text_unparsed(out: &mut String, report: &DepsReport) {
     out.push('\n');
 }
 
-/// What no link is under, in words.
+/// The line that says no link is under `root`.
 fn unused(root: &str) -> String {
     format!(
         "{}: no link is under <{}>, so its directory was not used",
@@ -919,7 +926,7 @@ fn unused(root: &str) -> String {
     )
 }
 
-/// The end of both text reports: unparsed files, unused roots, summary.
+/// The end of both text reports: the unused roots and the summary line.
 fn text_tail(out: &mut String, report: &DepsReport) {
     if !report.unused_roots.is_empty() {
         let _ = writeln!(out, "Unused roots ({})", report.unused_roots.len());
@@ -1025,9 +1032,9 @@ fn markdown_unused(out: &mut String, report: &DepsReport) {
 }
 
 /// A report without its files: each package with counts, each link with
-/// the number of files that use it. Its size follows the number of
-/// packages, not the number of links, so it suits a reader with little
-/// room. See [`DepsReport::overview`].
+/// the number of files that use it. Its size grows with the number of
+/// packages, not with the number of files linked in them. See
+/// [`DepsReport::overview`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Overview {
     /// Number of files that were scanned, parsed or not.

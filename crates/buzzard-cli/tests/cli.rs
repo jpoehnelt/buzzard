@@ -159,7 +159,7 @@ fn inspect_prints_markdown_and_json() {
         3
     );
 
-    // Pictures of the diagram.
+    // The svg, mermaid, and dot formats draw the diagram.
     let (code, svg, _) = run(&["inspect", "add.vi", "--format", "svg"], &fixtures);
     assert_eq!(code, 0);
     assert!(svg.starts_with("<svg ") && svg.trim_end().ends_with("</svg>"));
@@ -240,8 +240,8 @@ fn run_with_full_stdout(args: &[&str], dir: &std::path::Path) -> (i32, String) {
     )
 }
 
-/// A report that could not be written is a failure, not a clean result: a
-/// CI step must not pass with an empty or truncated SARIF file.
+/// A report that could not be written is a failure, because a CI step must
+/// not pass with an empty or truncated SARIF file.
 #[cfg(target_os = "linux")]
 #[test]
 fn failing_to_write_the_report_exits_two() {
@@ -266,13 +266,15 @@ fn failing_to_write_the_report_exits_two() {
     let (code, stderr) = run_with_full_stdout(&["inspect", "App.lvproj"], &dir.0);
     assert_eq!(code, 2, "{stderr}");
 
-    // The write failure wins over "problems found" as well.
+    // The write failure also replaces the status 1 of a run that found
+    // problems.
     dir.vi("b.vi", &INLINE_CODE, &[]);
     let (code, stderr) = run_with_full_stdout(&["check"], &dir.0);
     assert_eq!(code, 2, "{stderr}");
 }
 
-/// A reader that goes away early (`buzzard check | head`) is not an error.
+/// A reader that stops reading early (`buzzard check | head`) is not an
+/// error.
 #[cfg(unix)]
 #[test]
 fn closed_pipe_is_not_an_error() {

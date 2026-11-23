@@ -1,9 +1,9 @@
-//! State machine extraction and verification.
+//! Tests of the state machine extraction and verification.
 //!
-//! Real files: `tests/fixtures/verify` (its README records sources and
-//! licences). The classic enumeration machines the extraction was
-//! developed against carry no licence, so they are rebuilt here as
-//! diagrams with the same shape, and
+//! The real files are in `tests/fixtures/verify`, and the README there
+//! records their sources and licenses. The classic enumeration machines
+//! that the extraction was developed against have no license. The tests
+//! rebuild them as diagrams with the same shape, and
 //! `real_machines_outside_the_repository` checks the real files where
 //! they are available.
 
@@ -110,7 +110,7 @@ fn claims_impossibility(findings: &[Finding]) -> bool {
 // Each pair is the machine expected from a real file and a diagram built
 // to the same shape. The expectations were read off the decoded diagrams
 // (`buzzard inspect --format markdown`) and agree with an independent
-// reference extraction made during the format research.
+// reference extraction.
 
 /// `lallers/StateMachine`, `StateMachineP7.vi` (version 13). The stop
 /// terminal is wired to a front-panel control.
@@ -172,7 +172,7 @@ fn ahmed() -> (Spec, Machine) {
 
 /// `frank1641/Multiple-consumer-State-machine`, `Queue State Machine
 /// Lib/Main.vi` (version 20). Two states leave the next-state tunnel
-/// unwired, which sends them to the first item; nothing leads to them.
+/// unwired, which sends them to the first item. Nothing leads to them.
 fn frank() -> (Spec, Machine) {
     let spec = Spec::enumeration(&[
         "Initialize",
@@ -203,7 +203,8 @@ fn frank() -> (Spec, Machine) {
 }
 
 /// `Gluvertski1/StateMachine_LabVIEW`, `StateMachine.vi` (version 17).
-/// One state splits by event case; the loop stops on a comparison.
+/// One state chooses its successor in an event structure, and the loop
+/// stops on a comparison.
 fn gluvertski() -> (Spec, Machine) {
     let spec = Spec::enumeration(&[
         "Initialize",
@@ -248,9 +249,10 @@ fn gluvertski() -> (Spec, Machine) {
 }
 
 /// `GaborDernoczi/LabVIEW_State_Machine`, `State_Machine.vi` (version
-/// 20). The waiting state holds an event structure whose first two cases
-/// leave the next state unwired (the first item, the waiting state
-/// itself) and whose stop tunnel is unwired, True and False.
+/// 20). The waiting state holds an event structure with three cases. The
+/// first two leave the next state unwired, which is the first item, the
+/// waiting state itself. The stop tunnel is unwired in the first case,
+/// True in the second, and False in the third.
 fn gabor() -> (Spec, Machine) {
     let spec = Spec::enumeration(&[
         "Waiting for Event",
@@ -348,7 +350,8 @@ fn toms() -> (Spec, Machine) {
 /// `CandleScience/Labview-State-Machine-Template`,
 /// `SimpleStateMachineTemplate.vi` (version 20). The case structure sits
 /// in the timeout case of an event structure whose other cases write the
-/// next state themselves; six items, four frames.
+/// next state themselves. The enumeration has six items and the case
+/// structure has four frames.
 fn candle() -> (Spec, Machine) {
     let spec = Spec::enumeration(&["Cooling", "Heating", "Start", "Stop", "Idle", "Init"]);
     let item = |name: &str| spec.item(name);
@@ -454,8 +457,8 @@ fn twins_of_the_real_machines_extract_exactly() {
         // The result does not depend on the run.
         assert_eq!(extract(&diagram), extract(&diagram));
     }
-    // What the checks make of them: only the machine with two orphaned
-    // states has findings, and they are proofs.
+    // Only the machine with two unreachable states has findings, and both
+    // are proofs.
     let findings = |twin: Twin| twin().1.check().findings;
     for clean in [lallers, ahmed, gluvertski, gabor, toms, candle] {
         assert_eq!(findings(clean), []);
@@ -469,7 +472,7 @@ fn twins_of_the_real_machines_extract_exactly() {
 }
 
 /// The seven classic enumeration machines the extraction was developed
-/// against have no licence and are not in the repository. Clone them (the
+/// against have no license and are not in the repository. Clone them (the
 /// fixture README lists them) into one directory and run
 /// `BUZZARD_FSM_SAMPLES=<dir> cargo test -p buzzard-lint --test verify -- --ignored`.
 #[test]
@@ -536,9 +539,9 @@ const PINNED_DAMAGE: [(&str, usize, u8, u8); 3] = [
     ),
 ];
 
-/// The invariant of `a_damaged_heap_never_adds_a_proven_finding` on the
-/// real enumeration machines, which cannot be redistributed: first the
-/// three bytes of `PINNED_DAMAGE`, then a sample of every heap.
+/// Checks the invariant of `a_damaged_heap_never_adds_a_proven_finding` on
+/// the real enumeration machines, which cannot be redistributed. It tries
+/// the three bytes of `PINNED_DAMAGE` first, then a sample of every heap.
 #[test]
 #[ignore = "needs BUZZARD_FSM_SAMPLES to point at clones of the sample repositories"]
 fn damage_to_the_real_machines_proves_nothing_new() {
@@ -607,7 +610,7 @@ fn real_string_machine_extracts_exactly() {
     let expected = Machine {
         location: "while loop #3379, case structure #3023".to_owned(),
         // The diagram calls 17 different subVIs, any of which could end
-        // the program; the first eight are named.
+        // the program. The list shows the first eight.
         other_exits: [
             "a subVI call",
             "subVI `Add Registered Process.vi`",
@@ -645,7 +648,7 @@ fn real_string_machine_extracts_exactly() {
 
 #[test]
 fn queue_machines_are_recognised_and_checked_heuristically() {
-    // The library template: every enqueued name has a case.
+    // In the library template every enqueued name has a case.
     let template = verify(&fixture(
         "jki-state-machine/queued-state-machine-template.vi",
     ));
@@ -708,8 +711,8 @@ fn queue_machines_are_recognised_and_checked_heuristically() {
 #[test]
 fn queue_strings_are_split_as_the_real_files_use_them() {
     use buzzard_lint::verify::extract::queued_names;
-    // Lines, arguments after `>>`, and both comment forms, as found in the
-    // real machines.
+    // The strings hold lines, arguments after `>>`, and both comment
+    // forms, as the real machines use them.
     assert_eq!(
         queued_names("Data: Initialize\nInitialize Core Data\nUI: Front Panel State >> Open"),
         [
@@ -737,8 +740,8 @@ fn queue_strings_are_split_as_the_real_files_use_them() {
 
 #[test]
 fn real_loops_with_case_structures_are_not_machines() {
-    // An error cluster from a shift register selects the case, and the
-    // loop counter does.
+    // An error cluster from a shift register selects the case in one
+    // file, and the loop counter does in the other.
     for name in [
         "lv-mqtt-broker/test-simple-connection.vi",
         "jki-state-machine/parse-state-queue-performance-test.vi",
@@ -751,7 +754,8 @@ fn real_loops_with_case_structures_are_not_machines() {
     }
 }
 
-/// A healthy three-state machine to derive the negative cases from.
+/// A three-state machine with no findings, from which the negative cases
+/// are derived.
 fn base() -> Spec {
     Spec::enumeration(&["Init", "Run", "Exit"])
         .starts_in("Init")
@@ -783,7 +787,8 @@ fn the_base_machine_is_found() {
 fn other_selectors_and_loops_are_not_machines() {
     let none = |diagram: &BlockDiagram| assert!(verify(diagram).is_empty());
 
-    // A Boolean and an error cluster selector, even from a register.
+    // A Boolean selector and an error cluster selector give no machine,
+    // even when a register feeds them.
     for kind in [SelectorKind::Boolean, SelectorKind::ErrorCluster] {
         let mut diagram = base().build();
         with_node(&mut diagram, CASE, |case| {
@@ -791,11 +796,12 @@ fn other_selectors_and_loops_are_not_machines() {
         });
         none(&diagram);
     }
-    // A selector table that was not decoded.
+    // The selector table was not decoded.
     let mut diagram = base().build();
     with_node(&mut diagram, CASE, |case| case.selector = None);
     none(&diagram);
-    // A for loop, and a loop class the decoder gives no loop facts for.
+    // The loop is a for loop, or of a class that the decoder gives no loop
+    // facts for.
     for class in ["forLoop", "timedLoop"] {
         let mut diagram = base().build();
         with_node(&mut diagram, LOOP, |looping| {
@@ -803,8 +809,8 @@ fn other_selectors_and_loops_are_not_machines() {
         });
         none(&diagram);
     }
-    // The selector is not the register: its wire comes from a subVI, a
-    // function, a control or the loop counter instead.
+    // The selector is not the register. Its wire comes from a subVI, a
+    // function, a control, or the loop counter.
     for class in ["iUseDCO", "parm", "fPDCO", "lCnt"] {
         let mut diagram = base().build();
         let inner = |t: &buzzard_rsrc::Terminal| {
@@ -816,7 +822,7 @@ fn other_selectors_and_loops_are_not_machines() {
         assert_eq!(changed, 1);
         none(&diagram);
     }
-    // A stacked register: two left terminals.
+    // The register is stacked, with two left terminals.
     let mut diagram = base().build();
     with_node(&mut diagram, LOOP, |looping| {
         let info = looping.loop_info.as_mut().unwrap();
@@ -829,11 +835,11 @@ fn other_selectors_and_loops_are_not_machines() {
         looping.loop_info.as_mut().unwrap().shift_registers.clear();
     });
     none(&diagram);
-    // A case structure with a single frame.
+    // The case structure has a single frame.
     let mut spec = base();
     spec.frames.truncate(1);
     none(&spec.default(0).build());
-    // The selector passes through an indexing tunnel on its way in.
+    // The selector terminal is not wired.
     let mut diagram = base().build();
     let state_in =
         |t: &buzzard_rsrc::Terminal| t.dco_class.as_deref() == Some("caseSel") && t.wired;
@@ -847,7 +853,7 @@ fn other_selectors_and_loops_are_not_machines() {
 
 #[test]
 fn an_integer_register_that_is_only_computed_is_not_a_machine() {
-    // A counter: every frame adds to the register.
+    // This is a counter, because every frame adds to the register.
     let count = Expr::Function(ADD, vec![Expr::Current, integer(1)]);
     let counter = Spec::integers(vec![vec![one(0)], vec![], vec![one(1)]])
         .default(1)
@@ -967,7 +973,8 @@ fn an_unknowable_next_state_is_unknown_and_claims_nothing() {
     for (what, next) in unknowable {
         let mut spec = doomed().next(1, next);
         if matches!(spec.frames[1].next, Expr::Unwired) {
-            // Unwired at the top level: feed the register from nothing.
+            // The frame is unwired at the top level, so nothing feeds the
+            // register.
             spec.loop_next = Some(Expr::Unwired);
         }
         let found = only(&spec.build());
@@ -992,7 +999,7 @@ fn a_wire_that_cannot_be_trusted_is_unknown() {
         assert_eq!(case.uid, CASE);
         &mut case.diagrams[1]
     }
-    // The next-state constant of the frame.
+    // Whether the terminal is the next-state constant of the frame.
     fn is_item(terminal: &buzzard_rsrc::Terminal) -> bool {
         matches!(terminal.constant, Some(Value::Enum { .. }))
     }
@@ -1003,13 +1010,13 @@ fn a_wire_that_cannot_be_trusted_is_unknown() {
     };
     let spec = doomed().goes(1, "Run");
 
-    // Listed backwards: the constant appears as the sink.
+    // The wire is listed backwards, so the constant appears as the sink.
     let mut diagram = spec.build();
     let wire = &mut frame(&mut diagram).wires[0];
     std::mem::swap(&mut wire.source, &mut wire.sinks[0]);
     run_is_unknown(&diagram, "reversed wire");
 
-    // Two wires into one terminal.
+    // Two wires lead into one terminal.
     let mut diagram = spec.build();
     let inner = frame(&mut diagram);
     let mut second = inner.wires[0].clone();
@@ -1058,9 +1065,9 @@ fn a_wire_that_cannot_be_trusted_is_unknown() {
 
 #[test]
 fn a_selector_and_register_of_different_types_resolve_nothing() {
-    // The register is a 32-bit integer and the selector an enumeration: a
-    // conversion sits between them, so written values are not resolved
-    // and the initial state is unknown.
+    // The register is a 32-bit integer and the selector an enumeration, so
+    // a conversion sits between them. Written values are not resolved and
+    // the initial state is unknown.
     let mut diagram = doomed().build();
     let register =
         |t: &buzzard_rsrc::Terminal| matches!(t.dco_class.as_deref(), Some("lSR" | "rSR"));
@@ -1116,7 +1123,7 @@ fn a_stop_that_is_not_a_constant_is_maybe() {
         ),
     ];
     for (what, stop) in unknowable {
-        // In one frame only.
+        // The stop is not a constant in one frame only.
         let found = only(&doomed().stop(1, stop.clone()).build());
         assert_eq!(found.states[1].stop, MAYBE, "{what}");
         assert_eq!(found.states[0].stop, NEVER, "{what}");
@@ -1126,7 +1133,7 @@ fn a_stop_that_is_not_a_constant_is_maybe() {
             [unreachable("Exit"), unreachable("Orphan")],
             "{what}"
         );
-        // For the whole loop.
+        // The stop is not a constant for the whole loop.
         let mut spec = doomed();
         spec.loop_stop = Some(stop);
         let found = only(&spec.build());
@@ -1199,9 +1206,9 @@ fn an_uninitialised_register_has_no_known_first_state() {
     assert_eq!(found.initial, None);
     let report = found.check();
     assert_eq!(report.reachable, None);
-    // Nothing is claimed about reachability; that no state can stop is
-    // true wherever the loop starts... except in "Exit" itself, so only
-    // the states that cannot reach it are reported.
+    // Nothing is claimed about reachability. Wherever the loop starts it
+    // cannot stop, except in "Exit" itself, so only the states that cannot
+    // reach "Exit" are reported.
     assert_eq!(
         report.findings,
         [
@@ -1217,7 +1224,8 @@ fn an_uninitialised_register_has_no_known_first_state() {
     for initial in [Expr::Control, Expr::Call] {
         assert_eq!(only(&doomed().starts(initial).build()).initial, None);
     }
-    // One of two constants: both are possible first states.
+    // The initial value is one of two constants, so both are possible
+    // first states.
     let either = select(doomed().item("Init"), doomed().item("Orphan"));
     let found = only(&doomed().starts(either).build());
     assert_eq!(found.initial, Some(names(&["Init", "Orphan"])));
@@ -1238,7 +1246,7 @@ fn an_uninitialised_register_has_no_known_first_state() {
 
 #[test]
 fn a_frame_with_several_values_is_one_state() {
-    // Frames: `..-1`, `0`, `1, 3..5`, `6..` and a default for 2.
+    // Frames: `..-1`, `0`, `1, 3..5`, `6..`, and a default for 2.
     let spec = Spec::integers(vec![
         vec![range(None, Some(-1))],
         vec![one(0)],
@@ -1250,7 +1258,7 @@ fn a_frame_with_several_values_is_one_state() {
     .starts(integer(0))
     .next(0, integer(-7)) // stays in `..-1`
     .next(1, select(integer(4), integer(1))) // both in `1, 3..5`
-    .next(2, integer(2)) // no frame lists 2: the default
+    .next(2, integer(2)) // no frame lists 2, so the default runs
     .next(3, integer(1_000_000))
     .next(4, select(integer(i64::from(i32::MIN)), integer(6)));
     let expected = machine(
@@ -1270,7 +1278,7 @@ fn a_frame_with_several_values_is_one_state() {
     let found = only(&spec.clone().next(3, integer(1 << 40)).build());
     assert_eq!(found.states[3].successors, Successors::Unknown);
     // Without a default frame, a value no frame lists has no case at all,
-    // which a runnable diagram cannot have: unknown.
+    // which a runnable diagram cannot have, so the successor is unknown.
     let mut partial = spec;
     partial.default = None;
     partial.frames[4].matches = vec![one(99)];
@@ -1281,8 +1289,8 @@ fn a_frame_with_several_values_is_one_state() {
 
 #[test]
 fn enumeration_values_resolve_by_value_not_by_label() {
-    // Frames: `"A", "C"`, then `"B".."B"`... as a range `"D".."E"`, then
-    // a default that also lists "B".
+    // Frames: `"A", "C"`, then the range `"D".."E"`, then a default that
+    // also lists "B".
     let mut spec = Spec::enumeration(&["A", "B", "C", "D", "E", "F"]).default(2);
     spec.frames.truncate(3);
     spec.frames[0].matches = vec![one(0), one(2)];
@@ -1291,7 +1299,7 @@ fn enumeration_values_resolve_by_value_not_by_label() {
     let spec = spec
         .starts_in("C")
         .goes(0, "E")
-        .goes(1, "F") // no frame lists "F": the default
+        .goes(1, "F") // no frame lists "F", so the default runs
         .goes(2, "A");
     let expected = machine(
         vec![
@@ -1359,8 +1367,8 @@ fn strings_match_exactly_and_fall_to_the_default() {
 
 #[test]
 fn an_unmatched_string_is_never_mistaken_for_a_state_name() {
-    // The state of the first frame is named `Run, Go`; a constant with
-    // that very text matches neither label and runs the default case.
+    // The state of the first frame is named `Run, Go`. A constant with
+    // exactly that text matches neither label and runs the default case.
     let mut spec = Spec::strings(&["Run", "Idle"]).default(1);
     spec.frames[0].matches = vec![label("Run"), label("Go")];
     let found = only(&spec.starts(text("Go")).next(1, text("Run, Go")).build());
@@ -1382,7 +1390,7 @@ fn letter_case_and_other_alphabets_are_handled_conservatively() {
     let spec = Spec::strings(&["Init", "Run", "Idle"])
         .default(2)
         .starts(text("Init"));
-    // Whether the case structure ignores case is not read: "run" selects
+    // Whether the case structure ignores case is not read. "run" selects
     // "Run" or the default, and is not reported as undefined.
     let found = only(&spec.clone().next(0, text("run")).build());
     assert_eq!(found.states[0], state("Init", &["Idle", "Run"], NEVER));
@@ -1390,7 +1398,8 @@ fn letter_case_and_other_alphabets_are_handled_conservatively() {
     // A string that is not ASCII is not compared at all.
     let found = only(&spec.clone().next(0, text("Rün")).build());
     assert_eq!(found.states[0].successors, Successors::Unknown);
-    // Without a default case an unlisted string has nowhere to go.
+    // Without a default case no frame runs for an unlisted string, so the
+    // successor is unknown.
     let mut strict = spec.next(0, text("Rnu"));
     strict.default = None;
     assert_eq!(
@@ -1407,7 +1416,7 @@ fn values_are_followed_through_structures() {
     let next = |expr: Expr| only(&doomed().next(1, expr).build()).states[1].clone();
     let goes = |targets: &[&str]| state("Run", targets, NEVER);
 
-    // A nested case structure contributes every frame; an unwired frame
+    // A nested case structure contributes every frame. An unwired frame
     // with "use default" is the first item.
     let nested = Expr::Case {
         frames: vec![item("Exit"), Expr::Unwired, Expr::Current],
@@ -1423,10 +1432,11 @@ fn values_are_followed_through_structures() {
     assert_eq!(next(waiting(false)), goes(&["Exit", "Orphan"]));
     // With a wired timeout it may run none, leaving the type's default.
     assert_eq!(next(waiting(true)), goes(&["Exit", "Init", "Orphan"]));
-    // A disable structure: whichever frame is enabled.
+    // A disable structure gives the value of whichever frame is enabled.
     let disabled = Expr::Disable(vec![item("Exit"), item("Orphan")]);
     assert_eq!(next(disabled), goes(&["Exit", "Orphan"]));
-    // A stacked sequence: the one frame that writes the tunnel.
+    // A stacked sequence gives the value of the one frame that writes the
+    // tunnel.
     let sequence = Expr::Sequence(vec![Expr::Unwired, item("Exit"), Expr::Unwired]);
     assert_eq!(next(sequence), goes(&["Exit"]));
     // A nested while loop runs at least once.
@@ -1444,12 +1454,13 @@ fn the_case_structure_may_sit_inside_other_structures() {
     let (spec, expected) = candle();
     let diagram = spec.build();
     assert_eq!(only(&diagram), expected);
-    // Without the wired timeout the default no longer leaks in, which
-    // changes nothing here: "Cooling" has no frame and runs "Idle".
+    // Without the wired timeout the type's default is no longer a possible
+    // value. That changes nothing here, because "Cooling" has no frame and
+    // runs "Idle".
     let mut waiting = spec.clone();
     waiting.wrap.as_mut().unwrap().timeout_wired = false;
     assert_eq!(only(&waiting.build()), expected);
-    // An event case that hands the state to a subVI makes every state's
+    // An event case that passes the state to a subVI makes every state's
     // successor unknown, since any state can be current when it runs.
     let mut opaque_event = spec;
     opaque_event.wrap.as_mut().unwrap().others[0].0 = Expr::Call;
@@ -1466,8 +1477,9 @@ fn two_case_structures_on_one_register_are_two_machines() {
     let inside = &mut diagram.root.nodes[1].diagrams[0];
     let mut second = inside.nodes[1].clone();
     assert_eq!(second.uid, CASE);
-    // A copy with ids of its own, selected by the same register but not
-    // wired to it: it handles the states without choosing the next one.
+    // The copy has ids of its own. The same register selects it, but it
+    // writes nothing to the register. It handles the states without
+    // choosing the next one.
     second.uid = 80_000;
     let renumber = |node: &mut buzzard_rsrc::Node| {
         for terminal in &mut node.terminals {
@@ -1500,10 +1512,10 @@ fn two_case_structures_on_one_register_are_two_machines() {
         found.machines[1].location,
         format!("while loop #{LOOP}, case structure #80000")
     );
-    // The first is unchanged. In the second, the register is written by
-    // the first structure, of which any frame may run as far as the
-    // second can tell: its frames are the same states, each of which may
-    // be followed by any state the first structure writes.
+    // The first machine is unchanged. The first structure writes the
+    // register, and the second cannot tell which frame of the first runs.
+    // So the second machine has the same states, and each may be followed
+    // by any state the first structure writes.
     assert_eq!(
         Machine {
             location: String::new(),
@@ -1511,8 +1523,8 @@ fn two_case_structures_on_one_register_are_two_machines() {
         },
         only(&base().build())
     );
-    // ("Exit" holds the state in the first structure, which for the
-    // second is whichever state is current.)
+    // "Exit" holds the state in the first structure, and for the second
+    // that is whichever state is current.
     let expected = machine(
         vec![
             state("Init", &["Exit", "Init", "Run"], MAYBE),
@@ -1555,7 +1567,7 @@ fn injected_bugs_in_a_real_machine_are_found() {
         [unreachable("Idle"), Finding::NeverTerminates]
     );
 
-    // Misspell the target: the default case runs, and the finding says so.
+    // Misspell the target. The default case runs, and the finding says so.
     let mut bug = real.clone();
     bug.states[0].successors = Successors::Known(names(&[]));
     bug.states[0].unmatched = names(&["Idel"]);
@@ -1567,7 +1579,7 @@ fn injected_bugs_in_a_real_machine_are_found() {
         }]
     );
 
-    // Make "Init" a trap: it holds itself and never stops.
+    // Make "Init" hold itself and never stop.
     let mut bug = real.clone();
     bug.states[0].stop = NEVER;
     bug.states[0].successors = Successors::Known(names(&["Init"]));
@@ -1579,7 +1591,7 @@ fn injected_bugs_in_a_real_machine_are_found() {
             state: "Init".to_owned()
         }]
     );
-    // Make no state stop: the loop can never stop.
+    // Make no state stop, so the loop can never stop.
     let mut bug = real;
     for state in &mut bug.states {
         state.stop = NEVER;
@@ -1602,7 +1614,7 @@ fn injected_bugs_in_the_twins_are_found() {
     // Retarget "Process 2" from "End" to "Shutdown".
     let found = only(&spec.clone().goes(2, "Shutdown").build());
     assert_eq!(found.check().findings, [unreachable("End")]);
-    // Forget to wire the stop in "Shutdown".
+    // Leave the stop in "Shutdown" unwired.
     let found = only(&spec.clone().stop(4, Expr::Unwired).build());
     assert_eq!(found.check().findings, [Finding::NeverTerminates]);
     // Add a state that loops on itself and send "End" there too.
@@ -1627,9 +1639,9 @@ fn injected_bugs_in_the_twins_are_found() {
 
 #[test]
 fn damaged_diagrams_do_not_panic() {
-    // Structural damage to a real diagram and to a built one: ids
+    // Structural damage to two real diagrams and a built one: ids are
     // duplicated or redirected, wires reversed and cut, frames dropped,
-    // tunnel facts and selector tables changed.
+    // and tunnel facts and selector tables changed.
     let mut subjects = vec![fixture("jki-smo/process.vi"), candle().0.build()];
     subjects.push(fixture("jki-state-machine/new-support-vis-examples.vi"));
     for original in subjects {
@@ -1741,7 +1753,8 @@ fn a_walk_that_branches_without_end_gives_up() {
             sinks: vec![feed],
         });
         if feed != sink {
-            // Both value inputs of the previous Select hang on this one.
+            // Both value inputs of the previous Select are sinks of this
+            // wire.
             frame.wires.last_mut().unwrap().sinks.push(feed + 4);
         }
         feed = uid + 12;
@@ -1793,8 +1806,8 @@ fn lint_reports_the_findings_under_three_rules() {
         (severity.to_owned(), code, format!("{at}: {text} {how}"))
     };
 
-    // Unreachable states are warnings; a loop that never stops at all is
-    // informational, since a daemon is a legitimate design.
+    // Unreachable states are warnings. A loop that never stops at all is
+    // informational, because a daemon is a legitimate design.
     assert_eq!(
         lint_diagram(doomed().build()),
         [
@@ -1821,7 +1834,7 @@ fn lint_reports_the_findings_under_three_rules() {
             "once in state `Stuck` the loop's condition terminal can never stop the loop"
         )]
     );
-    // A misspelled state name that the default case swallows.
+    // A misspelled state name runs the default case.
     let typo = Spec::strings(&["Init", "Run", "Idle"])
         .default(2)
         .starts(text("Init"))
@@ -1839,8 +1852,8 @@ fn lint_reports_the_findings_under_three_rules() {
             ),
         ]
     );
-    // A healthy machine, and a machine whose wiring cannot be followed,
-    // report nothing.
+    // A machine without findings, and a machine whose wiring cannot be
+    // followed, report nothing.
     assert_eq!(lint_diagram(base().build()), []);
     assert_eq!(lint_diagram(doomed().next(1, Expr::Call).build()), []);
 
@@ -1873,7 +1886,7 @@ fn issues_say_how_much_they_claim() {
 
 #[test]
 fn a_selector_table_that_contradicts_itself_is_tolerated() {
-    // A default frame that does not exist, as no decoder would give it.
+    // The default frame does not exist, which no decoder would give.
     let mut diagram = Spec::strings(&["Init", "Run"])
         .default(1)
         .starts(text("Nowhere"))
@@ -1910,7 +1923,7 @@ fn claims(diagram: &BlockDiagram) -> Vec<(Confidence, &'static str, String)> {
 /// Add a node of the given class next to the loop.
 fn with_extra_node(mut diagram: BlockDiagram, class: &str, name: Option<&str>) -> BlockDiagram {
     diagram.root.nodes.push(buzzard_rsrc::Node {
-        uid: 70_000 + i32::try_from(diagram.root.nodes.len()).expect("few nodes"),
+        uid: 70_000 + i32::try_from(diagram.root.nodes.len()).expect("the diagram has few nodes"),
         class: class.to_owned(),
         name: name.map(str::to_owned),
         ..buzzard_rsrc::Node::default()
@@ -1951,7 +1964,7 @@ fn a_diagram_with_a_recorded_loss_is_not_searched() {
         ]
     );
 
-    // With the loss on record nothing is claimed: no machine at all.
+    // With the loss on record nothing is claimed, and no machine is found.
     let lossy = |place: fn(&mut BlockDiagram) -> &mut buzzard_rsrc::Diagram, loss: Loss| {
         let mut diagram = damaged.clone();
         place(&mut diagram).losses = vec![loss];
@@ -1988,7 +2001,7 @@ fn a_diagram_with_a_recorded_loss_is_not_searched() {
              machines), 1 without.\nNo findings.\n"
         );
     }
-    // Any loss on the undamaged diagram refuses it as well.
+    // The undamaged diagram with any loss is not searched either.
     let mut diagram = whole;
     diagram.root.losses = vec![Loss::WireEnd];
     assert_eq!(extract(&diagram).machines, []);
@@ -1996,7 +2009,7 @@ fn a_diagram_with_a_recorded_loss_is_not_searched() {
 
 #[test]
 fn a_frame_that_no_value_selects_gives_no_machine() {
-    // "Exit" has no entry and is not the default: the table contradicts
+    // "Exit" has no entry and is not the default, so the table contradicts
     // the frame list. No state "frame 2" may be made up for it.
     let mut spec = base();
     spec.frames[2].matches.clear();
@@ -2067,8 +2080,8 @@ fn a_constant_without_a_case_is_structural_and_reported_once() {
     assert!(!issues[1].message().contains("writes"));
 
     // The case structure sits in one frame of an event structure and
-    // another event frame writes the constant: one finding for the
-    // machine, and no state is blamed for writing it.
+    // another event frame writes the constant. There is one finding for
+    // the machine, and it names no state as the writer.
     let mut wrapped = Spec::strings(&["Init", "Run", "Exit"])
         .default(0)
         .starts(text("Init"))
@@ -2090,7 +2103,7 @@ fn a_constant_without_a_case_is_structural_and_reported_once() {
         .starts_with("a constant `Shutdown` that no case handles"));
 
     // A state that always stops the loop writes a value that is never
-    // used to select a case: nothing is reported.
+    // used to select a case, so nothing is reported.
     let stopping = Spec::strings(&["Init", "Exit"])
         .default(0)
         .starts(text("Init"))
@@ -2107,7 +2120,7 @@ fn a_constant_without_a_case_is_structural_and_reported_once() {
 #[test]
 fn other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven() {
     let never = "the loop's condition terminal can never stop the loop";
-    // Nothing but the loop on the diagram: proven.
+    // With nothing but the loop on the diagram the finding is proven.
     let alone = doomed().build();
     assert_eq!(extract(&alone).machines[0].other_exits, [""; 0]);
     let found = claims(&alone);
@@ -2116,8 +2129,8 @@ fn other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven() {
     let computing = with_extra_node(doomed().build(), "prim", None);
     assert_eq!(claims(&computing), found);
 
-    // Anything that could end the program or abort the VI: the finding
-    // is not proven and names what was found.
+    // With anything that could end the program or abort the VI, the
+    // finding is not proven and names what was found.
     for (class, name, shown) in [
         ("iUse", Some("Quit App.vi"), "subVI `Quit App.vi`"),
         ("iUse", None, "a subVI call"),
@@ -2150,8 +2163,8 @@ fn other_ways_out_keep_a_loop_that_cannot_stop_from_being_proven() {
         assert!(lint[2].2.ends_with("(structural, not proven)"), "{lint:?}");
     }
 
-    // The same for a single trap state, and the node may sit anywhere,
-    // here inside another frame than the trap's.
+    // The same holds for a single trap state. The node may be anywhere,
+    // and here it is in a frame other than the trap's.
     let trap = Spec::enumeration(&["Init", "Run", "Exit", "Stuck"])
         .starts_in("Init")
         .goes(1, "Exit")
@@ -2245,7 +2258,7 @@ fn only_selector_types_whose_table_was_seen_are_resolved() {
         unresolved(&counter(numeric, 2));
     }
 
-    // Enumerations of every width were seen; a negative number in the
+    // Enumerations of every width were seen. A negative number in the
     // table of one was not.
     for numeric in [NumericType::Enum8, NumericType::Enum16, NumericType::Enum32] {
         let mut spec = base();
@@ -2310,7 +2323,7 @@ fn a_proof_about_a_type_definition_says_which_copy_it_is_about() {
         .2
         .ends_with(&format!("{saved} (proven)")));
 
-    // A string machine has no item list to go stale.
+    // A string machine has no item list that could be out of date.
     let mut strings = Spec::strings(&["Init", "Run"])
         .default(0)
         .starts(text("Init"));
@@ -2330,8 +2343,8 @@ fn registers_that_do_not_pair_one_to_one_give_no_machine() {
         ..buzzard_rsrc::Terminal::default()
     };
     // A second left terminal that the register does not list, as a
-    // stacked register stored one element per object would look: on the
-    // loop, on its diagram, and on both.
+    // stacked register stored one element per object would look. The
+    // cases put it on the loop, on its diagram, and on both.
     for (outer, inner) in [(true, false), (false, true), (true, true)] {
         for class in ["lSR", "rSR"] {
             let mut diagram = base().build();
@@ -2351,7 +2364,8 @@ fn registers_that_do_not_pair_one_to_one_give_no_machine() {
             none(&diagram);
         }
     }
-    // A second register that is listed and paired is fine: it is data.
+    // A second register that is listed and paired is data and changes
+    // nothing.
     let mut diagram = base().build();
     with_node(&mut diagram, LOOP, |looping| {
         looping
@@ -2374,7 +2388,7 @@ fn registers_that_do_not_pair_one_to_one_give_no_machine() {
         });
     });
     assert_eq!(extract(&diagram).machines.len(), 1);
-    // The other register is stacked: the loop is refused, even though
+    // The other register is stacked, so the loop is refused, even though
     // the state register itself is a plain one.
     with_node(&mut diagram, LOOP, |looping| {
         let info = looping.loop_info.as_mut().unwrap();
@@ -2410,8 +2424,8 @@ fn a_structure_is_what_its_class_says_only_when_the_rest_agrees() {
     let init = |diagram: &BlockDiagram| only(diagram).states[0].successors.clone();
     assert_eq!(init(&diagram), Successors::Known(names(&["Init", "Run"])));
     // Without a selector table for its frames it is not read as a case
-    // structure: an event structure whose class is misread would look
-    // like this, and one with a timeout can hand out a default that no
+    // structure. An event structure whose class is misread would look
+    // like this, and one with a timeout can give a default that no
     // frame writes.
     let strip = |diagram: &mut BlockDiagram, change: fn(&mut buzzard_rsrc::Node)| {
         build::visit(&mut diagram.root, &mut |node| {
@@ -2427,9 +2441,9 @@ fn a_structure_is_what_its_class_says_only_when_the_rest_agrees() {
     strip(&mut diagram, |node| node.selector = None);
     assert_eq!(init(&diagram), Successors::Unknown);
 
-    // A nested while loop hands its value out; a loop with a count
+    // A nested while loop passes its value out. A loop with a count
     // terminal is a for loop whatever its class says, and a for loop that
-    // runs zero times hands out a default.
+    // runs zero times gives a default.
     let looped = Expr::While(Box::new(base().item("Run")));
     let mut diagram = base().next(0, looped).build();
     assert_eq!(init(&diagram), Successors::Known(names(&["Run"])));
@@ -2481,7 +2495,7 @@ fn a_huge_case_structure_is_not_modelled_and_a_large_one_is_quick() {
         largest.machines[0].reachable.as_ref().map(Vec::len),
         Some(MAX_STATES)
     );
-    // Structural, because of the subVI.
+    // The one finding is structural, because of the subVI.
     assert_eq!(largest.issues().len(), 1);
     let report = Verified::new(vec![(PathBuf::from("Main.vi"), Ok(Some(largest)))]);
     assert!(to_text(&report).contains("      S1023 -> ? (any state); never stops the loop\n"));
@@ -2493,7 +2507,8 @@ fn a_huge_case_structure_is_not_modelled_and_a_large_one_is_quick() {
         assert_eq!(found.machines, []);
         assert!(!found.incomplete);
     }
-    // Generous: all of the above takes about a second in a debug build.
+    // The limit is wide. All of the above takes about a second in a
+    // debug build.
     assert!(started.elapsed() < std::time::Duration::from_secs(60));
 }
 
@@ -2535,8 +2550,8 @@ struct Damage {
     /// Proven findings the undamaged file does not have, with the place
     /// and the byte that produced them.
     added: Vec<String>,
-    /// The same, where the damage changed nothing but a value: see
-    /// [`skeleton`].
+    /// The same, where the damage changed nothing but a value (see
+    /// [`skeleton`]).
     revalued: Vec<String>,
     /// Damaged heaps that decoded without a recorded loss to a diagram
     /// with less on it than the undamaged one.
@@ -2544,16 +2559,16 @@ struct Damage {
 }
 
 /// The structure of a diagram without the values on it: what constants
-/// and case tables say, types, names, positions and the polarity of the
+/// and case tables say, types, names, positions, and the polarity of the
 /// condition terminal are blanked.
 ///
-/// A changed byte that leaves this as it was has changed a value: an
-/// enumeration constant now holds another item, a case is labelled with
-/// another string or selected by another value, another case is the
+/// A changed byte that leaves this as it was has changed a value. An
+/// enumeration constant now holds another item, a case is labeled with
+/// another string or selected by another value, or another case is the
 /// default. The result is a complete diagram of another program, and a
-/// proof about it is right about it; nothing was lost. Such findings are
-/// counted apart. Everything else, a wire, a terminal, a node, a class,
-/// a tunnel flag or a parameter index that differs, is damage to the
+/// proof about it is right about it. Nothing was lost. Such findings are
+/// counted separately. Everything else, a wire, a terminal, a node, a class,
+/// a tunnel flag, or a parameter index that differs, is damage to the
 /// structure, and that must never add a proof.
 fn skeleton(diagram: &BlockDiagram) -> BlockDiagram {
     let mut copy = diagram.clone();
@@ -2574,7 +2589,7 @@ fn skeleton(diagram: &BlockDiagram) -> BlockDiagram {
     copy
 }
 
-/// How much there is on a diagram: frames, nodes, terminals, wires and
+/// How much there is on a diagram: frames, nodes, terminals, wires, and
 /// wire ends.
 fn amount(diagram: &BlockDiagram) -> [usize; 5] {
     [
@@ -2587,7 +2602,7 @@ fn amount(diagram: &BlockDiagram) -> [usize; 5] {
 }
 
 /// The values a byte is changed to: both extremes, single bits low, in
-/// the middle and high, and the neighbouring values.
+/// the middle and high, and the neighboring values.
 fn damaged_values(byte: u8) -> BTreeSet<u8> {
     let mut values = BTreeSet::from([
         0x00,
@@ -2605,7 +2620,7 @@ fn damaged_values(byte: u8) -> BTreeSet<u8> {
 
 /// Change one byte at a time of the inflated block diagram heap of a
 /// file, at every `step`-th position, to each of [`damaged_values`], and
-/// decode and verify the result with the file's own types, links and
+/// decode and verify the result with the file's own types, links, and
 /// front panel.
 fn damage(bytes: &[u8], step: usize) -> Damage {
     use buzzard_rsrc::blocks::zlib;
@@ -2701,9 +2716,9 @@ fn a_damaged_field_tag_in_a_real_file_proves_nothing() {
 
     assert!(lossy >= 2);
 
-    // The value of the field is another matter. With frame 0 written
-    // there the file is whole and says that "Init" is the default case:
-    // another program, in which "Idle" really is never reached.
+    // The value of the field is a different case. With frame 0 written
+    // there the file is whole and says that "Init" is the default case.
+    // That is another program, in which "Idle" is never reached.
     let other = decode(AT + 1, 0x00);
     assert!(other.is_complete());
     assert_eq!(only(&other).default.as_deref(), Some("Init"));
@@ -2711,7 +2726,7 @@ fn a_damaged_field_tag_in_a_real_file_proves_nothing() {
 }
 
 /// Every `step`-th byte of the heap is damaged. Set
-/// `BUZZARD_HEAP_DAMAGE_STEP` to a smaller step for a denser run: with
+/// `BUZZARD_HEAP_DAMAGE_STEP` to a smaller step for a denser run. With
 /// `cargo test --release`, 29 takes about five minutes on four cores and
 /// 1, which tries every byte, takes hours.
 fn damage_step(default: usize) -> usize {
@@ -2725,9 +2740,9 @@ fn damage_step(default: usize) -> usize {
 /// is changed to.
 ///
 /// `0x55` makes it a second copy of a field the object already has, and
-/// `0xff` a field nothing has: both are a recorded loss, and the diagram
+/// `0xff` a field nothing has. Both are a recorded loss, and the diagram
 /// is not searched. The others make it a field that exists elsewhere but
-/// that no case structure has; the selector table is then not trusted to
+/// that no case structure has. The selector table is then not trusted to
 /// say that frame 0 is the default, so there is no table and no machine.
 const TAGS: [u8; 6] = [0x00, 0x44, 0x53, 0x55, 0xd4, 0xff];
 
@@ -2741,15 +2756,16 @@ const FIXTURES: [&str; 5] = [
 
 /// The invariant behind the word "proven": damage to the structure of a
 /// diagram may remove findings, but no proven finding appears that the
-/// undamaged file does not have. And the property of the decoder that the
-/// invariant rests on: whenever a frame, a node, a terminal, a wire or a
-/// wire end is gone from the decoded diagram, a loss is on record.
+/// undamaged file does not have. The invariant rests on a property of the
+/// decoder, which the test also checks. Whenever a frame, a node, a
+/// terminal, a wire, or a wire end is gone from the decoded diagram, a loss
+/// is on record.
 ///
 /// Damage that only changes a value (see [`skeleton`]) gives a complete
-/// diagram of another program; proofs about it are counted and printed,
-/// not failed. With every byte tried, `process.vi` has 34 of them: the
-/// label of the case "Init" spelled otherwise (the new name is then
-/// unreachable) and the number of the default case changed.
+/// diagram of another program. The test counts and prints the proofs about
+/// it and does not fail. With every byte tried, `process.vi` has 34 of
+/// them: the label of the case "Init" spelled otherwise (the new name is
+/// then unreachable) and the number of the default case changed.
 #[test]
 fn a_damaged_heap_never_adds_a_proven_finding() {
     let step = damage_step(499);

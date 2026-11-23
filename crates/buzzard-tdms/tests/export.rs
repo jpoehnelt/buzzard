@@ -1,4 +1,4 @@
-//! The CSV and Parquet exports.
+//! Tests of the CSV and Parquet exports.
 
 use buzzard_tdms::build::{FileBuilder, Object, Values};
 use buzzard_tdms::export::{write_csv, ExportOptions};
@@ -86,7 +86,7 @@ fn channels_without_common_timing_get_no_time_column() {
     let mut out = Vec::new();
     write_csv(&file, &channels, &mut out, &ExportOptions::default()).unwrap();
     assert_eq!(String::from_utf8(out).unwrap(), "g/fast,g/slow\n1,3\n2,\n");
-    // One of them alone has its time.
+    // One of the channels alone gets a time column.
     let mut out = Vec::new();
     write_csv(&file, &channels[..1], &mut out, &ExportOptions::default()).unwrap();
     assert_eq!(
@@ -155,7 +155,7 @@ mod parquet {
                 write_parquet(&file, &channels, &mut first, &options, compression).unwrap();
             assert_eq!(exported.rows, 3);
             assert_eq!(exported.columns.len(), 8);
-            // Byte-identical when written again.
+            // A second write gives the same bytes.
             let mut second = Vec::new();
             write_parquet(&file, &channels, &mut second, &options, compression).unwrap();
             assert_eq!(first, second);
@@ -221,7 +221,7 @@ mod parquet {
             assert_eq!(note.value(1), "a \"quoted\", one");
             let when = batch.column(7).as_primitive::<TimestampNanosecondType>();
             assert_eq!(when.value(0), 1_767_155_200_000_000_000);
-            // A time beyond what nanoseconds can hold is missing.
+            // A time that does not fit in 64-bit nanoseconds is null.
             assert!(when.is_null(1));
             // The valve channel has ended by the last row.
             let last = batches.last().unwrap();

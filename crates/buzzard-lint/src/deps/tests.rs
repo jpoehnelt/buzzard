@@ -328,7 +328,7 @@ fn a_location_is_one_link_whether_a_vi_or_a_project_file_stores_it() {
 
 #[test]
 fn member_urls_in_the_shapes_of_a_stored_path_are_listed() {
-    // Not what LabVIEW writes, but what a hand-edited file may hold.
+    // LabVIEW does not write these shapes. A hand-edited file may hold them.
     let lvproj = r#"<Project Type="Project" LVVersion="23008000">
         <Item Name="y.vi" Type="VI" URL="C:/Users/me/y.vi"/>
         <Item Name="z.vi" Type="VI" URL="C:\Users\me\z.vi"/>
@@ -702,7 +702,7 @@ fn a_root_with_a_directory_is_looked_up_on_disk() {
 }
 
 /// A target inside an `.llb` is found only if the archive on disk holds
-/// that member. An archive that cannot be read says nothing.
+/// that member. When the archive cannot be read, the status is unchecked.
 #[test]
 fn a_target_inside_an_archive_is_looked_up_in_the_archive() {
     let dir = TempDir::new("archive-status");
@@ -876,8 +876,8 @@ fn a_relative_link_stored_in_a_legacy_code_page_is_not_missing() {
         )],
         &Roots::default(),
     );
-    // The first is on disk under its Shift-JIS reading; the second is not
-    // there under any.
+    // The first is on disk under its Shift-JIS reading. The second is not
+    // there under any reading.
     assert_eq!(found.missing.len(), 1, "{:?}", found.missing);
     assert_eq!(found.missing[0].referrers, [shown(&main)]);
 }
@@ -898,7 +898,7 @@ fn a_path_that_is_not_stored_as_absolute_is_not_looked_up() {
             at("main.vi"),
             vi(&[
                 of_kind(PathKind::Absolute, "abs.vi"),
-                // One target with the link above; the spelling that can be
+                // One target with the link above. The spelling that can be
                 // looked up decides.
                 of_kind(PathKind::Unc, "ABS.vi"),
                 of_kind(PathKind::Relative, "rel.vi"),
@@ -970,7 +970,7 @@ fn root_specifications_are_checked() {
         Roots::split("vilib=/opt/vi.lib"),
         Ok(("vilib", "/opt/vi.lib"))
     );
-    // Only the first `=` separates; a directory may hold one.
+    // Only the first `=` separates. A directory name may hold one.
     assert_eq!(Roots::split("vilib=/a=b"), Ok(("vilib", "/a=b")));
     for bad in ["vilib", "=dir", "vilib=", "", " =dir"] {
         assert!(Roots::split(bad).is_err(), "{bad:?}");

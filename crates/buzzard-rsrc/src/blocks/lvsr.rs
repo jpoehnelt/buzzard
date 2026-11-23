@@ -39,7 +39,7 @@ pub struct Lvsr {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reentrancy {
-    /// Not reentrant: all callers share one instance.
+    /// Not reentrant. All callers share one instance.
     NonReentrant,
     /// Reentrant, with a pool of clones shared between callers.
     SharedClones,
@@ -84,7 +84,8 @@ impl Lvsr {
     ///
     /// # Errors
     ///
-    /// If the block is shorter than the 4-byte version number.
+    /// Returns an error if the block is shorter than the 4-byte version
+    /// number.
     pub fn parse(data: &[u8]) -> Result<Self> {
         let mut r = Reader::new(data, "LVSR");
         let version = Version::from_u32(r.u32()?);

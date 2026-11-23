@@ -1,4 +1,4 @@
-//! Compressed blocks (`BDHb`, `FPHb`, `VCTP`, ...): a big-endian `u32`
+//! Compressed blocks, such as `BDHb`, `FPHb`, and `VCTP`: a big-endian `u32`
 //! uncompressed size followed by a zlib stream.
 
 use std::io::Read;
@@ -15,8 +15,8 @@ const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
 ///
 /// # Errors
 ///
-/// If the size prefix is missing or over 256 MiB, the zlib stream is
-/// corrupt, or it inflates to a different size than declared.
+/// Returns an error if the size prefix is missing or over 256 MiB, the zlib
+/// stream is corrupt, or it inflates to a different size than declared.
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut r = Reader::new(data, "compressed block");
     let size = r.u32()? as usize;

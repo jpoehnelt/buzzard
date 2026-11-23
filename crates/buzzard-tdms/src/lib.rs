@@ -1,13 +1,15 @@
 //! A fast, safe, read-only reader for TDMS measurement files.
 //!
-//! TDMS is the format data-acquisition software logs test data in: a file
-//! of groups and channels, written as a sequence of segments that each hold
-//! some metadata and a block of raw values. The format is described at
+//! TDMS is the format that data-acquisition software logs test data in. A
+//! file holds groups and channels, and is written as a sequence of
+//! segments. Each segment holds some metadata and a block of raw values.
+//! The format is described at
 //! <https://www.ni.com/en/support/documentation/supplemental/07/tdms-file-format-internal-structure.html>.
 //!
 //! Opening a file reads the lead-in and the metadata of every segment and
-//! none of the raw data, so it is quick for a file of many gigabytes.
-//! Values are read when a channel is, for any range, in parallel.
+//! none of the raw data, so it is quick for a file of many gigabytes. Raw
+//! values are read when a channel is read. A read takes any range of a
+//! channel, and a large read runs on several threads.
 //!
 //! ```
 //! use buzzard_tdms::build::{FileBuilder, Object, Values};
@@ -25,11 +27,11 @@
 //! # Ok::<(), buzzard_tdms::Error>(())
 //! ```
 //!
-//! The crate has no `unsafe` code. A file is read with positional reads
-//! into buffers the reader owns ([`ReadAt`]); it is never memory-mapped, so
-//! a file that is truncated while open gives an error, not a fault.
-//! Hostile input gives an [`Error`], never a panic, and never an allocation
-//! larger than a small multiple of the file.
+//! The crate has no `unsafe` code. The reader uses positional reads into
+//! buffers that it owns ([`ReadAt`]) and never memory-maps a file, so a
+//! file that is truncated while it is open gives an error and cannot cause
+//! a fault. Hostile input gives an [`Error`], never a panic, and never an
+//! allocation larger than a small multiple of the file.
 //!
 //! See the crate's `README.md` for what is supported and what is not.
 

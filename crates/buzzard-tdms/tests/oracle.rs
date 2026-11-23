@@ -10,7 +10,7 @@
 //! Without the variable the test prints why it did nothing and passes.
 //! With `BUZZARD_TDMS_ORACLE_STRICT` also set, it fails when the scenarios
 //! that npTDMS ships cannot be run.
-//! `tests/oracle/README.md` describes the harness and its licence boundary.
+//! `tests/oracle/README.md` describes the harness and its license boundary.
 
 mod common;
 
@@ -36,8 +36,8 @@ struct Known {
 }
 
 /// Every accepted disagreement between this reader and npTDMS. A
-/// difference that is not listed fails the test; so does an entry that no
-/// longer matches anything, so the list cannot go stale.
+/// difference that is not listed fails the test. So does an entry that no
+/// longer matches anything, which keeps the list current.
 const KNOWN_DIFFERENCES: &[Known] = &[
     Known {
         file: "complex_properties",
@@ -51,7 +51,7 @@ const KNOWN_DIFFERENCES: &[Known] = &[
         at: "outcome",
         why: "npTDMS cannot read interleaved channels of the complex types \
               (AttributeError: no from_bytes). They are fixed-size values like any other, \
-              so this reader reads them; the generator's model checks the values.",
+              so this reader reads them. The generator's model checks the values.",
     },
     Known {
         file: "cross_*_contiguous_",
@@ -63,15 +63,15 @@ const KNOWN_DIFFERENCES: &[Known] = &[
     Known {
         file: "ragged_middle_interleaved_",
         at: "outcome",
-        why: "A finished interleaved segment whose raw data is not a whole number of rows, \
-              with another segment after it: npTDMS raises ValueError (could not \
+        why: "For a finished interleaved segment whose raw data is not a whole number of rows, \
+              with another segment after it, npTDMS raises ValueError (could not \
               broadcast). This reader keeps the whole rows, skips the partial one, reports \
               a PartialChunk anomaly and reads on.",
     },
     Known {
         file: "odd_first_segment_without_metadata",
         at: "outcome",
-        why: "A first segment without metadata: npTDMS refuses the file (ValueError). \
+        why: "When the first segment has no metadata, npTDMS refuses the file (ValueError). \
               This reader has no channels to give the segment's bytes to, reports them as \
               an UnindexedData anomaly and reads the segments that follow.",
     },
@@ -85,8 +85,8 @@ const KNOWN_DIFFERENCES: &[Known] = &[
     Known {
         file: "odd_raw_data_without_its_flag",
         at: "channel g/a",
-        why: "Bytes after the metadata of a segment whose table of contents says it has \
-              no raw data: npTDMS reads them as values. This reader believes the table of \
+        why: "When bytes follow the metadata of a segment whose table of contents says it has \
+              no raw data, npTDMS reads them as values. This reader believes the table of \
               contents, reports the bytes as an UnindexedData anomaly and invents no \
               values.",
     },
@@ -110,8 +110,8 @@ const KNOWN_DIFFERENCES: &[Known] = &[
     Known {
         file: "daqmx_cut_",
         at: "outcome",
-        why: "A file cut inside a chunk of two raw buffers, with a channel that has a scaler \
-              in each: npTDMS raises ValueError (could not broadcast) for most places of \
+        why: "For a file cut inside a chunk of two raw buffers, with a channel that has a scaler \
+              in each, npTDMS raises ValueError (could not broadcast) at most places of \
               the cut. The format description says only that the buffers \
               follow one another, so this reader takes them to be complete in order until \
               the bytes run out, gives each channel the whole rows of its shortest buffer, \
@@ -121,8 +121,8 @@ const KNOWN_DIFFERENCES: &[Known] = &[
     Known {
         file: "ragged_middle_driver_",
         at: "outcome",
-        why: "A finished segment of driver buffers whose raw data is not a whole number of \
-              chunks, with another segment after it: npTDMS raises ValueError (could not \
+        why: "For a finished segment of driver buffers whose raw data is not a whole number of \
+              chunks, with another segment after it, npTDMS raises ValueError (could not \
               broadcast). This reader keeps the whole rows of the incomplete chunk, as it \
               does at the end of a file where npTDMS agrees, reports a PartialChunk \
               anomaly and reads on.",
@@ -130,41 +130,41 @@ const KNOWN_DIFFERENCES: &[Known] = &[
     Known {
         file: "odd_driver_channel_without_values",
         at: "outcome",
-        why: "A driver channel whose raw data index declares no values, beside one with \
-              values: npTDMS raises ValueError (could not broadcast). An index of no \
+        why: "For a driver channel whose raw data index declares no values, beside one with \
+              values, npTDMS raises ValueError (could not broadcast). An index of no \
               values takes no part in the rows, so this reader reads the other channel \
               and gives this one a length of zero.",
     },
     Known {
         file: "odd_new_list_",
         at: "outcome",
-        why: "A new object list that leaves no object with data, in a segment that has raw \
-              bytes all the same: npTDMS refuses the file (ValueError: zero channel data \
+        why: "When a new object list leaves no object with data, in a segment that still \
+              has raw bytes, npTDMS refuses the file (ValueError: zero channel data \
               size). No channel describes those bytes, so this reader gives them to none, \
               reports an UnindexedData anomaly and keeps what the other segments hold.",
     },
     Known {
         file: "odd_object_twice_two_indexes",
         at: "channel g/a",
-        why: "One object listed twice in the metadata of a segment, with a raw data index \
-              of four values and then one of two, and eight bytes of raw data: npTDMS \
+        why: "When one object is listed twice in the metadata of a segment, with a raw data index \
+              of four values and then one of two, and eight bytes of raw data, npTDMS \
               gives the channel no values. The format description neither allows nor \
-              forbids the repeat; this reader lets the later entry replace the earlier \
+              forbids the repeat. This reader lets the later entry replace the earlier \
               one, as it does for a property written twice, and the two values account \
               for the eight bytes.",
     },
     Known {
         file: "odd_void_channel_without_values",
         at: "outcome",
-        why: "A channel whose raw data index has the type code 0 (void) and no values: \
-              npTDMS refuses to read it (NotImplementedError). The code is in the format's \
-              list of types and the channel holds nothing to read, so this reader reports \
+        why: "When a channel's raw data index has the type code 0 (void) and no values, \
+              npTDMS refuses to read the channel (NotImplementedError). The code is in the \
+              format's list of types and the channel holds nothing to read, so this reader reports \
               a channel of type void and length zero. Void with values is an error.",
     },
     Known {
         file: "stale_index_one_segment_short",
         at: "channel Group one/",
-        why: "An index file that lacks the last segment of its data file: npTDMS believes \
+        why: "When an index file lacks the last segment of its data file, npTDMS believes \
               it and returns the channels without that segment's values. This reader \
               rejects an index file that does not account for every byte of the data file \
               and reads the data file.",
@@ -172,8 +172,8 @@ const KNOWN_DIFFERENCES: &[Known] = &[
 ];
 
 const GROUP_ORDER: &str = "The same difference in the order of groups as in the cross product: \
-                           npTDMS lists the groups that have an object of their own first, \
-                           this reader lists groups in the order the file first mentions them.";
+                           npTDMS lists the groups that have an object of their own first. \
+                           This reader lists groups in the order the file first mentions them.";
 
 fn bits(value: f64) -> String {
     format!("{:016x}", value.to_bits())
@@ -387,7 +387,7 @@ fn differences(ours: &Value, theirs: &Value) -> Vec<(String, String, String)> {
         );
     }
     // Neither the order of groups nor that of channels is part of the
-    // format; a different order is reported once and the contents are
+    // format. A different order is reported once and the contents are
     // compared by name.
     let by_name = |list: &Value| -> BTreeMap<String, Value> {
         list.as_array()
@@ -618,8 +618,8 @@ fn special_cases(dir: &Path) {
     let markers = built.bytes.iter_mut().filter(|b| **b == 0x7F);
     assert_eq!(markers.map(|b| *b = 0xE9).count(), 3);
     save(dir, "not_utf8", &built, false);
-    // Files that bend the format, to learn where the two readers draw the
-    // line.
+    // Files that depart from the format, to compare what the two readers do
+    // with them.
     let one = |object: Object| {
         let mut builder = FileBuilder::new();
         builder.segment().object(object);
@@ -773,8 +773,8 @@ fn more_special_cases(dir: &Path) {
         &builder.build(),
         false,
     );
-    // A new object list that leaves no object with data, with raw bytes
-    // all the same, followed by a segment without metadata.
+    // A new object list that leaves no object with data, in a segment that
+    // still has raw bytes, followed by a segment without metadata.
     for (name, objects) in [
         ("odd_new_list_without_data_objects", true),
         ("odd_new_list_of_no_objects", false),
@@ -927,14 +927,15 @@ fn the_reader_agrees_with_nptdms() {
     );
 
     // The scenarios and data files that the installed npTDMS ships, when
-    // they can be run. They are used where they are; nothing is copied
-    // into this repository.
+    // they can be run. They are used where they are installed. Nothing is
+    // copied into this repository.
     let scenarios = TempDir::new("scenarios");
     let have_scenarios = python(&interpreter, &["scenarios", scenarios.text()]).0;
     if !have_scenarios {
         eprintln!("the scenarios npTDMS ships were not run (is pytest installed?)");
     }
-    // CI sets this so that a missing pytest cannot quietly shrink the test.
+    // CI sets this, so that the test fails when pytest is missing instead of
+    // comparing fewer files.
     let strict = std::env::var_os("BUZZARD_TDMS_ORACLE_STRICT").is_some();
     assert!(
         have_scenarios || !strict,

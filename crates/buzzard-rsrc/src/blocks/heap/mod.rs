@@ -1,7 +1,7 @@
 //! Object heaps (`BDHb` for the block diagram, `FPHb` for the front panel).
 //!
 //! After zlib decompression a heap is a `u32` content length followed by a
-//! stream of tag entries that open, close or stand alone, forming a tree
+//! stream of tag entries that open, close, or stand alone, forming a tree
 //! much like XML. Each entry starts with two bytes:
 //!
 //! ```text
@@ -53,7 +53,7 @@ const SCOPE_CLOSE: u8 = 2;
 pub enum Content<'a> {
     /// No content: an opening tag with size spec 0.
     None,
-    /// A flag without content bytes: size spec 7 means `true`, and a leaf
+    /// A flag without content bytes. Size spec 7 means `true`, and a leaf
     /// with size spec 0 means `false`.
     Bool(bool),
     /// Content bytes: 1 to 4 of them, or a length-prefixed run.
@@ -63,7 +63,8 @@ pub enum Content<'a> {
 /// One node of the heap tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeapNode<'a> {
-    /// Tag id: a system tag from [`tag`] or a field tag; see [`tag_name`].
+    /// Tag id: a system tag from [`tag`] or a field tag. [`tag_name`] names
+    /// it.
     pub tag: i32,
     /// `(attribute id, value)` pairs in stream order.
     pub attrs: Vec<(i32, i32)>,
@@ -90,13 +91,13 @@ impl<'a> HeapNode<'a> {
         self.attr(ATTR_UID)
     }
 
-    /// Name of the object class, e.g. `prim`, if the node is an object of a
+    /// Name of the object class, such as `prim`, if the node is an object of a
     /// known class.
     pub fn class_name(&self) -> Option<&'static str> {
         class_name(self.class()?)
     }
 
-    /// Name of the node's tag, e.g. `termList`, if it is known.
+    /// Name of the node's tag, such as `termList`, if it is known.
     pub fn tag_name(&self) -> Option<&'static str> {
         tag_name(self.tag)
     }
@@ -153,7 +154,7 @@ impl<'a> HeapNode<'a> {
 /// Name of a tag: a system tag or a common object field.
 ///
 /// A few object classes (mostly front-panel ones) reuse field ids with their
-/// own meanings; those class-specific tables are not modelled here.
+/// own meanings. This function does not model those class-specific tables.
 pub fn tag_name(id: i32) -> Option<&'static str> {
     match id {
         tag::OBJECT => Some("SL__object"),
@@ -165,7 +166,7 @@ pub fn tag_name(id: i32) -> Option<&'static str> {
     }
 }
 
-/// Name of an object class, e.g. `prim` for 47.
+/// Name of an object class, such as `prim` for 47.
 pub fn class_name(id: i32) -> Option<&'static str> {
     lookup(tables::CLASS_TAGS, id)
 }
@@ -189,9 +190,10 @@ pub fn class_id(name: &str) -> Option<i32> {
 /// Name of a built-in function, from the vendored table in `primitives.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PrimitiveName {
-    /// The function's name as the editor's palette shows it, e.g. `Add`.
-    /// Printable ASCII without quotes, backticks, backslashes or brackets.
-    /// Not unique: a few functions share a name under different ids.
+    /// The function's name as the editor's palette shows it, such as `Add`.
+    /// It is printable ASCII without quotes, backticks, backslashes, or
+    /// brackets. It is not unique, because a few functions share a name
+    /// under different ids.
     pub name: &'static str,
     /// Whether the source of the table records that it confirmed which
     /// function the id is. An unverified name is the best one known and may
@@ -202,7 +204,7 @@ pub struct PrimitiveName {
 /// Name of the built-in function with the given resource id (the
 /// `primResID` of a `prim` object), if the vendored table has it.
 ///
-/// The table comes from LVKit (Apache-2.0); see the crate's `NOTICE` for its
+/// The table comes from LVKit (Apache-2.0). The crate's `NOTICE` gives its
 /// origin and limits.
 pub fn primitive_name(id: u32) -> Option<PrimitiveName> {
     let table = primitives::PRIMITIVES;
@@ -230,14 +232,15 @@ fn lookup(table: &'static [(i32, &'static str)], id: i32) -> Option<&'static str
 pub struct Heap<'a> {
     /// Top-level nodes in stream order.
     pub roots: Vec<HeapNode<'a>>,
-    /// The stream breaks a rule that every heap of 1,773 real files
-    /// keeps: an entry that closes a node has the tag of the entry that
-    /// opened it and carries no attributes and no content, a node has
-    /// each of its attributes once and only of the four kinds seen
-    /// (ids -2, -3, -5 and -6), and no node is left open at the end. The
-    /// parser reads on regardless, so that a damaged file stays usable,
-    /// but nodes may then be missing: a damaged attribute count swallows
-    /// the entries after it.
+    /// The stream breaks a rule that every heap of 1,773 real files keeps.
+    /// The rules are these. An entry that closes a node has the tag of the
+    /// entry that opened it and carries no attributes and no content. A
+    /// node has each of its attributes once, and only of the four kinds
+    /// seen (ids -2, -3, -5, and -6). No node is left open at the end.
+    ///
+    /// The parser reads on after a broken rule, so that a damaged file
+    /// stays usable. Nodes may then be missing, because a damaged attribute
+    /// count makes the parser read the entries after it as attributes.
     pub irregular: bool,
 }
 
@@ -247,10 +250,10 @@ impl<'a> Heap<'a> {
     ///
     /// # Errors
     ///
-    /// If the declared length runs past `data`, an entry is truncated or has
-    /// an unknown size spec or scope, an attribute count is too large for the
-    /// rest of the stream, nesting exceeds [`MAX_DEPTH`], or a closing tag
-    /// has no matching opening tag.
+    /// Returns an error if the declared length runs past `data`, an entry is
+    /// truncated or has an unknown size spec or scope, an attribute count is
+    /// too large for the rest of the stream, nesting exceeds [`MAX_DEPTH`], or
+    /// a closing tag has no matching opening tag.
     #[expect(
         clippy::missing_panics_doc,
         reason = "the `expect`s rely on the stack holding the root list plus one child list per open node"
@@ -293,8 +296,8 @@ impl<'a> Heap<'a> {
                     attrs.push((id, value));
                 }
             }
-            // Short enough to compare pairwise; a longer list is not one
-            // a real node has.
+            // A list longer than `KNOWN_ATTRS` is irregular whatever it
+            // holds, so the pairwise comparison only runs on a short list.
             irregular |= attrs.len() > KNOWN_ATTRS.len()
                 || attrs.iter().enumerate().any(|(at, (id, _))| {
                     !KNOWN_ATTRS.contains(id)
@@ -349,7 +352,8 @@ impl<'a> Heap<'a> {
                 other => return Err(malformed("heap", format!("unknown scope {other}"))),
             }
         }
-        // Tolerate a truncated tail: close whatever is still open.
+        // A truncated stream leaves nodes open. Close them and record the
+        // irregularity.
         irregular |= !open.is_empty();
         while let Some(mut node) = open.pop() {
             node.children = stack.pop().expect("one child list per open node");
@@ -404,7 +408,8 @@ mod tests {
         out
     }
 
-    /// Entry header for a tag id, scope and size spec, optionally with attributes.
+    /// Entry header for a tag id, scope, and size spec, optionally with
+    /// attributes.
     fn entry(tag: i32, scope: u8, size_spec: u8, attrs: bool) -> [u8; 2] {
         let raw = u16::try_from(tag + 31).expect("test raw tag id fits in a u16");
         let [high, low] = raw.to_be_bytes();
@@ -431,7 +436,8 @@ mod tests {
     fn primitive_table_is_sorted_and_unique() {
         let table = primitives::PRIMITIVES;
         assert!(table.len() > 600);
-        // Strictly ascending ids: sorted for binary search, and no duplicates.
+        // The ids ascend strictly, so the table is sorted for binary search
+        // and has no duplicates.
         assert!(table.windows(2).all(|w| w[0].0 < w[1].0));
         assert_eq!(primitive_names().len(), table.len());
         for (id, entry) in primitive_names() {
@@ -464,8 +470,8 @@ mod tests {
             assert_eq!(name, name.trim(), "{id}");
             assert!(!name.contains("  "), "{id}: {name:?}");
             // No control characters, nothing outside ASCII, and none of the
-            // characters that delimit Rust, Markdown, SVG, DOT or Mermaid
-            // text. `&` is allowed: the SVG writer escapes it.
+            // characters that delimit Rust, Markdown, SVG, DOT, or Mermaid
+            // text. `&` is allowed, because the SVG writer escapes it.
             assert!(
                 name.chars()
                     .all(|c| c.is_ascii_alphanumeric() || " &'()+,-/?.:".contains(c)),
@@ -551,9 +557,9 @@ mod tests {
             assert_eq!(parsed.node_count(), 3);
         }
 
-        // What one changed byte does: the attribute count 2 becomes 4,
-        // and the two leaves that follow are read as attributes. The
-        // tree is whole but two nodes short.
+        // One changed byte turns the attribute count 2 into 4, and the
+        // parser reads the two leaves that follow as attributes. Every
+        // node of the tree is closed, but the tree is two nodes short.
         let swallowed = [4, 0xFE, 0, 47, 0xFD, 0, 5];
         let bytes = object(&swallowed, close());
         let parsed = Heap::parse(&bytes).unwrap();
@@ -568,8 +574,8 @@ mod tests {
         body.extend([(1 << 4) | (SCOPE_LEAF << 2) | 0x03, 0xFF]);
         body.extend(70_000i32.to_be_bytes());
         body.push(1);
-        body.extend([0x80, 0x01, 0x00]); // id = 256 via 16-bit form
-        body.extend([0x80, 0x00]); // value escape
+        body.extend([0x80, 0x01, 0x00]); // id = 256 in the 16-bit form
+        body.extend([0x80, 0x00]); // the escape to a 32-bit value
         body.extend((-70_000i32).to_be_bytes());
         let bytes = heap(&body);
         let parsed = Heap::parse(&bytes).unwrap();
@@ -591,15 +597,15 @@ mod tests {
 
     #[test]
     fn rejects_malformed_streams() {
-        // Close without open.
+        // A closing entry has no opening entry.
         assert!(Heap::parse(&heap(&entry(tag::OBJECT, SCOPE_CLOSE, 0, false))).is_err());
-        // Content runs past the end.
+        // The content runs past the end.
         let mut body = entry(5, SCOPE_LEAF, 4, false).to_vec();
         body.push(1);
         assert!(Heap::parse(&heap(&body)).is_err());
-        // Declared length longer than the buffer.
+        // The declared length is longer than the buffer.
         assert!(Heap::parse(&[0, 0, 0, 9, 1]).is_err());
-        // Absurd attribute count.
+        // The attribute count is larger than the rest of the stream.
         let mut body = entry(5, SCOPE_LEAF, 0, true).to_vec();
         body.extend([254, 0xFF, 0xFF, 0xFF, 0xFF]);
         assert!(Heap::parse(&heap(&body)).is_err());

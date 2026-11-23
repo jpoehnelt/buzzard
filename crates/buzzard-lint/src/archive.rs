@@ -1,23 +1,23 @@
 //! `.llb` archives as part of a workspace.
 //!
 //! A member of an archive is addressed the way LabVIEW addresses it in a
-//! link: by the path of the archive followed by the member's name, as in
+//! link, by the path of the archive followed by the member's name, as in
 //! `lib/util.llb/Helper.vi`. Such a path names no file on disk, so
 //! everything that reads a file by its path goes through [`read`], which
 //! takes the bytes of a member out of its archive.
 //!
-//! A member name is data from the archive, never a path. A virtual path is
-//! made by putting the name behind the archive's path as one component
-//! ([`member_path`]), and only for a name that is one component and can
-//! be printed on one line ([`is_addressable`]): a name such as `../x.vi`
-//! is reported and not opened, so that no member can stand for another
-//! file or forge a line of a report.
+//! A member name is data from the archive, never a path. [`member_path`]
+//! makes a virtual path by appending the name to the archive's path as one
+//! component. It is used only for a name that is one component and prints
+//! on one line ([`is_addressable`]). A name such as `../x.vi` is reported
+//! and not opened, so no member can stand for another file or forge a line
+//! of a report.
 //!
-//! The members that become files of a workspace are the VIs and controls
+//! The members that become files of a workspace are the VIs, the controls,
 //! and the project files (`.lvlib`, `.lvclass`, `.lvproj`), which are XML
-//! text as they are on disk. What the directory says a member is does not
-//! hide it: a member whose name has the extension of a VI is opened
-//! whatever its entry states, and parsing it says what it is.
+//! text as they are on disk. The type in the directory cannot hide a
+//! member. A member whose name has the extension of a VI is opened
+//! whatever type its entry states, and the parser decides what it is.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
@@ -39,20 +39,22 @@ pub fn is_archive(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case(LLB_EXTENSION))
 }
 
-/// What the compressed members of one archive may inflate to together
-/// when the archive is opened as part of a workspace. The members past
-/// that are reported and not read. (A member that is stored as it is
-/// takes no more than its bytes of the archive.)
+/// The most bytes that the compressed members of one archive may inflate
+/// to together when the archive is opened as part of a workspace. The
+/// members past that limit are reported and not read. A member that is
+/// stored uncompressed takes no more than its bytes of the archive and
+/// does not count.
 pub const MAX_INFLATED_BYTES: u64 = 1024 * 1024 * 1024;
 
-/// Whether a member name can be the last component of a virtual path: it
-/// is not empty, not `.` or `..`, and holds no separator and no ASCII
-/// control character (a NUL, a line break that would split a line of a
-/// report, or the start of a terminal escape sequence). The bytes 0x80
-/// to 0x9f of a name in a legacy code page are letters, not controls.
+/// Whether a member name can be the last component of a virtual path.
+/// Such a name is not empty, is not `.` or `..`, and holds no separator
+/// and no ASCII control character (a NUL, a line break that would split a
+/// line of a report, or the start of a terminal escape sequence). The
+/// bytes 0x80 to 0x9f of a name in a legacy code page are letters, not
+/// controls.
 ///
 /// On Windows a name with a colon is refused as well. `C:x.vi` is a path
-/// on another drive there, and appending it to a path replaces the path.
+/// on another drive there, and joining it to a path replaces the path.
 pub fn is_addressable(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -78,11 +80,10 @@ pub fn member_path(archive: &Path, name: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// The archive and member name of a virtual path: `Some` when the parent
-/// of `path` is an `.llb` file on disk. A file inside a directory that is
-/// merely called `x.llb` is an ordinary file, and so is a path whose last
-/// component could not be the name of an opened member
-/// ([`is_addressable`]).
+/// The archive and member name of a virtual path. `Some` when the parent
+/// of `path` is an `.llb` file on disk. A file inside a directory called
+/// `x.llb` is an ordinary file, and so is a path whose last component
+/// could not be the name of an opened member ([`is_addressable`]).
 pub fn split(path: &Path) -> Option<(PathBuf, String)> {
     let archive = path.parent()?;
     let name = path.file_name()?.to_string_lossy().into_owned();
@@ -90,11 +91,11 @@ pub fn split(path: &Path) -> Option<(PathBuf, String)> {
         .then(|| (archive.to_path_buf(), name))
 }
 
-/// A member path with the member's name as its archive spells it: a
-/// member is found without regard to letter case ([`Llb::find`]), and
-/// however it was asked for it is one file with one path. `None` when
-/// `path` is not a member path, or the archive cannot be read or has no
-/// such member.
+/// A member path with the member's name as its archive spells it.
+/// [`Llb::find`] finds a member without regard to letter case, so every
+/// spelling of the name gives the same path. `None` when `path` is not a
+/// member path, when the archive cannot be read, or when the archive has
+/// no such member.
 pub fn canonical(path: &Path) -> Option<PathBuf> {
     let (archive, name) = split(path)?;
     let bytes = buzzard_rsrc::read_file(&archive).ok()?;
@@ -105,7 +106,8 @@ pub fn canonical(path: &Path) -> Option<PathBuf> {
 
 /// Whether `path` names something that can be analyzed: a file or
 /// directory on disk, or a member of an archive on disk. A member path
-/// whose archive cannot be read counts: reading it then gives the reason.
+/// whose archive cannot be read counts as existing, and reading it gives
+/// the reason.
 pub fn exists(path: &Path) -> bool {
     path.exists()
         || split(path)
@@ -126,7 +128,7 @@ pub fn read(path: &Path) -> Result<Vec<u8>, String> {
         .ok_or_else(|| format!("the archive has no member `{}`", printable(&name)))
 }
 
-/// The bytes of the member `name` of the archive file at `archive`;
+/// The bytes of the member `name` of the archive file at `archive`.
 /// `None` when the archive has no member of that name (see
 /// [`Llb::find`]).
 ///
@@ -142,8 +144,8 @@ pub fn read_member(archive: &Path, name: &str) -> Result<Option<Vec<u8>>, String
         .transpose()
 }
 
-/// A name from an archive on one line: ASCII control characters are escaped,
-/// everything else is as the archive spells it.
+/// A name from an archive, printed on one line. ASCII control characters
+/// are escaped, and everything else is as the archive spells it.
 pub(crate) fn printable(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
@@ -156,8 +158,8 @@ pub(crate) fn printable(name: &str) -> String {
     out
 }
 
-/// What is kept of an opened archive: its directory and what could not be
-/// opened as a file of the workspace.
+/// What the workspace keeps of an opened archive: its directory and the
+/// members that could not be opened as files of the workspace.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ArchiveFile {
     /// The directory entries, in the order of the archive.
@@ -165,7 +167,7 @@ pub struct ArchiveFile {
     /// Content resources that no directory entry names.
     pub unlisted: usize,
     /// One entry for each member that is not opened although it is a VI,
-    /// a control or a project file, with the reason: its name is not a
+    /// a control, or a project file, with the reason: its name is not a
     /// file name, or an earlier member has the same name.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub problems: Vec<String>,
@@ -173,7 +175,7 @@ pub struct ArchiveFile {
 
 impl ArchiveFile {
     /// The names of the members that are files of the workspace: the
-    /// VIs, controls and project files whose name is addressable, each
+    /// VIs, controls, and project files whose name is addressable, each
     /// name once, in directory order.
     pub fn opened(&self) -> Vec<&str> {
         let mut seen = BTreeSet::new();
@@ -186,11 +188,11 @@ impl ArchiveFile {
     }
 }
 
-/// Whether a member is analyzed: the directory says it is a VI or a
-/// control, or its name has the extension of one or of a project file.
-/// The name counts whatever the directory says, so that one changed type
-/// code cannot hide a VI. An archive inside an archive (a member called
-/// `x.llb`) is listed and never opened.
+/// Whether a member is analyzed. It is when its type in the directory is
+/// VI or control, or when its name has the extension of a VI, a control,
+/// or a project file. The name counts whatever the type in the directory
+/// is, so one changed type code cannot hide a VI. An archive inside an
+/// archive (a member called `x.llb`) is listed and never opened.
 fn is_opened(member: &LlbMember) -> bool {
     let name = Path::new(&member.name);
     matches!(member.kind, FileKind::Vi | FileKind::Control)
@@ -198,8 +200,8 @@ fn is_opened(member: &LlbMember) -> bool {
         || is_project_file(name)
 }
 
-/// An archive read from disk: its directory, and what was made of each
-/// opened member, under its virtual path.
+/// An archive read from disk: its directory, and the result of the
+/// analysis of each opened member, under its virtual path.
 #[derive(Debug)]
 pub struct Opened<T> {
     /// The directory and the members that were not opened.
@@ -208,30 +210,30 @@ pub struct Opened<T> {
     pub members: Vec<(PathBuf, T)>,
 }
 
-/// Whether the bytes are an archive without a directory of members: the
-/// zipped program tree that an application builder writes. Such a file is
-/// a resource file like any other, and is not opened as an archive.
+/// Whether the bytes are an archive without a directory of members, which
+/// is the zipped program tree that an application builder writes. Such a
+/// file is a resource file like any other, and is not opened as an archive.
 fn has_no_members(bytes: &[u8]) -> bool {
     RsrcFile::parse(bytes).is_ok_and(|file| buzzard_rsrc::llb::is_program_tree(&file))
 }
 
-/// Read the archive at `path` once, and read its members in parallel:
-/// `analyze` is given the virtual path and the bytes of each member (or
-/// why it could not be read), on the thread that read it.
+/// Read the archive at `path` once, and read its members in parallel.
+/// `analyze` gets the virtual path and the bytes of each member, or the
+/// reason the member could not be read, on the thread that read it.
 ///
 /// `Ok(None)` for an archive that has no directory of members because it
-/// was built into an application: it is to be read as the plain resource
-/// file it is.
+/// was built into an application. The caller reads it as a plain resource
+/// file.
 ///
 /// Compressed members are read in directory order until they would
-/// inflate to more than [`MAX_INFLATED_BYTES`] together; `analyze` is
-/// given that as the reason for each of the others.
+/// inflate to more than [`MAX_INFLATED_BYTES`] together. For each of the
+/// others, `analyze` gets that as the reason.
 ///
 /// # Errors
 ///
 /// Returns the reason as text when the file cannot be read or its
 /// directory cannot be parsed. A member that cannot be read is not an
-/// error of the archive: `analyze` is given the reason.
+/// error of the archive. `analyze` gets the reason.
 pub fn open<T: Send>(
     path: &Path,
     analyze: impl Fn(&Path, Result<Vec<u8>, String>) -> T + Sync,
@@ -250,8 +252,9 @@ fn open_within<T: Send>(
     }
     let llb = Llb::parse(&bytes).map_err(|e| e.to_string())?;
     let (wanted, problems) = wanted(&llb);
-    // Decided from the directory before anything is read, so that the
-    // answer does not depend on the order the threads run in.
+    // The directory decides which members fit the budget before anything
+    // is read, so the result does not depend on the order the threads run
+    // in.
     let mut inflated = 0u64;
     let within: Vec<bool> = wanted
         .iter()
@@ -312,7 +315,7 @@ pub fn list(path: &Path) -> Result<Option<ArchiveFile>, String> {
 }
 
 /// The members to open, and why each of the others that is a VI, a
-/// control or a project file is not.
+/// control, or a project file is not.
 fn wanted<'l>(llb: &'l Llb<'_>) -> (Vec<&'l LlbMember>, Vec<String>) {
     let mut problems = Vec::new();
     let mut seen = BTreeSet::new();
@@ -332,14 +335,14 @@ fn wanted<'l>(llb: &'l Llb<'_>) -> (Vec<&'l LlbMember>, Vec<String>) {
     (wanted, problems)
 }
 
-/// The member names of archives on disk, read once each. Used to decide
-/// whether a link into an archive that is not part of the workspace has a
-/// target.
+/// The member names of archives on disk, read once each. `deps` and `BZ006`
+/// use them to decide whether a link into an archive that is not part of the
+/// workspace has a target.
 #[derive(Debug, Default)]
 pub struct Archives {
-    /// By archive path: the member names without their letter case,
-    /// each with whether the member is itself an archive; or `None` for
-    /// an archive that cannot be read.
+    /// By archive path, the case-folded member names, each with whether
+    /// the member is itself an archive. `None` for an archive that cannot
+    /// be read.
     cache: Mutex<HashMap<PathBuf, Option<Arc<Names>>>>,
 }
 
@@ -354,7 +357,7 @@ impl Archives {
                 let bytes = buzzard_rsrc::read_file(archive).ok()?;
                 let llb = Llb::parse(&bytes).ok()?;
                 // A name is stored in the code page of the saving machine,
-                // and a link may spell it in UTF-8: every reading counts.
+                // and a link may spell it in UTF-8, so every reading counts.
                 let mut names = Names::new();
                 for member in llb.members() {
                     let nested =
@@ -375,11 +378,11 @@ impl Archives {
             .clone()
     }
 
-    /// Whether the archive file at `archive` has a member called by the
-    /// components `rest`, compared without letter case as the editor
-    /// does. `None` when nothing is known: the archive cannot be read,
-    /// or the components lead into a member that is itself an archive,
-    /// which is never opened.
+    /// Whether the archive file at `archive` has the member that the
+    /// components `rest` name, compared without regard to letter case as
+    /// the editor compares them. `None` when the answer is unknown,
+    /// because the archive cannot be read or the components lead into a
+    /// member that is itself an archive, which is never opened.
     pub fn contains(&self, archive: &Path, rest: &[&str]) -> Option<bool> {
         let names = self.names(archive)?;
         match rest {
@@ -395,9 +398,10 @@ impl Archives {
 
     /// Whether there is something at `path`: a file or directory, or a
     /// member of an archive. `None` when `path` leads into an archive
-    /// that cannot be read. A path that leads into any other file (the
-    /// private data control inside an `.lvclass` file) is `into_file`:
-    /// that file is not opened to look for the item.
+    /// that cannot be read. For a path that leads into any other file
+    /// (such as the private data control inside an `.lvclass` file), the
+    /// answer is `into_file`, because that file is not opened to look for
+    /// the item.
     pub fn present(&self, path: &Path, into_file: bool) -> Option<bool> {
         if path.exists() {
             return Some(true);
@@ -430,8 +434,8 @@ mod tests {
             member_path(archive, "Helper.vi"),
             Path::new("lib/util.llb/Helper.vi")
         );
-        // A name is never joined as a path: an absolute name or one with a
-        // drive would replace the archive's path.
+        // A name is never joined as a path, because an absolute name or
+        // one with a drive would replace the archive's path.
         for name in ["/etc/passwd", "C:evil.vi", "..", "../../x.vi"] {
             assert!(member_path(archive, name).starts_with("lib/util.llb"));
         }
@@ -473,7 +477,7 @@ mod tests {
         path
     }
 
-    /// What `open_within` hands to `analyze`, by member name: the size of
+    /// What `open_within` passes to `analyze`, by member name: the size of
     /// what was read, or the reason nothing was.
     fn sizes(path: &Path, budget: u64) -> Vec<(String, Result<usize, String>)> {
         let opened = open_within(path, budget, |_, bytes| bytes.map(|b| b.len()))
@@ -520,9 +524,10 @@ mod tests {
                 .compressed("4.vi", &data[..1])
                 .build(),
         );
-        // Everything fits; then the third compressed member does not,
-        // and nothing after it does, however small. Stored members take
-        // no more than their bytes of the file and are always read.
+        // With a budget of 3001 everything fits. With 2000 the third
+        // compressed member does not fit, and neither does a compressed
+        // member after it, however small. Stored members take no more
+        // than their bytes of the file and are always read.
         let all = sizes(&path, 3001);
         assert!(all.iter().all(|(_, read)| read.is_ok()), "{all:?}");
         for _ in 0..3 {
@@ -555,7 +560,8 @@ mod tests {
         let path = temp_archive("built", &built);
         assert_eq!(list(&path), Ok(None));
         assert!(open(&path, |_, _| ()).unwrap().is_none());
-        // Neither kind of file is one: a VI, and an archive with nothing.
+        // An archive with neither a directory nor a program tree is an
+        // error, and so is a VI.
         let empty = RsrcBuilder::new(file_type::LIBRARY)
             .resource(b"PALM", 0, None, vec![0; 16])
             .build();

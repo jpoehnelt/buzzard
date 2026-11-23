@@ -2,9 +2,9 @@
 //!
 //! The initial scan uses [`buzzard_lint::workspace::discover`]. Incremental
 //! updates must agree with it exactly, or the results would depend on the
-//! history of file events: [`Roots::presence`] answers for a single path
+//! history of file events. [`Roots::presence`] answers for a single path
 //! what `discover` answers for a whole tree. The tests at the end of this
-//! file hold the two to the same answer.
+//! file check that the two give the same answer.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 use buzzard_lint::workspace::{is_analyzable, normalize};
 
-/// What discovery would make of one path right now.
+/// How a fresh scan would treat one path right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Presence {
     /// A file that a fresh scan would analyze.
@@ -55,8 +55,8 @@ impl Roots {
     }
 
     /// Rewrite `path` into the spelling the client used for its root, so
-    /// that one file never gets two names. `None` if the path is outside
-    /// every root.
+    /// that one file never gets two names. Returns `None` if the path is
+    /// outside every root.
     pub(crate) fn localize(&self, path: &Path) -> Option<PathBuf> {
         let path = normalize(path);
         if self.0.iter().any(|root| path.starts_with(&root.given)) {
@@ -70,8 +70,8 @@ impl Roots {
         })
     }
 
-    /// What a fresh scan would make of `path`, which must be in the
-    /// client's spelling (see [`Roots::localize`]).
+    /// How a fresh scan would treat `path`, which must be in the client's
+    /// spelling (see [`Roots::localize`]).
     pub(crate) fn presence(&self, path: &Path) -> Presence {
         self.0
             .iter()
@@ -92,8 +92,8 @@ fn presence_in(root: &Path, path: &Path) -> Presence {
     };
     let mut components = rest.components().peekable();
     if components.peek().is_none() {
-        // The root itself: links are followed, and a root that is a file
-        // is analyzed whatever its name.
+        // The path is the root itself. For a root, links are followed, and
+        // a root that is a file is analyzed whatever its name.
         return match fs::metadata(root) {
             Ok(meta) if meta.is_file() => Presence::File,
             Ok(meta) if meta.is_dir() => Presence::Dir,
@@ -109,7 +109,8 @@ fn presence_in(root: &Path, path: &Path) -> Presence {
             return Presence::Absent;
         }
         current.push(name);
-        // Not following links: a link is neither a file nor a directory.
+        // `symlink_metadata` does not follow links, so a link is neither a
+        // file nor a directory here.
         let Ok(meta) = fs::symlink_metadata(&current) else {
             return Presence::Absent;
         };
@@ -144,8 +145,8 @@ mod tests {
         fs::write(path, b"x").unwrap();
     }
 
-    /// Every path below `dir`, following links, so that paths discovery
-    /// must reject are offered to the predicate as well.
+    /// Every path below `dir`, following links, so that the predicate is
+    /// also offered the paths that discovery must reject.
     fn everything(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         if depth == 0 {
             return;
@@ -237,7 +238,7 @@ mod tests {
     }
 
     /// A watcher that reports resolved paths (`FSEvents`) must not give a
-    /// file a second name: the client's spelling of the root wins.
+    /// file a second name. The file keeps the client's spelling of the root.
     #[cfg(unix)]
     #[test]
     fn localize_maps_canonical_paths_back_to_the_given_root() {

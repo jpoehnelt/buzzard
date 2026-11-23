@@ -1,4 +1,4 @@
-//! Backend abstraction: how information is obtained for one file.
+//! The trait and the default backend that inspect one file.
 
 use std::path::Path;
 
@@ -8,7 +8,7 @@ use buzzard_rsrc::{BlockDiagram, RsrcFile, ViMetadata};
 /// Everything a backend reports about one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inspection {
-    /// Version, flags, links and other facts decoded from the file.
+    /// Version, flags, links, and other facts decoded from the file.
     pub metadata: ViMetadata,
     /// `None` when the file has no block diagram, or when the diagram
     /// could not be decoded (the metadata is still usable then).
@@ -35,7 +35,7 @@ impl Inspection {
     ///
     /// Returns the reason as text when the bytes are not a valid RSRC
     /// container or its metadata cannot be decoded. A block diagram that
-    /// cannot be decoded is not an error; [`Inspection::diagram`] is `None`
+    /// cannot be decoded is not an error. [`Inspection::diagram`] is `None`
     /// then.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         let file = RsrcFile::parse(bytes).map_err(|e| e.to_string())?;
@@ -45,9 +45,9 @@ impl Inspection {
     }
 }
 
-/// A source of [`Inspection`]s. The default backend parses files from disk;
-/// other backends (for example one that queries a running editor) can be
-/// swapped in without touching the lint or language-server code.
+/// A source of [`Inspection`]s. The default backend parses files from disk.
+/// Another backend, for example one that queries a running editor, can
+/// replace it without a change to the lint or language server code.
 #[async_trait]
 pub trait ViInspector: Send + Sync {
     /// Inspect the binary file at `path`.
@@ -59,7 +59,8 @@ pub trait ViInspector: Send + Sync {
     async fn inspect(&self, path: &Path) -> Result<Inspection, String>;
 }
 
-/// Headless backend that parses the binary file directly.
+/// The default backend. It parses the binary file and needs no running
+/// editor.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RsrcInspector;
 

@@ -1,11 +1,11 @@
 //! Writer for synthetic RSRC files, used to build test inputs without the
 //! editor. It produces the same layout the parser reads.
 //!
-//! This is test support, and it is public on purpose: the other crates of
+//! The module is test support. It is public because the other crates of
 //! buzzard build their test files with it, and a program built on this
-//! crate can do the same. It writes the resources buzzard's tests need
-//! (any raw resource, a save record, link lists, and with [`LlbBuilder`]
-//! an archive of such files); it is not a general writer and cannot
+//! crate can do the same. It writes the resources buzzard's tests need:
+//! any raw resource, a save record, link lists, and with [`LlbBuilder`]
+//! an archive of such files. It is not a general writer and cannot
 //! produce a file the editor would open.
 
 use std::io::Write as _;
@@ -45,7 +45,7 @@ impl Default for RsrcBuilder {
 }
 
 impl RsrcBuilder {
-    /// Start an empty file of the given type, e.g. [`file_type::CONTROL`].
+    /// Start an empty file of the given type, such as [`file_type::CONTROL`].
     pub fn new(file_type: FourCc) -> Self {
         Self {
             file_type,
@@ -139,14 +139,14 @@ impl RsrcBuilder {
         self.resource(b"LIvi", 0, None, data)
     }
 
-    /// Lay out the header, data section and directory.
+    /// Lay out the header, data section, and directory.
     ///
     /// # Panics
     ///
     /// If no resource was added, a resource name is longer than 255 bytes,
     /// or the file would not fit the 32-bit offsets of the format.
     pub fn build(self) -> Vec<u8> {
-        // Group entries by type, preserving first-seen order.
+        // Group entries by type, in the order each type first appears.
         let mut types: Vec<(FourCc, Vec<&Entry>)> = Vec::new();
         for entry in &self.entries {
             match types.iter_mut().find(|(ty, _)| *ty == entry.ty) {
@@ -218,7 +218,7 @@ impl RsrcBuilder {
 }
 
 /// One entry of an archive directory for [`encode_adir`]: the id, the
-/// file type, the packed version and the name as raw bytes.
+/// file type, the packed version, and the name as raw bytes.
 pub type AdirEntry<'a> = (i32, FourCc, u32, &'a [u8]);
 
 /// Encode the `ADir` directory of an LLB archive (see [`crate::llb`]).
@@ -272,7 +272,7 @@ pub struct LlbBuilder {
 }
 
 impl LlbBuilder {
-    /// The packed version the directory states for every member, e.g.
+    /// The packed version the directory states for every member, such as
     /// `0x1700_8000`. Zero, the default, states none.
     #[must_use]
     pub fn version(mut self, version: u32) -> Self {
@@ -286,8 +286,9 @@ impl LlbBuilder {
         self.member_bytes(name.as_bytes(), data)
     }
 
-    /// Like [`member`](Self::member), with the name given as raw bytes:
-    /// names are text of the saving machine's code page.
+    /// Like [`member`](Self::member), with the name given as raw bytes,
+    /// because names are text in the code page of the machine that saved
+    /// the archive.
     #[must_use]
     pub fn member_bytes(self, name: &[u8], data: &[u8]) -> Self {
         self.push(name, data, Storage::Stored, None)
@@ -361,8 +362,8 @@ impl LlbBuilder {
         );
         for (entry, &id) in self.entries.iter().zip(&ids) {
             let name = String::from_utf8_lossy(&entry.name);
-            // A resource name is a Pascal string; the directory is what
-            // the reader takes names from.
+            // A resource name is a Pascal string, so a name over 255 bytes
+            // is left out. The reader takes names from the directory.
             let name = (name.len() <= 255).then_some(&*name);
             let size = u32_field(entry.data.len()).to_be_bytes().to_vec();
             builder = match entry.storage {
@@ -441,7 +442,7 @@ pub fn encode_pth0_bytes(kind: PathKind, components: &[&[u8]]) -> Vec<u8> {
 }
 
 impl LvPath {
-    /// Relative path to a sibling of the referencing file, e.g. `../a.vi`.
+    /// Relative path to a sibling of the referencing file, such as `../a.vi`.
     pub fn sibling(name: &str) -> Self {
         Self {
             kind: PathKind::Relative,
@@ -449,7 +450,7 @@ impl LvPath {
         }
     }
 
-    /// Absolute path from its components, e.g. `["C", "x", "a.vi"]` for
+    /// Absolute path from its components, such as `["C", "x", "a.vi"]` for
     /// `C:/x/a.vi`.
     pub fn absolute(components: &[&str]) -> Self {
         Self {
