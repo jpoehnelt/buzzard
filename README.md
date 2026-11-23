@@ -205,7 +205,7 @@ VIs, the controls and the project files of every archive in it.
 | --- | --- |
 | A member that does not parse or cannot be inflated | `BZ000` on the member path |
 | A directory that cannot be read | `BZ000` on the `.llb` file |
-| A member name that is not a file name (`..`, a name with `/`, `\` or a control character), or a name used twice | `BZ000` on the `.llb` file. The member is not opened |
+| A member name that is not a file name (`..`, a name with `/`, `\` or a control character, and on Windows a name with `:`), or a name used twice | `BZ000` on the `.llb` file. The member is not opened |
 | A member that declares more than 128 MiB, or compressed members past 1 GiB inflated in one scan | `BZ000` on the member path |
 | An archive inside an archive | Listed by `inspect`, not opened |
 | A member that is not a VI, a control or a project file | Listed by `inspect` only |
