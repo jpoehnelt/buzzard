@@ -19,15 +19,18 @@ pub(crate) struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print the groups, channels, types, lengths, and properties of a TDMS
-    /// file, its segment count, and anything wrong with it such as a
-    /// truncated last segment.
+    /// Print what a TDMS file holds.
+    ///
+    /// The report lists the groups, channels, types, lengths, and
+    /// properties of the file, its segment count, and its anomalies, such
+    /// as a truncated last segment.
     #[command(
-        after_help = "Exit status: 0, or 2 when the file cannot be opened. Anomalies \
+        after_help = "Exit status: 0, or 2 when buzzard cannot open the file. Anomalies \
         are part of the report and do not change the status."
     )]
     Info {
-        /// A TDMS file. The index file beside it is used when it matches.
+        /// A TDMS file. The reader uses the index file beside it when the
+        /// two match.
         file: PathBuf,
         /// Output format.
         #[arg(long, value_enum, default_value_t = InfoFormat::Text)]
@@ -39,13 +42,15 @@ enum Command {
         file behind."
     )]
     Export {
-        /// A TDMS file. The index file beside it is used when it matches.
+        /// A TDMS file. The reader uses the index file beside it when the
+        /// two match.
         file: PathBuf,
         /// The file to write.
         #[arg(long, value_name = "PATH")]
         out: PathBuf,
-        /// What to export, in order: group/channel for one channel or
-        /// group for all channels of a group. The default is every channel.
+        /// The channels to export, in order. group/channel names one
+        /// channel, and group names every channel of that group. The
+        /// default is every channel.
         #[arg(long, num_args = 1.., value_name = "NAME")]
         channels: Vec<String>,
         /// Output format.
@@ -54,12 +59,12 @@ enum Command {
         /// Compression of Parquet column data. CSV ignores it.
         #[arg(long, value_enum, default_value_t = Compression::Snappy)]
         compression: Compression,
-        /// Export stored values as they are, without applying the linear
-        /// scaling a channel's properties describe.
+        /// Export the stored values, without the linear scaling that a
+        /// channel's properties describe.
         #[arg(long)]
         raw: bool,
-        /// Worker threads for reading and encoding. The default is one per
-        /// core.
+        /// Number of worker threads for reading and encoding. The default
+        /// is one per core.
         #[arg(long, value_name = "N")]
         threads: Option<usize>,
     },

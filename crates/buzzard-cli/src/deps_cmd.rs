@@ -15,8 +15,9 @@ pub(crate) struct Args {
     #[arg(long, value_enum, default_value_t = Format::Text)]
     format: Format,
     /// The directory of a symbolic root, as in vilib=/opt/labview/vi.lib.
-    /// Every file linked under that root is then looked up there and
-    /// reported as found or missing. May be repeated, once per root.
+    /// buzzard looks there for every file linked under that root and
+    /// reports the file as found or missing. A file under a root without
+    /// a directory is unchecked. May be repeated, once per root.
     #[arg(long = "root", value_name = "NAME=DIR")]
     roots: Vec<String>,
 }
