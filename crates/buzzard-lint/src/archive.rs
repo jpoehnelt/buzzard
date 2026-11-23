@@ -58,8 +58,13 @@ pub fn is_addressable(name: &str) -> bool {
         && name != "."
         && name != ".."
         && !name.contains(['/', '\\'])
-        && !(cfg!(windows) && name.contains(':'))
+        && !names_a_drive(name)
         && !name.chars().any(|c| c.is_ascii_control())
+}
+
+/// Whether `name` holds a colon on a system where a colon ends a drive.
+fn names_a_drive(name: &str) -> bool {
+    cfg!(windows) && name.contains(':')
 }
 
 /// The virtual path of the member `name` of the archive at `archive`.
