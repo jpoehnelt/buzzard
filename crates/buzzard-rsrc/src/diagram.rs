@@ -498,6 +498,7 @@ pub enum Loss {
     /// swallowed without leaving any trace in the tree.
     Stream,
 }
+
 /// One diagram: the top-level block diagram, or one frame or case of a
 /// structure.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -533,7 +534,7 @@ impl BlockDiagram {
     ///
     /// If the `BDHb` block does not decompress or parse. The type table and
     /// front-panel heap are optional: when they are missing or do not parse,
-    /// terminals simply lack types or front-panel objects.
+    /// terminals lack types or front-panel objects.
     pub fn from_rsrc(file: &RsrcFile<'_>) -> Result<Option<Self>> {
         let Some(raw) = file.first(b"BDHb") else {
             return Ok(None);

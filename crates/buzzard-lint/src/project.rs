@@ -4,16 +4,25 @@
 //! `LVClass`) with an `LVVersion` attribute, `Property` children, and a tree
 //! of `Item` elements. An item that refers to a file has a `URL` attribute.
 //!
-//! Two details were established from real files rather than documentation
-//! (see `tests/fixtures/project/README.md`):
+//! Two details come from real files, not from documentation. The evidence
+//! is a scan of two public repositories (67 project-level files, 2,308
+//! items with a URL, 22 classes with a parent), saved by editor versions
+//! 13.0 and 19.0. `tests/fixtures/project` holds three of those files and
+//! names the repositories. Other versions have not been checked.
 //!
 //! * A relative `URL` is relative to the XML file *itself*, not to its
-//!   directory, so a sibling file is `../Sibling.vi`. A URL that does not
-//!   leave the file (for example the private data control of a class, stored
-//!   as `Name.ctl`) names something embedded in the XML file.
+//!   directory, so a sibling file is `../Sibling.vi`. Resolved against the
+//!   directory, no URL of the scan finds its file. Resolved against the
+//!   file, every URL does, except a few whose files are not in the
+//!   repositories. A URL that does not leave the file (for example the
+//!   private data control of a class, stored as `Name.ctl`) names something
+//!   embedded in the XML file.
 //! * The parent of a class is stored in the `NI.LVClass.ParentClassLinkInfo`
 //!   property as a flattened byte string in a printable encoding, decoded by
-//!   [`decode_bin`] and [`parse_parent_link`].
+//!   [`decode_bin`] and [`parse_parent_link`]. All 22 values of the scan
+//!   decode that way: 15 hold a relative path to a class file that exists,
+//!   and 7 point into `<vilib>`. A value that does not match the layout
+//!   exactly gives no parent, never a guess.
 
 use std::path::{Path, PathBuf};
 

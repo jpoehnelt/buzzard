@@ -11,11 +11,12 @@ use clap::ValueEnum;
 #[derive(clap::Args)]
 pub(crate) struct Args {
     /// The old and the new file. A file that does not exist (or
-    /// `/dev/null`) counts as empty: everything is added or removed.
+    /// /dev/null) counts as empty: everything is added or removed.
     ///
-    /// With `--git`: the arguments git passes to an external diff driver.
+    /// With --git: the arguments git passes to an external diff driver.
     #[arg(required = true, num_args = 1..=9, value_name = "FILE")]
     files: Vec<String>,
+    /// Output format.
     #[arg(long, value_enum, default_value_t = Format::Text)]
     format: Format,
     /// Leave out nodes that only changed position or size.

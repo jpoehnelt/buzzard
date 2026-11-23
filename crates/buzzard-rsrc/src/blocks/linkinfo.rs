@@ -13,7 +13,7 @@
 //! ```
 //!
 //! This module locates each path and reads that prefix backwards from it,
-//! which is robust across versions without modelling every variant.
+//! so it needs no model of each version's variant of the record.
 
 use serde::Serialize;
 
@@ -260,8 +260,8 @@ PTH0\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x03";
 
     #[test]
     fn dense_lookalikes_are_scanned_in_bounded_time() {
-        // Minimal valid paths back to back: each used to cost a full
-        // lookbehind. 200,000 of them must now be quick.
+        // Minimal valid paths back to back. The scan must not pay a full
+        // lookbehind for each: 200,000 of them are quick.
         let record = b"PTH0\x00\x00\x00\x05\x00\x01\x00\x01\x00";
         let data = record.repeat(200_000);
         let started = std::time::Instant::now();

@@ -1,13 +1,13 @@
 [package]
 name = "buzzard-cli"
-description = "Command-line static analyzer and language server for graphical dataflow projects"
+description = "Static analyzer, language server and MCP server for LabVIEW files (.vi, .ctl, .llb, .lvproj, .lvlib, .lvclass), and a TDMS reader"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
-keywords = ["lint", "static-analysis", "lsp", "sarif", "cli"]
+keywords = ["labview", "lint", "static-analysis", "lsp", "sarif"]
 categories = ["command-line-utilities", "development-tools"]
 documentation = "https://github.com/jpoehnelt/buzzard#readme"
 # The package is the source. The tests stay in the repository: they need

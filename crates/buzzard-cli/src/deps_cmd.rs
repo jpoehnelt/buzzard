@@ -8,12 +8,13 @@ use clap::ValueEnum;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
-    /// Files or directories to analyze.
+    /// Files, directories, or member paths such as lib/util.llb/Init.vi.
     #[arg(default_value = ".")]
     paths: Vec<PathBuf>,
+    /// Output format.
     #[arg(long, value_enum, default_value_t = Format::Text)]
     format: Format,
-    /// The directory of a symbolic root, e.g. `vilib=/opt/labview/vi.lib`.
+    /// The directory of a symbolic root, as in vilib=/opt/labview/vi.lib.
     /// Every file linked under that root is then looked up there and
     /// reported as found or missing. May be repeated, once per root.
     #[arg(long = "root", value_name = "NAME=DIR")]

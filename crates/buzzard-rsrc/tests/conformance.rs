@@ -1306,9 +1306,9 @@ fn a_selector_table_that_is_not_whole_is_absent() {
         Some("SMOState --Enum.ctl")
     );
 
-    // An entry that lost its frame index used to read as frame 0, which
-    // moved its value to another case and left its own frame without
-    // any: the table was accepted and a state was made up for the frame.
+    // An entry that lost its frame index must not read as frame 0: that
+    // would move its value to another case and leave its own frame
+    // without any. The table is refused.
     assert_eq!(
         selector(&|entries| entries.children[0].children.retain(|f| f.tag != 4)),
         None

@@ -139,7 +139,7 @@ impl DataType {
         })
     }
 
-    /// A short, stable, lower-case name: `i8`, `f64`, `string`, `timestamp`…
+    /// A short, stable, lower-case name such as `i8`, `f64`, `string` or `timestamp`.
     ///
     /// The command line and the export metadata print these names.
     pub fn name(self) -> &'static str {

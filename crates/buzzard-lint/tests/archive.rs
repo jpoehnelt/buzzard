@@ -403,8 +403,7 @@ fn an_archive_whose_directory_cannot_be_read_is_one_finding() {
     cut.truncate(cut.len() - 40);
     dir.write("cut.llb", &cut);
     // An archive of a built application has no directory to read. It is
-    // a resource file like any other, as it was before archives were
-    // opened: nothing about it is a problem.
+    // a resource file like any other: nothing about it is a problem.
     dir.write(
         "built.llb",
         &RsrcBuilder::new(file_type::LIBRARY)
@@ -647,7 +646,7 @@ fn an_archive_inside_an_archive_is_listed_and_not_opened() {
     );
 }
 
-/// Nobody looks inside an archive in an archive, so a link into one is
+/// An archive in an archive is never opened, so a link into one is
 /// neither found nor missing.
 #[test]
 fn a_link_into_an_archive_in_an_archive_is_not_known_to_be_missing() {

@@ -8,16 +8,16 @@
 //! a value in unchanged. The selector must be an enumeration, a string or
 //! an integer. Every such `(W, register, C)` is one [`Machine`]:
 //!
-//! * a **state** is a frame of `C`, named by its case label (item names,
+//! * a state is a frame of `C`, named by its case label (item names,
 //!   strings, or numbers and ranges, joined with `, `; a default frame
 //!   without values of its own is named `Default`). The machine is "in" a
 //!   state during an iteration whose register value selects that frame;
-//! * the **successors** of a state are the frames selected by the values
+//! * the successors of a state are the frames selected by the values
 //!   that can reach the register's right terminal during such an
 //!   iteration;
-//! * the **stop** behaviour of a state is what can reach the loop's
+//! * the stop behaviour of a state is what can reach the loop's
 //!   condition terminal during such an iteration;
-//! * the **initial** states are the frames selected by the values wired
+//! * the initial states are the frames selected by the values wired
 //!   to the register's left terminal from outside the loop.
 //!
 //! # How a value is followed
@@ -27,21 +27,21 @@
 //! constant and the register in the nine real state machine files the
 //! pattern was studied on (editor versions 13, 17, 20 and 25):
 //!
-//! * a **constant** of a simple type ends the walk with its value;
-//! * the **left terminal of the machine's own register** means "the
+//! * a constant of a simple type ends the walk with its value;
+//! * the left terminal of the machine's own register means "the
 //!   current state", so the successor is the state itself;
-//! * an **input tunnel** of any structure that passes its value unchanged
+//! * an input tunnel of any structure that passes its value unchanged
 //!   continues at the wire outside;
-//! * the built-in **Select** function gives either of its two inputs;
-//! * an **output tunnel of a case, event or disable structure** gives the
+//! * the built-in Select function gives either of its two inputs;
+//! * an output tunnel of a case, event or disable structure gives the
 //!   value any of its frames provides, except that for `C` itself only
 //!   the frame of the state in question counts. A frame that leaves the
 //!   tunnel unwired provides the type's default (zero, which is the first
 //!   item of an enumeration; False; the empty string), but only when the
 //!   file marks the tunnel as using the default, and only on a diagram
 //!   that decoded completely (see "A complete decode" below);
-//! * an **output tunnel of a stacked sequence** gives what its one wired
-//!   frame provides, and one of a **nested while loop** what the loop's
+//! * an output tunnel of a stacked sequence gives what its one wired
+//!   frame provides, and one of a nested while loop what the loop's
 //!   diagram provides.
 //!
 //! A structure is taken for what its class says only when the rest of
@@ -74,7 +74,7 @@
 //!   the selector and of both register terminals, so that no hidden
 //!   conversion can change it. An enumeration constant must also carry
 //!   the name the selector's own item list has at its value.
-//! * **Supported selector types.** A selector table stores every value
+//! * Supported selector types. A selector table stores every value
 //!   as a 32-bit signed number. How a narrower or an unsigned value is
 //!   widened into it was only observed for some types, so only these are
 //!   resolved; any other gives [`Successors::Unknown`] for every state:
@@ -103,9 +103,9 @@
 //!   left terminal keeps its value from the previous call of the VI, so
 //!   its first state is unknown and nothing is claimed about
 //!   reachability.
-//! * **Stacked registers** (several left terminals) are **unverified**:
-//!   none of 634 loops in 1,773 real files has one, so how the file
-//!   stores them is known from third-party notes only. A loop gives no
+//! * **Stacked registers.** A register with several left terminals is
+//!   unverified: none of 634 loops in 1,773 real files has one, so how
+//!   the file stores them is known from third-party notes only. A loop gives no
 //!   machine unless its registers pair one to one: every register has
 //!   exactly one left side, and the loop and its diagram each carry
 //!   exactly as many left and as many right register terminals as the
@@ -118,10 +118,16 @@
 //!   would look like a tunnel left unwired, and a node that was lost
 //!   could be the one that stops the program. No loss is recorded for any
 //!   of the 1,773 real files.
-//! * **Size.** A case structure with more than [`MAX_STATES`] frames is
-//!   not modelled.
-//! * **Several case structures** in one loop that select on the same
-//!   register give one machine each. Each is sound on its own; a case
+//! * **Values are taken as they are.** Damage that leaves the structure
+//!   of a diagram as it was and changes only a value (the item an
+//!   enumeration constant holds, the text of a case label, the number of
+//!   the default case, the polarity of the condition terminal) is no
+//!   loss. The file then describes another program completely, and the
+//!   findings are about that program.
+//! * **Size.** A case structure with more than [`MAX_STATES`] (1,024)
+//!   frames is not modelled.
+//! * **Several case structures.** Case structures in one loop that
+//!   select on the same register give one machine each. Each is sound on its own; a case
 //!   structure other than `C` on the path is treated as any other case
 //!   structure (all frames).
 //! * **Several registers.** Only the register that feeds the selector is
@@ -136,7 +142,8 @@
 //!   iteration that does not execute `C` at all the state is still the
 //!   frame the register value selects, and the values the other
 //!   structures provide are included.
-//! * **Stopping** means the loop's own condition terminal. A state stops
+//! * **Stopping.** A state stops the machine through the loop's own
+//!   condition terminal. A state stops
 //!   `Always` or `Never` only when nothing but Boolean constants (and
 //!   unwired-default tunnels) can reach the terminal in that state, read
 //!   with the terminal's "stop if true" or "continue if true" setting.
@@ -148,10 +155,10 @@
 //!   [`Machine::other_exits`], wherever it sits on the block diagram,
 //!   and keeps a "cannot stop" finding from being labelled as proven. An
 //!   error dialog or an abort by the user is outside the model.
-//! * **Integer selectors** are reported only when at least one frame
-//!   writes a constant successor; otherwise the register is far more
-//!   likely a counter than a state.
-//! * **Not machines:** selectors that are Booleans or error clusters,
+//! * **Integer selectors.** A machine with an integer selector is
+//!   reported only when at least one frame writes a constant successor.
+//!   Otherwise the register is more likely a counter than a state.
+//! * **Not machines.** Selectors that are Booleans or error clusters,
 //!   selectors fed by a subVI, a function, a control or the loop counter,
 //!   for loops, timed loops, and a state held in a cluster or a feedback
 //!   node. A selector type or table encoding that `buzzard-rsrc` does not
@@ -166,30 +173,31 @@
 //!   then remaps constants and case labels on load is not modelled. Every
 //!   result about such a machine is about the VI as saved;
 //!   [`Machine::type_definition`] names the file and the findings say so.
-//! * **Unwired tunnels of an enumeration** are taken to provide item 0,
-//!   the default of the data type, also when the type is a type
+//! * **Unwired tunnels of an enumeration.** They are taken to provide
+//!   item 0, the default of the data type, also when the type is a type
 //!   definition whose control has another default value. That is what
 //!   the product documentation says and it was not checked in an editor.
-//! * Not compared with a running editor: the semantics above come from
-//!   the file format and the product documentation.
+//! * **No comparison with a running editor.** The semantics above come
+//!   from the file format and the product documentation.
 //!
-//! # String queue machines
+//! # String/queue state machines
 //!
-//! In a JKI-style machine the register holds a whole queue of state names
-//! as one string, and subVIs split and extend it. That is a pushdown
-//! system computed by library code, not a finite automaton, and it is
-//! **not modelled**. [`QueueMachine`] carries one heuristic check only:
-//! names in string constants wired (directly, or through the steps above)
-//! into an `Add State(s) to Queue` call, or into the queue register from
-//! outside, that match no case label and so run the default case. A queue
-//! string is read the way the real files use it: one state per line, the
-//! name ending at `>>` (arguments follow), `//` starting a comment and
-//! `/* */` enclosing one. In 16 of the 17 real machines studied every
-//! enqueued name read this way has a case; the other, a documentation
-//! example, enqueues three names it has no case for. The check proves
-//! nothing: names built at run time or enqueued by other VIs are not
-//! seen, the comment syntax is inferred from those files alone, and the
-//! library is recognised by the names of its subVIs.
+//! In a string/queue state machine, the style of the JKI State Machine,
+//! the register holds a whole queue of state names as one string, and
+//! subVIs split and extend it. That is a pushdown system computed by
+//! library code, not a finite automaton, and it is not modelled.
+//! [`QueueMachine`] carries one heuristic check only: names in string
+//! constants wired (directly, or through the steps above) into an
+//! `Add State(s) to Queue` call, or into the queue register from outside,
+//! that match no case label and so run the default case. A queue string
+//! is read the way the real files use it: one state per line, the name
+//! ending at `>>` (arguments follow), `//` starting a comment and `/* */`
+//! enclosing one. In 16 of the 17 real string/queue state machines
+//! studied, every enqueued name read this way has a case. The other, a
+//! documentation example, enqueues three names it has no case for. The
+//! check proves nothing: names built at run time or enqueued by other VIs
+//! are not seen, the comment syntax is inferred from those files alone,
+//! and the library is recognised by the names of its subVIs.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 

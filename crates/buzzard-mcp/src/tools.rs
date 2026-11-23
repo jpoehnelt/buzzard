@@ -36,9 +36,11 @@ pub(crate) const NAMES: [&str; 9] = [
 ];
 
 pub(crate) const INSTRUCTIONS: &str =
-    "buzzard reads LabVIEW .vi/.ctl binaries and .lvproj/.lvlib/.lvclass \
-files directly from disk, without the LabVIEW IDE. All tools are read-only. Relative paths are \
-resolved against the directory the server was started in. Start with buzzard_symbols to find \
+    "buzzard reads LabVIEW .vi and .ctl binaries, .llb archives of them, and .lvproj, .lvlib \
+and .lvclass files directly from disk, without a LabVIEW installation. All tools are read-only. \
+Relative paths are resolved against the directory the server was started in. A member of an \
+archive is named by the path of the archive followed by its name, as in lib/util.llb/Init.vi. \
+Start with buzzard_symbols to find \
 files, buzzard_inspect and buzzard_diagram to read one, buzzard_callers and buzzard_callees to \
 navigate, buzzard_check to lint, buzzard_verify to check the state machines on block \
 diagrams, and buzzard_deps to list what must be installed before the files can be opened.";
