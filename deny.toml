@@ -10,7 +10,13 @@ all-features = true
 unmaintained = "all"
 unsound = "all"
 yanked = "deny"
-ignore = []
+ignore = [
+    # chrono is unmaintained and has no fixed version. It comes in through
+    # arrow and parquet, which the `parquet` feature of buzzard-tdms uses for
+    # the Parquet export. buzzard passes no date or time text to it. Remove
+    # this entry when arrow drops chrono.
+    { id = "RUSTSEC-2026-0543", reason = "transitive through arrow and parquet; no fixed version" },
+]
 
 [licenses]
 # Permissive licenses compatible with distributing an Apache-2.0 binary.
