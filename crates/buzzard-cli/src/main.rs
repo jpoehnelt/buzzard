@@ -40,9 +40,9 @@ struct Cli {
 enum Command {
     /// Analyze files and directories and report problems.
     #[command(
-        after_help = "Exit status: 0 when no problems are found or --exit-zero is set, \
-        1 when problems are found, 2 for an unknown --ignore code, a path that does not exist, \
-        or a report that cannot be written."
+        after_help = "Exit status: 0 when no problem is an error or a warning, or when \
+        --exit-zero is set. 1 when a problem is an error or a warning. 2 for an unknown \
+        --ignore code, a path that does not exist, or a report that buzzard cannot write."
     )]
     Check {
         /// Files, directories, or member paths such as lib/util.llb/Init.vi.
@@ -54,17 +54,19 @@ enum Command {
         /// Rule code to skip, such as BZ004. May be repeated.
         #[arg(long, value_name = "CODE")]
         ignore: Vec<String>,
-        /// Longest allowed path in characters.
+        /// Longest path that rule BZ003 accepts, in characters.
         #[arg(long, default_value_t = 260)]
         max_path_length: usize,
-        /// Exit with status 0 even when problems are found.
+        /// Exit with status 0 whatever problems the report holds.
         #[arg(long)]
         exit_zero: bool,
     },
-    /// Print what is known about a single file.
+    /// Print what one file holds.
+    ///
+    /// For an .llb archive, the report is the directory of the archive.
     #[command(
-        after_help = "Exit status: 0, or 2 when the file cannot be read or has no block \
-        diagram for the svg, dot or mermaid format."
+        after_help = "Exit status: 0, or 2 when buzzard cannot read the file, or when \
+        you ask for svg, dot, or mermaid and the file has no block diagram."
     )]
     Inspect {
         /// A file, or a member path such as lib/util.llb/Init.vi.
@@ -75,16 +77,17 @@ enum Command {
     },
     /// List what the files need from outside the project.
     ///
-    /// The report holds the installed files (under a symbolic root such
-    /// as vilib, instrlib, or userlib) grouped by package, the
-    /// machine-absolute links, and the relative links whose file does not
-    /// exist.
+    /// The report lists the external files by package, the
+    /// machine-absolute links, the relative links whose file does not
+    /// exist, and the files that buzzard cannot parse. An external file is
+    /// a file under a symbolic root such as vilib, instrlib, or userlib.
     #[command(
         after_help = "Exit status: 0 whatever the report holds, 2 for a path that does \
-        not exist or a --root that cannot be used."
+        not exist or a --root that buzzard cannot use."
     )]
     Deps(deps_cmd::Args),
-    /// Compare two versions of a file: settings, dependencies, nodes, wires.
+    /// Compare the settings, dependencies, nodes, and wires of two versions
+    /// of a file.
     #[command(
         after_help = "Exit status: 0 when the two files are the same, 1 when they \
         differ, 2 on an error. With --git the status is always 0."
@@ -92,13 +95,14 @@ enum Command {
     Diff(diff_cmd::Args),
     /// Find the state machines on block diagrams and check them.
     ///
-    /// The findings are states that can never be reached, loops that their
-    /// condition terminal can never stop, and constants that no case
+    /// The findings are states that can never be reached, loops whose
+    /// condition terminal can never stop them, and constants that no case
     /// handles. Each finding is labeled proven, structural, or heuristic.
     #[command(
-        after_help = "Exit status: 0 when there are no findings, 1 when there are any, \
-        of any label, 2 on an error such as a path that does not exist. A file that cannot be parsed is listed \
-        and does not change the status."
+        after_help = "Exit status: 0 when there are no findings. 1 when there are \
+        findings, of any label. 2 on an error, such as a path that does not exist. The \
+        report lists each file that buzzard cannot read or parse, and such a file does \
+        not change the status."
     )]
     Verify {
         /// Files, directories, or member paths such as lib/util.llb/Init.vi.
@@ -113,13 +117,18 @@ enum Command {
     Tdms(tdms_cmd::Args),
     /// Run the language server over stdio.
     #[command(
-        after_help = "Exit status: 0 after shutdown and then exit, 1 otherwise, 2 when \
-        the server cannot start."
+        after_help = "Exit status: 0 after shutdown and then exit, or when the client \
+        closes the connection. 1 after exit without shutdown. 2 when the server cannot \
+        start."
     )]
     Lsp,
     /// Run the Model Context Protocol server over stdio.
     ///
     /// AI agents call its tools to run the analysis.
+    #[command(
+        after_help = "Exit status: 0 when the client closes the connection, 2 when \
+        reading a request or writing a response fails."
+    )]
     Mcp,
 }
 
@@ -132,7 +141,9 @@ enum CheckFormat {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum VerifyFormat {
+    /// The state machines and their findings.
     Text,
+    /// The report as JSON.
     Json,
     /// The transition graphs as a Graphviz graph.
     Dot,
@@ -140,13 +151,15 @@ enum VerifyFormat {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum InspectFormat {
+    /// A summary of the file.
     Markdown,
+    /// What buzzard reads from the file, as JSON.
     Json,
-    /// Picture of the block diagram, laid out as in the editor.
+    /// The block diagram as a picture, laid out as in LabVIEW.
     Svg,
-    /// Block diagram as a Graphviz graph.
+    /// The block diagram as a Graphviz graph.
     Dot,
-    /// Block diagram as a Mermaid flowchart.
+    /// The block diagram as a Mermaid flowchart.
     Mermaid,
 }
 

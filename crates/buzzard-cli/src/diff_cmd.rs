@@ -10,9 +10,9 @@ use clap::ValueEnum;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
-    /// The old and the new file. A file that does not exist, or
-    /// /dev/null, counts as empty, so everything is reported as added or
-    /// removed.
+    /// The old file and the new file, or a member path for each. A file
+    /// that does not exist, or /dev/null, counts as empty, so buzzard
+    /// reports everything in the other file as added or removed.
     ///
     /// With --git, these are the arguments that git passes to an external
     /// diff driver.
@@ -24,9 +24,9 @@ pub(crate) struct Args {
     /// Leave out nodes that only changed position or size.
     #[arg(long)]
     ignore_moves: bool,
-    /// Run as a git external diff driver. Expects git's seven arguments
-    /// (path old-file old-hex old-mode new-file new-hex new-mode) and
-    /// always exits with status 0, as git requires.
+    /// Run as a git external diff driver. buzzard then expects git's seven
+    /// arguments (path old-file old-hex old-mode new-file new-hex
+    /// new-mode). The exit status is always 0, as git requires.
     #[arg(long)]
     git: bool,
 }

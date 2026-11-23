@@ -1,7 +1,7 @@
 {
   "name": "buzzard",
   "displayName": "Buzzard",
-  "description": "Diagnostics, summaries, and block diagram previews for LabVIEW project files, from the buzzard language server.",
+  "description": "Shows the problems, file summaries, and block diagrams that the buzzard language server reports for LabVIEW files.",
   "version": "0.1.0",
   "publisher": "buzzard",
   "private": true,
@@ -37,7 +37,7 @@
     "virtualWorkspaces": false,
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In an untrusted workspace the `buzzard.path` setting of the workspace is ignored, so a workspace cannot choose which executable is run.",
+      "description": "In an untrusted workspace, the extension ignores the `buzzard.path` setting of the workspace, so a workspace cannot choose the executable that runs.",
       "restrictedConfigurations": [
         "buzzard.path"
       ]
@@ -51,7 +51,7 @@
           "type": "string",
           "default": "buzzard",
           "scope": "machine-overridable",
-          "markdownDescription": "The `buzzard` executable. A bare name is looked up on `PATH`. A path that starts with `~` is taken from the home directory. A relative path with a directory in it is taken from the first workspace folder."
+          "markdownDescription": "The `buzzard` executable. The extension looks up a bare name on `PATH`. It takes a path that starts with `~/` from the home directory. It takes a relative path with a directory in it from the first workspace folder."
         },
         "buzzard.trace.server": {
           "type": "string",
@@ -62,7 +62,7 @@
           ],
           "default": "off",
           "scope": "window",
-          "description": "Trace the messages exchanged with the buzzard language server in the output panel."
+          "description": "Which messages between the extension and the buzzard language server the output panel logs."
         }
       }
     },
