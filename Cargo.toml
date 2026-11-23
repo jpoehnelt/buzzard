@@ -57,9 +57,9 @@ encoding_rs = "0.8"
 # TDMS reader: safe casts between byte buffers and sample slices
 bytemuck = { version = "1.25", features = ["derive"] }
 # Parquet export, behind the `parquet` feature of buzzard-tdms
-parquet = { version = "60", default-features = false, features = ["arrow", "snap"] }
-arrow-array = { version = "60", default-features = false }
-arrow-schema = { version = "60", default-features = false }
+parquet = { version = "60.2", default-features = false, features = ["arrow", "snap"] }
+arrow-array = { version = "60.2", default-features = false }
+arrow-schema = { version = "60.2", default-features = false }
 # Property-based tests
 proptest = { version = "1", default-features = false, features = ["std"] }
 

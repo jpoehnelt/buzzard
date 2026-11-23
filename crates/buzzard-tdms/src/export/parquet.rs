@@ -201,7 +201,8 @@ pub fn write_parquet<W: Write + Send>(
         .map_err(failed)?;
     let mut writer = SerializedFileWriter::new(out, parquet_schema.root_schema_ptr(), properties)
         .map_err(failed)?;
-    let factory = ArrowRowGroupWriterFactory::new(&writer, Arc::clone(&schema));
+    let factory =
+        ArrowRowGroupWriterFactory::try_new(&writer, Arc::clone(&schema)).map_err(failed)?;
 
     let mut start = 0;
     let mut group = 0;
