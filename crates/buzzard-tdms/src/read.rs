@@ -1,16 +1,16 @@
-//! Pass two: copy the requested values of the requested channels out of the
-//! file.
+//! Pass two copies the requested values of the requested channels out of
+//! the file.
 //!
 //! Everything here works on bytes. A request names a channel, a range of
-//! its values and a destination of exactly the right size; the typed
+//! its values and a destination of exactly the right size. The typed
 //! functions in `file.rs` cast their slices to bytes and back.
 //!
 //! Contiguous values are read straight into the destination with one
 //! positional read per run, so the only copy is the kernel's. Values that
 //! sit in rows (interleaved data and driver buffers) are read a block of
 //! rows at a time into a scratch buffer, and every requested channel is
-//! picked out of the block before the next one is read: a wide interleaved
-//! file is read once however many of its channels are wanted.
+//! picked out of the block before the next one is read. A wide interleaved
+//! file is therefore read once, however many of its channels are requested.
 
 use rayon::prelude::*;
 
@@ -21,7 +21,7 @@ use crate::types::{DataType, Shape};
 
 /// Bytes of rows read into the scratch buffer at once.
 const GATHER_BYTES: u64 = 1 << 20;
-/// Rows wider than this are not buffered; their values are read one by one.
+/// Rows wider than this are not buffered. Their values are read one by one.
 const WIDE_ROW: u64 = 1 << 16;
 /// Bytes of one channel that a single task reads when nothing is in rows.
 const DIRECT_BYTES: u64 = 4 << 20;
@@ -73,7 +73,7 @@ pub(crate) fn compatible(stored: DataType, want: DataType) -> bool {
 /// One channel's part of a read.
 pub(crate) struct Request<'a> {
     pub(crate) spans: &'a [Span],
-    /// Which scaler of a driver channel; `None` for its only one.
+    /// Which scaler of a driver channel, or `None` for its only one.
     pub(crate) scaler: Option<u32>,
     pub(crate) want: DataType,
     /// Bytes per value in `dest`.
@@ -133,7 +133,9 @@ impl<'a> Pieces<'a> {
                 let scaler = scaler.ok_or_else(|| {
                     Error::NotFound(match self.scaler {
                         Some(id) => format!("scaler {id} in a part of the channel's data"),
-                        None => "a single scaler: name one of the channel's scalers".to_owned(),
+                        None => "a single scaler in a part of the channel's data. \
+                                 Name one of the channel's scalers"
+                            .to_owned(),
                     })
                 })?;
                 Ok((scaler.loc, scaler.bit, Some(scaler.dtype)))
@@ -225,9 +227,9 @@ pub(crate) fn fix_order(bytes: &mut [u8], size: usize, shape: Shape, big_endian:
         Shape::Scalar if big_endian != host_big => reverse_groups(bytes, size),
         Shape::Pair if big_endian != host_big => reverse_groups(bytes, size / 2),
         Shape::Scalar | Shape::Pair => {}
-        // In memory: fractions, then seconds. A little-endian file stores
-        // them in that order; a big-endian file stores seconds first, which
-        // is the whole value reversed.
+        // In memory the fractions come first, then the seconds. A
+        // little-endian file stores them in that order. A big-endian file
+        // stores the seconds first, so the whole value is reversed.
         Shape::Time => match (big_endian, host_big) {
             (false, false) => {}
             (true, false) => reverse_groups(bytes, 16),

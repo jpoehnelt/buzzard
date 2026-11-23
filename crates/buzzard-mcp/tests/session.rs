@@ -10,12 +10,12 @@ use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};
 use buzzard_rsrc::LvPath;
 use serde_json::{json, Value};
 
-/// `crates/buzzard-rsrc/tests/fixtures`: real files saved by the IDE.
+/// `crates/buzzard-rsrc/tests/fixtures`: real files saved by the editor.
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../buzzard-rsrc/tests/fixtures")
 }
 
-/// Real `.lvproj`, `.lvlib` and `.lvclass` files.
+/// Real `.lvproj`, `.lvlib`, and `.lvclass` files.
 fn projects() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../buzzard-lint/tests/fixtures/project")
 }
@@ -86,14 +86,14 @@ impl Session {
         result
     }
 
-    /// Call a tool that must succeed; returns `(text, structuredContent)`.
+    /// Call a tool that must succeed. Returns `(text, structuredContent)`.
     fn ok(&mut self, name: &str, arguments: Value) -> (String, Value) {
         let result = self.call(name, arguments);
         assert_eq!(result["isError"], false, "{result}");
         (text(&result), result["structuredContent"].clone())
     }
 
-    /// Call a tool that must fail as a tool error; returns the message.
+    /// Call a tool that must fail as a tool error. Returns the message.
     fn fails(&mut self, name: &str, arguments: Value) -> String {
         let result = self.call(name, arguments);
         assert_eq!(result["isError"], true, "{result}");
@@ -183,7 +183,8 @@ fn initialize_reports_tools_capability_and_server_info() {
         .unwrap()
         .contains("read-only"));
 
-    // An older supported revision is echoed; an unknown one gets the newest.
+    // An older supported revision is echoed, and an unknown one gets the
+    // newest.
     let older = session.request("initialize", json!({ "protocolVersion": "2024-11-05" }));
     assert_eq!(older["result"]["protocolVersion"], "2024-11-05");
     let unknown = session.request("initialize", json!({ "protocolVersion": "2099-01-01" }));
@@ -249,7 +250,8 @@ fn tools_list_describes_every_tool_with_a_schema() {
         let description = tool["description"].as_str().unwrap();
         assert!(description.contains("ead-only") || description.contains("reads no files"));
     }
-    // A pagination cursor is accepted and ignored: the list is one page.
+    // A pagination cursor is accepted and ignored, because the list is one
+    // page.
     let again = session.request("tools/list", json!({ "cursor": "x" }));
     assert_eq!(again["result"], reply["result"]);
     assert!(reply["result"].get("nextCursor").is_none());
@@ -346,7 +348,7 @@ fn check_honours_ignore_and_limit() {
 #[test]
 fn check_reports_unreadable_files_as_diagnostics_not_failures() {
     let mut session = Session::fixtures();
-    // A root that is a file is analyzed whatever it is; this one is Markdown.
+    // A root that is a file is analyzed whatever it is. This one is Markdown.
     let (_, structured) = session.ok("buzzard_check", json!({ "paths": ["README.md"] }));
     assert_eq!(structured["summary"]["errors"], 1);
     assert_eq!(structured["diagnostics"][0]["code"], "BZ000");
@@ -539,12 +541,12 @@ fn tool_failures_are_results_with_is_error_not_protocol_errors() {
     assert_eq!(missing, "file does not exist: pylavi/nope.vi");
     let directory = session.fails("buzzard_inspect", json!({ "path": "pylavi" }));
     assert!(directory.contains("is a directory"), "{directory}");
-    // Not an RSRC container at all.
+    // `README.md` is not an RSRC container.
     let unreadable = session.fails("buzzard_inspect", json!({ "path": "README.md" }));
     assert!(unreadable.starts_with("README.md: "), "{unreadable}");
     let unreadable = session.fails("buzzard_diagram", json!({ "path": "README.md" }));
     assert!(unreadable.starts_with("README.md: "), "{unreadable}");
-    // A file the IDE itself rejects.
+    // A file the editor itself rejects.
     session.call(
         "buzzard_inspect",
         json!({ "path": "pylavi/empty_invalid.vi" }),
@@ -806,7 +808,7 @@ fn batches_are_answered_in_order() {
     assert_eq!(replies[1]["error"]["code"], -32600);
     assert_eq!(replies[2]["error"]["code"], -32601);
     assert_eq!(replies[2]["id"], 2);
-    // A batch of notifications owes nothing.
+    // A batch of notifications gets no answer.
     assert_eq!(
         session.raw(r#"[{"jsonrpc":"2.0","method":"notifications/initialized"}]"#),
         None
@@ -851,7 +853,7 @@ fn huge_and_hostile_arguments_are_rejected_cleanly() {
         )
         .contains("at most 256"));
 
-    // An absurd limit is clamped rather than trusted.
+    // A limit above the maximum is clamped.
     let (_, structured) = session.ok(
         "buzzard_symbols",
         json!({ "root": "pylavi", "query": "", "limit": u64::MAX }),
@@ -900,7 +902,8 @@ fn deeply_nested_json_is_a_parse_error_not_a_stack_overflow() {
 fn paths_may_leave_the_base_directory_but_nothing_is_written() {
     let before = snapshot(&fixtures());
     let mut session = Session::new(fixtures().join("pylavi"));
-    // `..` is resolved lexically; a file outside the base is shown as given.
+    // `..` is resolved lexically, and a file outside the base is shown as
+    // given.
     let (_, structured) = session.ok(
         "buzzard_inspect",
         json!({ "path": "../pylabview/empty_vifile.vi" }),
@@ -1167,8 +1170,8 @@ fn serve_survives_binary_garbage_and_oversized_lines() {
 
 // ------------------------------------------------------------ verification
 
-/// Real state machines; `crates/buzzard-lint/tests/fixtures/verify/README.md`
-/// records their sources and licences.
+/// Real state machines. `crates/buzzard-lint/tests/fixtures/verify/README.md`
+/// records their sources and licenses.
 fn machines() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../buzzard-lint/tests/fixtures/verify")
 }
@@ -1184,7 +1187,7 @@ fn verify_describes_machines_and_labels_findings() {
     assert!(text.contains("      Idle -> Idle, Init; may stop the loop\n"));
     assert!(text.contains(
         "jki-state-machine/new-support-vis-examples.vi\n  string/queue state machine at while \
-         loop #70, case structure #177 (recognised, not modelled)\n"
+         loop #70, case structure #177 (recognized, not modeled)\n"
     ));
     assert!(text.contains(
         "    HEURISTIC [BZ203] state `Action: Step 1` is enqueued but no case handles it; the \
@@ -1215,7 +1218,8 @@ fn verify_describes_machines_and_labels_findings() {
     assert_eq!(finding["confidence"], "heuristic");
     assert!(finding["justification"].as_str().unwrap().len() > 20);
 
-    // The JSON format is the same data as text; a second call is identical.
+    // The JSON format is the same data as text, and a second call gives the
+    // same answer.
     let (json_text, json_structured) = session.ok(
         "buzzard_verify",
         json!({ "paths": ["."], "format": "json" }),
@@ -1390,7 +1394,7 @@ Scanned 3 files: 3 external files in 3 packages under 2 symbolic roots (0 found,
     );
     assert_eq!(structured["unparsed"][0]["path"], "ws/broken.vi");
 
-    // With a directory for a root, its files are looked up; the roots
+    // With a directory for a root, its files are looked up. The roots
     // may be an object or a list of NAME=DIR strings.
     let statuses = |structured: &Value| -> Vec<String> {
         structured["roots"]
@@ -1443,8 +1447,8 @@ Scanned 3 files: 3 external files in 3 packages under 2 symbolic roots (0 found,
 #[test]
 fn deps_answers_with_counts_unless_asked_for_files() {
     let dir = linked_workspace("deps-overview");
-    // Many files with the same links: the full report grows with every
-    // one of them, the default answer does not.
+    // Many files hold the same links. The full report grows with every
+    // one of them, and the default answer does not.
     let main = fs::read(dir.0.join("ws/main.vi")).unwrap();
     for i in 0..40 {
         fs::write(dir.0.join(format!("ws/copy-{i:02}.vi")), &main).unwrap();
@@ -1592,7 +1596,7 @@ fn deps_checks_its_arguments() {
 
 // ----------------------------------------------------------------- archives
 
-/// A workspace with an archive: `Main.vi` calls `lib.llb/add.vi`, which is
+/// A workspace with an archive. `Main.vi` calls `lib.llb/add.vi`, which is
 /// a real VI with a block diagram.
 fn archive_workspace(name: &str) -> TempDir {
     let dir = TempDir::new(name);
@@ -1625,7 +1629,8 @@ fn tools_take_the_path_of_a_member_of_an_archive() {
     let dir = archive_workspace("archive");
     let mut session = Session::new(dir.0.clone());
 
-    // The archive itself: its members, and the path to pass for each.
+    // The archive itself answers with its members and the path to pass for
+    // each.
     let (text, structured) = session.ok("buzzard_inspect", json!({ "path": "lib.llb" }));
     assert!(text.contains("| Kind | LLB archive (`LVAR`) |"), "{text}");
     assert!(text.contains("| add.vi | VI (`LVIN`) |"), "{text}");
@@ -1736,8 +1741,9 @@ fn the_cache_follows_a_change_to_an_archive() {
     // A member given by its own path changes with its archive.
     let (_, one) = session.ok("buzzard_check", json!({ "paths": ["lib.llb/Inline.vi"] }));
     assert_eq!(one["diagnostics"], json!([]));
-    // Also when the same member is asked for again and nothing but the
-    // archive changed in between: the member's stamp is its archive's.
+    // The same holds when the same member is asked for again and only the
+    // archive changed in between, because the member's stamp is its
+    // archive's.
     let inline = RsrcBuilder::default()
         .save_record(0x2300_8000, &[0; 6])
         .build();

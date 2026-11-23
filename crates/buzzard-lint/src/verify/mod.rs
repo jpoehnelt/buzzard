@@ -4,57 +4,57 @@
 //! structure, with the case selected by a shift register that each case
 //! writes its successor into. [`model`] holds the abstract machine and the
 //! checks that are run on it. [`mod@extract`] finds the machines on a diagram
-//! and builds a [`Machine`] for each; its documentation lists every
+//! and builds a [`Machine`] for each. Its documentation lists every
 //! assumption it makes. [`report`] prints the results.
 //!
 //! # What "verified" means
 //!
-//! The model is an *over-approximation* of the real program: where a case
-//! chooses its successor from data the analysis cannot follow, every state
-//! is assumed possible, and a stop condition it cannot read is assumed to
-//! be able to go either way. The real program's behaviours are therefore a
-//! subset of the model's. That makes the two "cannot happen" results
-//! proofs, not heuristics:
+//! The model is an over-approximation of the real program. Where a case
+//! chooses its successor from data the analysis cannot follow, the model
+//! assumes that every state is possible. Where the analysis cannot read a
+//! stop condition, the model assumes that it can go either way. The real
+//! program's behaviors are therefore a subset of the model's, so the two
+//! "cannot happen" results are proofs:
 //!
-//! * a state the model cannot reach is unreachable in the program;
-//! * a state from which the model cannot reach a stop is one from which
+//! * A state the model cannot reach is unreachable in the program.
+//! * A state from which the model cannot reach a stop is one from which
 //!   the loop's condition terminal can never stop the loop.
 //!
-//! The reverse does not hold: a state the model *can* reach may still be
-//! unreachable in practice. Each result says which kind it is.
+//! The reverse does not hold. A state the model can reach may still be
+//! unreachable when the program runs. Each result says which kind it is.
 //!
-//! What the proofs rest on, beyond the algorithm:
+//! The proofs also rest on these assumptions:
 //!
-//! * the reading of the file format described in [`mod@extract`], which was
-//!   checked against real files but never against a running editor;
-//! * a block diagram that decoded completely. The decoder skips what it
+//! * The reading of the file format described in [`mod@extract`] is
+//!   correct. It was checked against real files but never against a
+//!   running editor.
+//! * The block diagram decoded completely. The decoder skips what it
 //!   cannot resolve, and a wire it skipped would look like a tunnel left
 //!   unwired. A diagram with any recorded [`buzzard_rsrc::Loss`] is
-//!   therefore not searched for classic machines at all;
-//! * "stop" means that the loop's own condition terminal ends the loop,
-//!   and nothing else. A program can also be ended from inside a subVI,
-//!   through a call by reference, an invoke or property node or a call
-//!   into a library, by an error dialog or by the user. None of that is
-//!   modelled. The second result is labelled as proven only when the
-//!   whole block diagram holds no node of those kinds (the conservative
-//!   reading: such a node anywhere on the diagram may run in the same
-//!   iteration or in parallel); otherwise it is reported one level lower,
-//!   as [`Confidence::Structural`], and names the nodes;
-//! * a state is "unreachable" from the loop's first iteration onwards; the
-//!   model says nothing about code outside the loop;
-//! * for an enumeration whose type is a type definition, the item list is
+//!   therefore not searched for classic machines.
+//! * "Stop" means that the loop's own condition terminal ends the loop.
+//!   A program can also be ended from inside a subVI, through a call by
+//!   reference, an invoke or property node, or a call into a library, by
+//!   an error dialog, or by the user. The model covers none of those. The
+//!   second result is labeled as proven only when the whole block diagram
+//!   holds no node of those kinds, because such a node anywhere on the
+//!   diagram may run in the same iteration or in parallel. Otherwise the
+//!   result is reported as [`Confidence::Structural`] and names the nodes.
+//! * A state is "unreachable" from the loop's first iteration onward. The
+//!   model says nothing about code outside the loop.
+//! * For an enumeration whose type is a type definition, the item list is
 //!   the copy stored in the file when it was saved. The type definition
 //!   file itself is not read or compared, so a proof is about the VI as
-//!   saved; the findings say so.
+//!   saved. The findings say so.
 //!
 //! A third result, a state name that no case handles, is a fact about the
-//! diagram (a constant with the value is wired toward the state register
-//! and no case is labelled with it), not about which paths run. It is
-//! labelled [`Confidence::Structural`], never as proven, and is reported
+//! diagram. A constant with the value is wired toward the state register
+//! and no case is labeled with it. The result says nothing about which
+//! paths run. It is labeled [`Confidence::Structural`] and is reported
 //! once per machine and value.
 //!
 //! String/queue state machines in the style of the JKI State Machine are
-//! recognised but not modelled; they get one heuristic check, labelled as
+//! recognized but not modeled. They get one heuristic check, labeled as
 //! such. See [`mod@extract`].
 
 pub mod extract;
@@ -72,12 +72,12 @@ pub use model::{Finding, Machine, Report, State, Stop, Successors};
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
     /// Holds for every execution of the program, because it follows from
-    /// the over-approximating model; see the module docs for what the
-    /// proof rests on.
+    /// the over-approximating model. The module documentation lists what
+    /// the proof rests on.
     Proven,
     /// A fact about what is wired on the diagram. It is not a statement
-    /// about what the program does when it runs: the path in question may
-    /// never execute, or a node the model does not look into may end the
+    /// about what the program does when it runs, because the path in question
+    /// may never execute, or a node the model does not look into may end the
     /// program first.
     Structural,
     /// A pattern match on names. It can be wrong in both directions.
@@ -85,7 +85,7 @@ pub enum Confidence {
 }
 
 impl Confidence {
-    /// The label a report prints before a finding: `PROVEN`, `STRUCTURAL`
+    /// The label a report prints before a finding: `PROVEN`, `STRUCTURAL`,
     /// or `HEURISTIC`.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -95,7 +95,8 @@ impl Confidence {
         }
     }
 
-    /// The words a one-line message ends in, e.g. in a lint diagnostic.
+    /// The words a one-line message ends in, for example in a lint
+    /// diagnostic.
     pub fn suffix(self) -> &'static str {
         match self {
             Confidence::Proven => "proven",
@@ -123,7 +124,7 @@ pub enum Problem {
     /// The loop's condition terminal can never stop the loop, whatever
     /// state it is in.
     NeverStops,
-    /// A constant that no case handles can reach the state register; the
+    /// A constant that no case handles can reach the state register. The
     /// default case would run for it.
     UndefinedState {
         /// The value without a case.
@@ -143,20 +144,20 @@ pub enum Problem {
 /// One finding about one machine, ready to show.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Issue {
-    /// Where the machine is on the diagram, e.g.
+    /// Where the machine is on the diagram, for example
     /// `while loop #38, case structure #49`.
     pub location: String,
     /// What is wrong.
     #[serde(flatten)]
     pub problem: Problem,
     /// For a finding that the loop cannot stop: the nodes on the block
-    /// diagram that could end the program some other way; see
-    /// [`Machine::other_exits`]. While there are any the finding is not
-    /// labelled as proven.
+    /// diagram that could end the program some other way. See
+    /// [`Machine::other_exits`]. While there are any, the finding is not
+    /// labeled as proven.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub other_exits: Vec<String>,
     /// For a proof about an enumeration machine: the type definition
-    /// whose saved copy the proof is about; see
+    /// whose saved copy the proof is about. See
     /// [`Machine::type_definition`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_definition: Option<String>,
@@ -266,7 +267,7 @@ impl Issue {
             }
             Problem::UndefinedState { .. } => {
                 "a constant with this value is wired toward the state register and no case is \
-                 labelled with it, even ignoring letter case; whether a path that carries it \
+                 labeled with it, even ignoring letter case; whether a path that carries it \
                  ever runs is not determined"
             }
             Problem::UnhandledQueueState { .. } => {
@@ -282,10 +283,10 @@ impl Issue {
 pub struct Verification {
     /// Classic machines with the result of checking each.
     pub machines: Vec<Report>,
-    /// String/queue machines, which are not modelled.
+    /// String/queue machines, which are not modeled.
     pub queue_machines: Vec<QueueMachine>,
     /// The block diagram did not decode completely, so it was not
-    /// searched for classic machines; see [`Extraction::incomplete`].
+    /// searched for classic machines. See [`Extraction::incomplete`].
     pub incomplete: bool,
 }
 

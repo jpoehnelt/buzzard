@@ -1,7 +1,7 @@
-//! The `buzzard` command: `check`, `inspect`, `deps`, `diff` and `verify` over the
-//! analysis in `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, `mcp`
-//! for the Model Context Protocol server in `buzzard-mcp`, and `tdms` for
-//! the measurement file reader in `buzzard-tdms`.
+//! The `buzzard` command: `check`, `inspect`, `deps`, `diff`, and `verify`
+//! over the analysis in `buzzard-lint`, `lsp` for the language server in
+//! `buzzard-ls`, `mcp` for the Model Context Protocol server in `buzzard-mcp`,
+//! and `tdms` for the measurement file reader in `buzzard-tdms`.
 
 #![expect(
     clippy::print_stderr,
@@ -75,8 +75,8 @@ enum Command {
     },
     /// List what the files need from outside the project.
     ///
-    /// The report holds the installed files (under the symbolic roots
-    /// vilib, instrlib, userlib and so on) grouped by package, the
+    /// The report holds the installed files (under a symbolic root such
+    /// as vilib, instrlib, or userlib) grouped by package, the
     /// machine-absolute links, and the relative links whose file does not
     /// exist.
     #[command(
@@ -94,7 +94,7 @@ enum Command {
     ///
     /// The findings are states that can never be reached, loops that their
     /// condition terminal can never stop, and constants that no case
-    /// handles. Each finding is labelled proven, structural or heuristic.
+    /// handles. Each finding is labeled proven, structural, or heuristic.
     #[command(
         after_help = "Exit status: 0 when there are no findings, 1 when there are any, \
         of any label, 2 on an error such as a path that does not exist. A file that cannot be parsed is listed \
@@ -205,8 +205,8 @@ fn main() -> ExitCode {
 }
 
 /// `buzzard inspect`: a project file, the directory of an archive, or a
-/// binary file. A member path is tried first: `x.llb/p.lvlib` is a member
-/// of an archive, and what a member is called decides how it is read.
+/// binary file. A member path is tried first, because `x.llb/p.lvlib` is a
+/// member of an archive and the member's name decides how it is read.
 fn inspect(file: &Path, format: InspectFormat) -> ExitCode {
     let is_member = archive::split(file).is_some();
     if is_project_file(file) && (is_member || file.is_file()) {
@@ -285,7 +285,7 @@ fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
     print(&rendered, status)
 }
 
-/// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
+/// `buzzard inspect` on a `.lvproj`, `.lvlib`, or `.lvclass` file.
 fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
     match ProjectFile::from_path(file) {
         Ok(project) => {
@@ -438,11 +438,11 @@ fn lsp() -> ExitCode {
 
 /// Write the report to stdout and return the status to exit with.
 ///
-/// A closed pipe (e.g. `buzzard check | head`) is not an error: the reader
-/// has seen what it wanted. Any other failure (a full disk, a quota, a
-/// broken mount) means the report is missing or truncated, so the command
-/// must not look like it succeeded: the error goes to stderr and the
-/// status is 2, whatever `status` was.
+/// A closed pipe (for example `buzzard check | head`) is not an error,
+/// because the reader chose to stop reading. Any other failure (a full
+/// disk, a quota, a broken mount) means the report is missing or
+/// truncated. The error then goes to stderr and the status is 2, whatever
+/// `status` was.
 fn print(text: &str, status: ExitCode) -> ExitCode {
     let mut stdout = io::stdout().lock();
     match write_report(&mut stdout, text) {
@@ -462,7 +462,7 @@ fn write_report(out: &mut impl Write, text: &str) -> io::Result<()> {
 }
 
 fn to_json(value: &impl serde::Serialize) -> String {
-    serde_json::to_string_pretty(value).expect("diagnostics always serialize") + "\n"
+    serde_json::to_string_pretty(value).expect("a report always serializes") + "\n"
 }
 
 fn render_human(diagnostics: &[Diagnostic], file_count: usize) -> String {

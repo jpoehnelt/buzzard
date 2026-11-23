@@ -1,5 +1,6 @@
-// The manifest is where the trademark rule, the pinned versions and the
-// contributed commands live, so it is checked like code.
+// The manifest holds the identifiers that the trademark rule covers, the
+// pinned versions, and the contributed commands, so the tests check it like
+// code.
 
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -106,7 +107,7 @@ test('dependency versions are pinned exactly', () => {
   }
 });
 
-test('the licence is Apache-2.0 and the file matches the one of the repository', () => {
+test('the license is Apache-2.0 and the file matches the one of the repository', () => {
   assert.equal(manifest.license, 'Apache-2.0');
   const own = fs.readFileSync(path.join(root, 'LICENSE'), 'utf8');
   const repository = fs.readFileSync(path.join(root, '..', '..', 'LICENSE'), 'utf8');

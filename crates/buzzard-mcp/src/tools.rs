@@ -1,9 +1,9 @@
-//! The tools: their schemas, argument checking and implementations.
+//! The schemas, argument checks, and implementations of the tools.
 //!
 //! Every tool is read-only. A failure (missing file, unreadable file, bad
 //! argument) is an `Err(String)`, which the protocol layer reports as a
 //! tool result with `isError` set so that the calling model can read the
-//! reason and correct itself.
+//! reason and correct the call.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -40,14 +40,14 @@ pub(crate) const INSTRUCTIONS: &str =
 and .lvclass files directly from disk, without a LabVIEW installation. All tools are read-only. \
 Relative paths are resolved against the directory the server was started in. A member of an \
 archive is named by the path of the archive followed by its name, as in lib/util.llb/Init.vi. \
-Start with buzzard_symbols to find \
-files, buzzard_inspect and buzzard_diagram to read one, buzzard_callers and buzzard_callees to \
-navigate, buzzard_check to lint, buzzard_verify to check the state machines on block \
-diagrams, and buzzard_deps to list what must be installed before the files can be opened.";
+Start with buzzard_symbols to find files. Use buzzard_inspect and buzzard_diagram to read one, \
+buzzard_callers and buzzard_callees to navigate, buzzard_check to lint, buzzard_verify to check \
+the state machines on block diagrams, and buzzard_deps to list what must be installed before \
+the files can be opened.";
 
-/// Longest accepted path or query argument, in bytes.
+/// The longest accepted path or query argument, in bytes.
 const MAX_TEXT_BYTES: usize = 4096;
-/// Most entries accepted in an array argument.
+/// The largest number of entries accepted in an array argument.
 const MAX_LIST_ITEMS: usize = 256;
 const DEFAULT_DIAGNOSTIC_LIMIT: usize = 200;
 const MAX_DIAGNOSTIC_LIMIT: usize = 5000;
@@ -56,18 +56,19 @@ const MAX_SYMBOL_LIMIT: usize = 1000;
 
 const CACHE_NOTE: &str = "The parsed workspace is cached in the server process. Every call \
 compares the size and modification time of each file with the cached scan and re-parses \
-everything when a file was added, removed or changed, so results normally follow the disk. Set \
+everything when a file was added, removed, or changed, so results normally follow the disk. Set \
 refresh to true to force a re-parse if a file was rewritten without its size or modification \
 time changing.";
 
 /// What a successful tool call returns.
 pub(crate) struct Output {
     pub text: String,
-    /// Machine-readable form of the same answer; always a JSON object.
+    /// The machine-readable form of the same answer, always a JSON object.
     pub structured: Option<Value>,
 }
 
-/// Size and modification time of one file; `None` when it cannot be read.
+/// The size and modification time of one file, or `None` when it cannot be
+/// read.
 type Stamp = Option<(u64, Option<SystemTime>)>;
 
 #[derive(Debug)]
@@ -106,8 +107,8 @@ impl State {
         normalize(&self.base.join(raw))
     }
 
-    /// Path as reported to the client: relative to the base directory when
-    /// inside it, always with forward slashes.
+    /// The path as reported to the client. It is relative to the base
+    /// directory when inside it, and always has forward slashes.
     fn show(&self, path: &Path) -> String {
         let shown = match path.strip_prefix(&self.base) {
             Ok(relative) if relative.as_os_str().is_empty() => Path::new("."),
@@ -118,7 +119,7 @@ impl State {
     }
 
     /// The scan of `roots`, reused when the files on disk are unchanged.
-    /// Hands back the state as well, so that callers can keep using it.
+    /// Also returns the state, so that callers can keep using it.
     fn scan(&mut self, mut roots: Vec<PathBuf>, refresh: bool) -> (&Self, &Scan) {
         roots.sort();
         roots.dedup();
@@ -222,7 +223,8 @@ impl<'a> Args<'a> {
         }
     }
 
-    /// An optional count between 1 and `max`; larger values are clamped.
+    /// An optional count between 1 and `max`. A larger value is clamped to
+    /// `max`.
     fn limit(&self, key: &str, default: usize, max: usize) -> Result<usize, String> {
         match self.map.get(key) {
             None => Ok(default),
@@ -536,8 +538,8 @@ fn deps(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, Str
         };
         (text, to_value(&found)?)
     } else {
-        // Counts per package: the size of the answer follows the number
-        // of packages, where the full report lists every referrer of
+        // The answer holds counts per package, so its size follows the
+        // number of packages. The full report lists every referrer of
         // every file and is megabytes for a large workspace.
         let overview = found.overview();
         let text = match format {
@@ -576,8 +578,8 @@ fn diagnostic_json(state: &State, diagnostic: &Diagnostic) -> Value {
 }
 
 /// Resolve the `path` argument to an existing regular file, or to the
-/// path of a member of an `.llb` archive that is one. Whether the archive
-/// has that member is found out when it is read.
+/// path of a member of an `.llb` archive that is an existing regular file.
+/// Whether the archive has that member is known only when it is read.
 fn existing_file(state: &State, args: &Args<'_>) -> Result<PathBuf, String> {
     let path = state.resolve(args.path("path")?);
     if path.is_dir() {
@@ -604,7 +606,7 @@ fn to_value(value: &impl serde::Serialize) -> Result<Value, String> {
 }
 
 fn pretty(value: &Value) -> String {
-    // Serializing a `Value` cannot fail; its keys are always strings.
+    // Serializing a `Value` cannot fail, because its keys are always strings.
     serde_json::to_string_pretty(value).unwrap_or_default() + "\n"
 }
 
@@ -733,7 +735,7 @@ fn neighbors(
     let root = root_dir(state, &args)?;
     let refresh = args.flag("refresh")?;
     let (state, scan) = state.scan(vec![root.clone()], refresh);
-    // A member is found under any letter case of its name; the answer
+    // A member is found under any letter case of its name, and the answer
     // names it as its archive does.
     let Some(path) = scan.workspace.stored_path(&path) else {
         return Err(format!(
@@ -808,7 +810,7 @@ fn symbols(state: &mut State, arguments: &Map<String, Value>) -> Result<Output, 
             Some((score, name, path.as_path(), symbol_kind(path, file)))
         })
         .collect();
-    // Best match first; ties broken by name, then path.
+    // The best match comes first. Ties are ordered by name, then path.
     scored.sort_by(|a, b| {
         b.0.cmp(&a.0)
             .then_with(|| a.1.cmp(&b.1))
@@ -920,10 +922,11 @@ pub(crate) fn definitions() -> Value {
             format!(
                 "Run buzzard's static analysis over LabVIEW files (.vi, .ctl, .lvproj, .lvlib, \
                  .lvclass) and report problems. Each diagnostic has a rule code (BZxxx), a \
-                 severity (error, warning or info), the file path and a message; the summary \
-                 counts files and problems per severity and per code. Cross-file rules \
-                 (circular dependencies, version mismatch) only see the files under `paths`, \
-                 so pass the project directory rather than a single file when you can. \
+                 severity (error, warning, or info), the file path, and a message. The \
+                 summary counts files and problems per severity and per code. Cross-file \
+                 rules (circular dependencies, version mismatch) see only the files under \
+                 `paths`, so pass the project directory rather than a single file when you \
+                 can. \
                  Diagnostics are sorted by path, then code. Call buzzard_rules to learn what \
                  a code means. Read-only. {CACHE_NOTE}"
             ),
@@ -932,7 +935,7 @@ pub(crate) fn definitions() -> Value {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": MAX_LIST_ITEMS,
-                    "items": path("A file or directory to analyze; directories are scanned recursively."),
+                    "items": path("A file or directory to analyze. A directory is scanned recursively."),
                     "description": "Files and directories to analyze together as one workspace.",
                 },
                 "ignore": {
@@ -946,7 +949,7 @@ pub(crate) fn definitions() -> Value {
                     "minimum": 1,
                     "maximum": MAX_DIAGNOSTIC_LIMIT,
                     "default": DEFAULT_DIAGNOSTIC_LIMIT,
-                    "description": "Most diagnostics to return. The summary always counts all of them and says whether the list was truncated.",
+                    "description": "The largest number of diagnostics to return. The summary always counts all of them and says whether the list was truncated.",
                 },
                 "refresh": refresh,
             }),
@@ -962,20 +965,21 @@ pub(crate) fn definitions() -> Value {
              is exact, and the findings: states that can never be reached, states from which \
              the loop's condition terminal can never stop the loop, a loop whose condition \
              terminal can never stop it, and constants no case handles that can reach the \
-             state register. Each finding is labelled PROVEN, STRUCTURAL or HEURISTIC with \
+             state register. Each finding is labeled PROVEN, STRUCTURAL, or HEURISTIC with \
              one sentence of justification. PROVEN findings hold on a model that \
-             over-approximates the diagram as saved in the file: wherever a next state or \
-             stop condition cannot be followed (a subVI, arithmetic, a control), every \
-             possibility is assumed, so a state reported as unreachable really is, while a \
-             state not reported may still be dead. STRUCTURAL findings are facts about the \
-             wiring that say nothing about what runs: a constant without a case, and a loop \
+             over-approximates the diagram as saved in the file. Wherever a next state or \
+             stop condition cannot be followed (a subVI, arithmetic, a control), the model \
+             assumes every possibility. A state reported as unreachable is therefore \
+             unreachable, while a state not reported may still be dead. STRUCTURAL findings \
+             are facts about the wiring that say nothing about what runs: a constant \
+             without a case, and a loop \
              that its condition terminal cannot stop while the diagram holds subVI calls or \
              other nodes (named in the finding) that could end the program some other way. \
              A block diagram that did not decode completely is listed and not searched. \
              String/queue state machines in the style of the JKI State Machine are \
-             recognised but not modelled; their only check, enqueued names without a case, \
+             recognized but not modeled. Their only check, enqueued names without a case, \
              is HEURISTIC. Files without a state machine are only counted. Formats: `text` \
-             (default), `json` (the same data, also returned as structuredContent) and `dot` \
+             (default), `json` (the same data, also returned as structuredContent), and `dot` \
              (the transition graphs as Graphviz source). Files are read from disk on every \
              call (never cached). Read-only."
                 .to_owned(),
@@ -984,7 +988,7 @@ pub(crate) fn definitions() -> Value {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": MAX_LIST_ITEMS,
-                    "items": path("A file or directory to analyze; directories are scanned recursively."),
+                    "items": path("A file or directory to analyze. A directory is scanned recursively."),
                     "description": "Files and directories whose block diagrams to check.",
                 },
                 "format": {
@@ -1001,7 +1005,8 @@ pub(crate) fn definitions() -> Value {
             "List external dependencies",
             format!(
                 "List what LabVIEW files (.vi, .ctl, .lvproj, .lvlib, .lvclass) under `paths` \
-                 need from outside, as `buzzard deps` prints it. Three lists. (1) Files linked \
+                 need from outside, as `buzzard deps` prints it. The answer has three lists. \
+                 (1) Files linked \
                  under a symbolic root such as <vilib> (libraries shipped with LabVIEW and \
                  installed add-ons), <instrlib> or <userlib>, grouped by root and by package, \
                  each with the files that use it. A package is a directory, not a product \
@@ -1009,16 +1014,17 @@ pub(crate) fn definitions() -> Value {
                  short at a library such as `error.llb`. (2) Machine-absolute links, which \
                  only work on a machine laid out like the one that saved the file. (3) \
                  Relative links with no file at their location. Each file under a root has a \
-                 status: `unchecked` unless `roots` maps that root to a directory, then \
-                 `found` or `missing` by a look at the disk; a file inside an .llb or another \
-                 file counts as found when that file exists, and letter case is ignored. Files \
+                 status. The status is `unchecked` unless `roots` maps that root to a \
+                 directory. With a directory, the status is `found` or `missing` after a look \
+                 at the disk. A file inside an .llb or another file counts as found when that \
+                 file exists, and letter case is ignored. Files \
                  that cannot be parsed are listed under `unparsed` and are not an error. By \
                  default (`detail` \"packages\") the answer holds counts: per package the \
                  number of files, their statuses and the number of files that use them, and \
                  per link the number of files that hold it. `detail` \"files\" returns what \
-                 `buzzard deps` prints, every file with every file that uses it; that is \
+                 `buzzard deps` prints, every file with every file that uses it. That is \
                  megabytes for a workspace of a thousand files, so narrow `paths` first. \
-                 Formats: `text` (default), `json` and `markdown`; the JSON of the chosen \
+                 Formats: `text` (default), `json`, and `markdown`. The JSON of the chosen \
                  detail is always returned as structuredContent. Read-only. {CACHE_NOTE}"
             ),
             json!({
@@ -1026,7 +1032,7 @@ pub(crate) fn definitions() -> Value {
                     "type": "array",
                     "minItems": 1,
                     "maxItems": MAX_LIST_ITEMS,
-                    "items": path("A file or directory to analyze; directories are scanned recursively."),
+                    "items": path("A file or directory to analyze. A directory is scanned recursively."),
                     "description": "Files and directories to analyze together as one workspace.",
                 },
                 "format": {
@@ -1039,7 +1045,7 @@ pub(crate) fn definitions() -> Value {
                     "type": "string",
                     "enum": ["packages", "files"],
                     "default": "packages",
-                    "description": "`packages`: counts per package and per link. `files`: every file and the files that use it, as `buzzard deps` prints.",
+                    "description": "`packages` returns counts per package and per link. `files` returns every file and the files that use it, as `buzzard deps` prints them.",
                 },
                 "roots": {
                     "description": "Directories of symbolic roots, to look their files up on disk: an object such as {\"vilib\": \"/opt/labview/vi.lib\"}, or an array of NAME=DIR strings. Names are written without angle brackets and matched without regard to case. Each directory must exist.",
@@ -1063,14 +1069,15 @@ pub(crate) fn definitions() -> Value {
         tool(
             "buzzard_inspect",
             "Inspect one LabVIEW file",
-            "Describe one LabVIEW file without opening the IDE. For a .vi or .ctl: kind, saved \
-             LabVIEW version, execution flags (reentrancy, debugging, breakpoints, separated \
-             compiled code, password protection), owning libraries and the list of files it \
-             depends on, as stored in the file. For a .lvproj, .lvlib or .lvclass: kind, \
-             version, members and parent class. Returns Markdown as text and the same data as \
-             structuredContent. The file is read from disk on every call (never cached). \
-             Read-only. Use buzzard_diagram for the block diagram and buzzard_callers for who \
-             uses the file."
+            "Describe one LabVIEW file without opening LabVIEW. For a .vi or .ctl, the \
+             answer gives the kind, the saved LabVIEW version, the execution flags \
+             (reentrancy, debugging, breakpoints, separated compiled code, password \
+             protection), the owning libraries, and the list of files it depends on, as \
+             stored in the file. For a .lvproj, .lvlib, or .lvclass, the answer gives the \
+             kind, version, members, and parent class. Returns Markdown as text and the same \
+             data as structuredContent. The file is read from disk on every call (never \
+             cached). Read-only. Use buzzard_diagram for the block diagram and \
+             buzzard_callers for the files that use the file."
                 .to_owned(),
             json!({ "path": path("The file to inspect.") }),
             &["path"],
@@ -1079,13 +1086,14 @@ pub(crate) fn definitions() -> Value {
             "buzzard_diagram",
             "Export a VI's block diagram",
             "Export the block diagram (the code) of one .vi or .ctl file. Formats: `markdown` \
-             (default; a node and wire listing, best for reading the logic), `json` (the full \
-             decoded graph of nodes, terminals and wires), `mermaid` (flowchart source), `dot` \
-             (Graphviz source) and `svg` (a picture laid out as in the editor; large). Fails \
-             with a clear message when the file has no decodable diagram, for example a \
-             password-protected VI or a project file. Decoding is reverse-engineered: node \
-             kinds it does not know are labelled generically rather than guessed. The file is \
-             read from disk on every call (never cached). Read-only."
+             (default, a listing of nodes and wires, best for reading the logic), `json` (the \
+             full decoded graph of nodes, terminals, and wires), `mermaid` (flowchart \
+             source), `dot` (Graphviz source), and `svg` (a large picture laid out as in the \
+             editor). The call fails with a message when the file has no diagram that can be \
+             decoded, for example a password-protected VI or a project file. The decoder is \
+             reverse-engineered. It gives a node kind that it does not know a generic label \
+             and does not guess. The file is read from disk on every call (never cached). \
+             Read-only."
                 .to_owned(),
             json!({
                 "path": path("The .vi or .ctl file whose diagram to export."),
@@ -1104,8 +1112,8 @@ pub(crate) fn definitions() -> Value {
             format!(
                 "List the files under `root` that use `path` (for example the VIs that call a \
                  subVI or use a type definition), sorted by path. Only files under `root` are \
-                 searched, so pass the project's top directory; `path` itself must be under \
-                 `root`. Membership in a project, library or class is not a use. Read-only. \
+                 searched, so pass the project's top directory. `path` itself must be under \
+                 `root`. Membership in a project, library, or class is not a use. Read-only. \
                  {CACHE_NOTE}"
             ),
             json!({
@@ -1119,10 +1127,10 @@ pub(crate) fn definitions() -> Value {
             "buzzard_callees",
             "Find files a file uses",
             format!(
-                "List the files under `root` that `path` uses (its subVIs, type definitions \
+                "List the files under `root` that `path` uses (its subVIs, type definitions, \
                  and other dependencies that exist under `root`), sorted by path. \
                  Dependencies outside `root` or missing from disk, such as LabVIEW's own \
-                 vi.lib, are not listed; buzzard_inspect shows every stored dependency. \
+                 vi.lib, are not listed. buzzard_inspect shows every stored dependency. \
                  Read-only. {CACHE_NOTE}"
             ),
             json!({
@@ -1137,10 +1145,10 @@ pub(crate) fn definitions() -> Value {
             "Search LabVIEW files by name",
             format!(
                 "Fuzzy-search the LabVIEW files under `root` by file name. The query matches \
-                 as a case-insensitive subsequence (`rdcfg` finds `Read Config.vi`); an empty \
+                 as a case-insensitive subsequence (`rdcfg` finds `Read Config.vi`). An empty \
                  query lists files. Each result has the file name, its kind (vi, control, \
-                 class, library or project) and its path. Best matches come first; ties are \
-                 ordered by name, then path. Read-only. {CACHE_NOTE}"
+                 class, library, project, or archive), and its path. Best matches come first. \
+                 Ties are ordered by name, then path. Read-only. {CACHE_NOTE}"
             ),
             json!({
                 "root": root,
@@ -1154,7 +1162,7 @@ pub(crate) fn definitions() -> Value {
                     "minimum": 1,
                     "maximum": MAX_SYMBOL_LIMIT,
                     "default": DEFAULT_SYMBOL_LIMIT,
-                    "description": "Most results to return.",
+                    "description": "The largest number of results to return.",
                 },
                 "refresh": refresh,
             }),
@@ -1163,7 +1171,7 @@ pub(crate) fn definitions() -> Value {
         tool(
             "buzzard_rules",
             "List buzzard's lint rules",
-            "List every rule buzzard_check can report: code, name, default severity and \
+            "List every rule buzzard_check can report: code, name, default severity, and \
              meaning. Takes no arguments and reads no files."
                 .to_owned(),
             json!({}),

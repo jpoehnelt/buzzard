@@ -36,8 +36,8 @@ impl Default for OpenOptions {
 }
 
 impl OpenOptions {
-    /// The defaults: recover what a truncated file still holds, and use the
-    /// `.tdms_index` file when it agrees with the data file.
+    /// The default options. They recover what a truncated file still holds,
+    /// and use the `.tdms_index` file when it agrees with the data file.
     pub fn new() -> Self {
         Self::default()
     }
@@ -63,10 +63,10 @@ impl OpenOptions {
     /// chunk layouts (16,777,216 by default, under 1 GiB of memory).
     ///
     /// Layouts that a file spells out in its metadata never count against
-    /// it: their cost is in proportion to the file. The limit stops a file
-    /// that makes the reader derive ever new layouts of many channels from
-    /// a few bytes per segment; opening such a file fails with
-    /// [`Error::IndexTooLarge`] after bounded time and memory.
+    /// the limit, because their cost is in proportion to the file. The limit
+    /// stops a file that makes the reader derive ever new layouts of many
+    /// channels from a few bytes per segment. Opening such a file fails
+    /// with [`Error::IndexTooLarge`] after bounded time and memory.
     #[must_use]
     pub fn max_layout_entries(mut self, limit: u64) -> Self {
         self.max_layout_entries = limit;
@@ -77,8 +77,9 @@ impl OpenOptions {
     ///
     /// # Errors
     ///
-    /// When the file cannot be read, is not a TDMS file, contradicts the
-    /// format, or uses a part of the format that is not supported.
+    /// Returns an error when the file cannot be read, is not a TDMS file,
+    /// contradicts the format, or uses a part of the format that is not
+    /// supported.
     pub fn open(&self, path: impl AsRef<Path>) -> Result<TdmsFile> {
         let path = path.as_ref();
         let data = Arc::new(FileSource::new(File::open(path)?)?);
@@ -103,7 +104,7 @@ impl OpenOptions {
     ///
     /// # Errors
     ///
-    /// As for [`Self::open`].
+    /// Returns the errors of [`Self::open`].
     pub fn open_source(
         &self,
         data: Arc<dyn ReadAt>,
@@ -120,7 +121,8 @@ struct GroupInfo {
     channels: Vec<u32>,
 }
 
-/// An opened TDMS file: its index in memory, its data still on disk.
+/// An opened TDMS file. Its index is in memory, and its values stay in the
+/// source until a channel is read.
 pub struct TdmsFile {
     io: Arc<dyn ReadAt>,
     index: Index,
@@ -145,7 +147,7 @@ impl TdmsFile {
         let mut groups: Vec<GroupInfo> = Vec::new();
         let mut by_name = std::collections::HashMap::new();
         for (id, object) in index.objects.iter().enumerate() {
-            // The index refuses more objects than fit.
+            // The index refuses more objects than a `u32` can number.
             let id = u32::try_from(id).unwrap_or(u32::MAX);
             let (group, channel) = match &object.kind {
                 ObjKind::Root => {
@@ -182,11 +184,11 @@ impl TdmsFile {
     /// Opens the file at `path` with the default [`OpenOptions`].
     ///
     /// Only lead-ins and metadata are read, so this is quick for a large
-    /// file; raw data is read when a channel is.
+    /// file. Raw data is read when a channel is read.
     ///
     /// # Errors
     ///
-    /// As for [`OpenOptions::open`].
+    /// Returns the errors of [`OpenOptions::open`].
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         OpenOptions::new().open(path)
     }
@@ -195,7 +197,7 @@ impl TdmsFile {
     ///
     /// # Errors
     ///
-    /// As for [`OpenOptions::open`].
+    /// Returns the errors of [`OpenOptions::open`].
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
         OpenOptions::new().open_source(Arc::new(bytes), None)
     }
@@ -235,8 +237,8 @@ impl TdmsFile {
         self.index.segments
     }
 
-    /// What is wrong with the file, when it could be opened all the same.
-    /// At most 1024 anomalies are kept.
+    /// What is wrong with the file although it could be opened. At most
+    /// 1024 anomalies are kept.
     pub fn anomalies(&self) -> &[Anomaly] {
         &self.index.anomalies
     }
@@ -247,7 +249,7 @@ impl TdmsFile {
     }
 
     /// The version numbers the segments carry (4712 or 4713), in order of
-    /// first appearance; at most eight are kept.
+    /// first appearance. At most eight are kept.
     pub fn versions(&self) -> &[u32] {
         &self.index.versions
     }
@@ -271,14 +273,14 @@ impl TdmsFile {
     /// Reads the same range of values from several channels at once, each
     /// in the type it is stored in.
     ///
-    /// This is the fast way to read many channels: the work is spread over
-    /// the current rayon thread pool, and interleaved data is read once for
-    /// all of them, not once per channel.
+    /// To read many channels, use this method. It spreads the work over the
+    /// current rayon thread pool, and it reads interleaved data once for all
+    /// of the channels, where separate reads would read it once per channel.
     ///
     /// # Errors
     ///
-    /// When the range is not inside every channel, a channel's type cannot
-    /// be read, or reading fails.
+    /// Returns an error when the range is not inside every channel, a
+    /// channel's type cannot be read, or reading fails.
     pub fn read_columns(&self, channels: &[Channel<'_>], range: Range<u64>) -> Result<Vec<Column>> {
         let plain: Vec<_> = channels.iter().map(|c| (*c, None)).collect();
         self.read_columns_of(&plain, range)
@@ -457,7 +459,7 @@ pub struct Waveform {
     /// `wf_start_time`: when the first sample was taken, if recorded.
     pub start_time: Option<Timestamp>,
     /// `wf_start_offset`: the x value of the first sample, relative to the
-    /// start time; zero when absent.
+    /// start time. Zero when absent.
     pub start_offset: f64,
     /// `wf_increment`: the x distance between two samples (seconds, for a
     /// waveform in the time domain).
@@ -521,7 +523,7 @@ impl<'a> Channel<'a> {
         &self.object().path
     }
 
-    /// The type of the channel's values; [`DataType::Void`] for a channel
+    /// The type of the channel's values, or [`DataType::Void`] for a channel
     /// that never had data.
     pub fn dtype(&self) -> DataType {
         self.object().dtype.unwrap_or(DataType::Void)
@@ -572,7 +574,7 @@ impl<'a> Channel<'a> {
     }
 
     /// The scalers of a channel stored in a driver's raw buffers, as its
-    /// most recent raw data index declares them; empty for other channels.
+    /// most recent raw data index declares them. Empty for other channels.
     pub fn scalers(&self) -> Vec<DaqmxScaler> {
         self.object()
             .scalers
@@ -609,7 +611,7 @@ impl<'a> Channel<'a> {
             DataType::DaqmxRaw => match object.scalers.as_slice() {
                 [only] => Ok((only.dtype, None)),
                 _ => Err(Error::NotFound(format!(
-                    "a single scaler: {} has {}, read one with read_scaler",
+                    "a single scaler in {}, which has {} scalers. Read one with read_scaler",
                     object.path,
                     object.scalers.len()
                 ))),
@@ -632,7 +634,7 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read_scaler`].
+    /// Returns the errors of [`Self::read_scaler`].
     pub fn read_scaler_column(&self, scale_id: u32, range: Range<u64>) -> Result<Column> {
         let mut columns = self
             .file
@@ -673,9 +675,9 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// [`Error::TypeMismatch`] when the channel does not store `T`,
-    /// [`Error::OutOfRange`] when `dest` reaches past the channel's end, or
-    /// an I/O error.
+    /// Returns [`Error::TypeMismatch`] when the channel does not store `T`,
+    /// [`Error::OutOfRange`] when `dest` reaches past the channel's end, or an
+    /// I/O error.
     pub fn read_into<T: Sample>(&self, start: u64, dest: &mut [T]) -> Result<()> {
         self.read_raw(None, start, dest)
     }
@@ -684,8 +686,8 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read_into`], and [`Error::Alloc`] when the result
-    /// does not fit in memory.
+    /// Returns the errors of [`Self::read_into`], and [`Error::Alloc`] when
+    /// the result does not fit in memory.
     pub fn read<T: Sample>(&self, range: Range<u64>) -> Result<Vec<T>> {
         self.check(&range)?;
         let mut out = zeroed::<T>(range.end - range.start)?;
@@ -697,7 +699,7 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read`].
+    /// Returns the errors of [`Self::read`].
     pub fn read_all<T: Sample>(&self) -> Result<Vec<T>> {
         self.read(0..self.len())
     }
@@ -707,8 +709,8 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read`], and [`Error::NotFound`] for an unknown
-    /// scaler.
+    /// Returns the errors of [`Self::read`], and [`Error::NotFound`] for an
+    /// unknown scaler.
     pub fn read_scaler<T: Sample>(&self, scale_id: u32, range: Range<u64>) -> Result<Vec<T>> {
         self.check(&range)?;
         let mut out = zeroed::<T>(range.end - range.start)?;
@@ -720,8 +722,8 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read`], and [`Error::CorruptData`] when the string
-    /// offsets in the file are inconsistent.
+    /// Returns the errors of [`Self::read`], and [`Error::CorruptData`] when
+    /// the string offsets in the file are inconsistent.
     pub fn read_string_bytes(&self, range: Range<u64>) -> Result<Vec<Vec<u8>>> {
         self.check(&range)?;
         if self.dtype() != DataType::String {
@@ -740,11 +742,11 @@ impl<'a> Channel<'a> {
     }
 
     /// Reads a range of a string channel. Bytes that are not valid UTF-8
-    /// are replaced with U+FFFD; [`Self::read_string_bytes`] keeps them.
+    /// are replaced with U+FFFD. [`Self::read_string_bytes`] keeps them.
     ///
     /// # Errors
     ///
-    /// As for [`Self::read_string_bytes`].
+    /// Returns the errors of [`Self::read_string_bytes`].
     pub fn read_strings(&self, range: Range<u64>) -> Result<Vec<String>> {
         Ok(self
             .read_string_bytes(range)?
@@ -760,7 +762,7 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read`].
+    /// Returns the errors of [`Self::read`].
     pub fn read_column(&self, range: Range<u64>) -> Result<Column> {
         let mut columns = self.file.read_columns(&[*self], range)?;
         columns.pop().ok_or(Error::Alloc { bytes: 0 })
@@ -807,13 +809,13 @@ impl<'a> Channel<'a> {
     }
 
     /// Reads a range of a numeric or boolean channel converted to `f64`,
-    /// without applying any scaling. Integers of 64 bits beyond 2^53 lose
-    /// their low bits.
+    /// without applying any scaling. 64-bit integers beyond 2^53 lose their
+    /// low bits.
     ///
     /// # Errors
     ///
-    /// As for [`Self::read`]; [`Error::TypeMismatch`] for strings, times
-    /// and complex numbers.
+    /// Returns the errors of [`Self::read`], and [`Error::TypeMismatch`] for
+    /// strings, times, and complex numbers.
     pub fn read_f64(&self, range: Range<u64>) -> Result<Vec<f64>> {
         self.read_f64_from(None, range)
     }
@@ -824,8 +826,8 @@ impl<'a> Channel<'a> {
     ///
     /// # Errors
     ///
-    /// As for [`Self::read_f64`], and [`Error::Scaling`] when the channel
-    /// uses a kind of scale that is not supported.
+    /// Returns the errors of [`Self::read_f64`], and [`Error::Scaling`] when
+    /// the channel uses a kind of scale that is not supported.
     pub fn read_scaled(&self, range: Range<u64>) -> Result<Vec<f64>> {
         match self.scaling() {
             Scaling::None => self.read_f64(range),

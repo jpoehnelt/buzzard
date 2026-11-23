@@ -19,7 +19,7 @@ pub(crate) struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Print the groups, channels, types, lengths and properties of a TDMS
+    /// Print the groups, channels, types, lengths, and properties of a TDMS
     /// file, its segment count, and anything wrong with it such as a
     /// truncated last segment.
     #[command(
@@ -45,7 +45,7 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         out: PathBuf,
         /// What to export, in order: group/channel for one channel or
-        /// group for all channels of a group. Default: every channel.
+        /// group for all channels of a group. The default is every channel.
         #[arg(long, num_args = 1.., value_name = "NAME")]
         channels: Vec<String>,
         /// Output format.
@@ -58,7 +58,8 @@ enum Command {
         /// scaling a channel's properties describe.
         #[arg(long)]
         raw: bool,
-        /// Worker threads for reading and encoding. Default: one per core.
+        /// Worker threads for reading and encoding. The default is one per
+        /// core.
         #[arg(long, value_name = "N")]
         threads: Option<usize>,
     },
@@ -76,7 +77,7 @@ enum ExportFormat {
     Csv,
 }
 
-/// Compression of Parquet column data; ignored for CSV.
+/// Compression of Parquet column data. CSV ignores it.
 #[derive(Clone, Copy, ValueEnum)]
 enum Compression {
     Snappy,
