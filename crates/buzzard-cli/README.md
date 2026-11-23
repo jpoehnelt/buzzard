@@ -2,8 +2,7 @@
 
 The `buzzard` binary: a static analyzer, language server and MCP server for
 LabVIEW projects, and a reader for the TDMS measurement files they produce.
-It reads the binary files directly; it needs neither the editor nor its
-runtime.
+It reads the binary files directly and needs no LabVIEW installation.
 
 ```sh
 cargo install buzzard-cli
@@ -35,11 +34,10 @@ parser) and `buzzard-tdms` (the TDMS reader), which are libraries for other
 programs, and `buzzard-lint`, `buzzard-ls` and `buzzard-mcp`, which are
 internal.
 
-## Licence
+## License
 
 Apache-2.0. See `LICENSE` and `NOTICE` in this package.
 
-LabVIEW and National Instruments are trademarks of National Instruments
-Corporation. buzzard is an independent project and is not affiliated with,
-endorsed by, or sponsored by it; the names are used only to identify the
-file formats that buzzard reads.
+LabVIEW, NI, and National Instruments are trademarks of National Instruments
+Corporation, used only to identify the file formats that buzzard reads.
+buzzard is not affiliated with, endorsed by, or sponsored by that company.

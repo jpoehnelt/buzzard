@@ -3,10 +3,10 @@
 Real binary files used as conformance fixtures, copied unmodified from two
 projects.
 
-| Directory | Source | Licence |
+| Directory | Source | License |
 | --- | --- | --- |
 | `pylavi/` | The test suite of [marcpage/pylavi](https://github.com/marcpage/pylavi) | Public domain (Unlicense) |
-| `pylabview/` | `examples/` of [mefistotelis/pylabview](https://github.com/mefistotelis/pylabview); the three files are byte-identical to those at commit `5f20e23de6a386021eb955c825cc43d221f09ff1` | MIT; the text is in the repository's `NOTICE` |
+| `pylabview/` | `examples/` of [mefistotelis/pylabview](https://github.com/mefistotelis/pylabview). The three files are byte-identical to those at commit `5f20e23de6a386021eb955c825cc43d221f09ff1` | MIT. The text is in the repository's `NOTICE` |
 
 The files under `pylabview/` and their upstream paths:
 
@@ -18,7 +18,7 @@ The files under `pylabview/` and their upstream paths:
 
 No fixture is part of a published package.
 
-Each fixture has a golden snapshot in `../snapshots/`. See the crate-level
-conformance test for how to regenerate them. The two `.llb` files also have
-an `.archive.json` snapshot: what the archive reader lists, or why it does
-not open the file.
+Each fixture has a snapshot in `../snapshots/`. To regenerate them, run
+`BUZZARD_BLESS=1 cargo test -p buzzard-rsrc --test conformance`. The two
+`.llb` files also have an `.archive.json` snapshot: what the archive reader
+lists, or why it does not open the file.
