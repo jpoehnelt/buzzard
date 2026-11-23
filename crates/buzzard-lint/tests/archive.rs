@@ -478,15 +478,13 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     let workspace = Workspace::scan(&[dir.at("ws")]);
     // Only names that are one path component became files, each inside
     // the archive.
-    assert_eq!(
-        dir.keys(&workspace),
-        [
-            "ws/a.llb",
-            "ws/a.llb/C:drive.vi",
-            "ws/a.llb/Same.vi",
-            "ws/sub/x.vi"
-        ]
-    );
+    // On Windows a name with a colon is not a file name either: appended
+    // to a path it would name a drive.
+    let mut keys = vec!["ws/a.llb", "ws/a.llb/Same.vi", "ws/sub/x.vi"];
+    if !cfg!(windows) {
+        keys.insert(1, "ws/a.llb/C:drive.vi");
+    }
+    assert_eq!(dir.keys(&workspace), keys);
     for key in workspace.files().keys() {
         assert!(key.starts_with(dir.at("ws")), "{}", key.display());
     }
@@ -495,7 +493,11 @@ fn a_member_name_never_escapes_or_aliases_another_file() {
     let found = lint(&workspace, &graph, &LintConfig::default());
     let shown: Vec<(String, &str)> = found.iter().map(|d| (dir.rel(&d.path), d.code)).collect();
     let mut expected = vec![("ws/a.llb".to_owned(), "BZ000"); 10];
-    expected.push(("ws/a.llb/C:drive.vi".to_owned(), "BZ001"));
+    if cfg!(windows) {
+        expected.push(("ws/a.llb".to_owned(), "BZ000"));
+    } else {
+        expected.push(("ws/a.llb/C:drive.vi".to_owned(), "BZ001"));
+    }
     expected.push(("ws/a.llb/Same.vi".to_owned(), "BZ001"));
     assert_eq!(shown, expected);
     assert!(found
@@ -1144,7 +1146,13 @@ fn sarif_locates_a_member_finding_at_its_archive() {
     for result in results {
         let path = uri(result);
         let path = path.strip_prefix("file://").unwrap().replace("%20", " ");
-        assert!(Path::new(&path).is_file(), "{path}");
+        // `file:///C:/x` has a slash in front of the drive.
+        let path = if cfg!(windows) {
+            path.trim_start_matches('/')
+        } else {
+            path.as_str()
+        };
+        assert!(Path::new(path).is_file(), "{path}");
     }
     let member = results
         .iter()

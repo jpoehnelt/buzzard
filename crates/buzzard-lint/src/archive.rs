@@ -50,11 +50,15 @@ pub const MAX_INFLATED_BYTES: u64 = 1024 * 1024 * 1024;
 /// control character (a NUL, a line break that would split a line of a
 /// report, or the start of a terminal escape sequence). The bytes 0x80
 /// to 0x9f of a name in a legacy code page are letters, not controls.
+///
+/// On Windows a name with a colon is refused as well. `C:x.vi` is a path
+/// on another drive there, and appending it to a path replaces the path.
 pub fn is_addressable(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
         && !name.contains(['/', '\\'])
+        && !(cfg!(windows) && name.contains(':'))
         && !name.chars().any(|c| c.is_ascii_control())
 }
 
@@ -430,9 +434,12 @@ mod tests {
 
     #[test]
     fn only_a_single_component_is_addressable() {
-        for name in ["a.vi", "odd name?.vi", "a:b.vi", "...", "\u{83}\u{65}.vi"] {
+        for name in ["a.vi", "odd name?.vi", "...", "\u{83}\u{65}.vi"] {
             assert!(is_addressable(name), "{name}");
         }
+        // A colon starts a drive on Windows only.
+        assert_eq!(is_addressable("a:b.vi"), !cfg!(windows));
+        assert_eq!(is_addressable("C:drive.vi"), !cfg!(windows));
         for name in [
             "",
             ".",
