@@ -894,8 +894,8 @@ mod tests {
         let first = t.heap_type_info(1).unwrap().enum_items.unwrap();
         assert_eq!(first.len(), 65_535);
         assert_eq!(first[65_534], "Item 65534");
-        // Every lookup hands out the table's own list. Each used to copy
-        // all 65,535 names, about 3 ms a time.
+        // Every lookup hands out the table's own list. A copy of all
+        // 65,535 names would take about 3 ms a time.
         let again = t.heap_type_info(1).unwrap().enum_items.unwrap();
         assert!(Arc::ptr_eq(&first, &again));
     }
@@ -904,10 +904,9 @@ mod tests {
     fn looking_up_many_terminals_of_a_huge_enumeration_is_quick() {
         // What decoding a diagram does: one lookup per terminal, which
         // only needs the class of the type, and one per case structure.
-        // With a copy of the item list per lookup this took about 3 ms
-        // each, so ten minutes for the terminals below; it now takes
-        // milliseconds. The limit is generous to stay clear of slow
-        // machines.
+        // A copy of the item list per lookup would take about 3 ms each,
+        // so ten minutes for the terminals below. The limit is generous
+        // to stay clear of slow machines.
         let t = huge_enumeration();
         let started = std::time::Instant::now();
         for _ in 0..200_000 {

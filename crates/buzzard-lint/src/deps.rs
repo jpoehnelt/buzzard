@@ -10,12 +10,17 @@
 //!   the one that saved the file.
 //! * Relative links at whose location there is no file, neither in the
 //!   workspace nor on disk. A link that does not leave the file holding it
-//!   (a bare name such as `user32.dll`) has no location and is not listed.
+//!   (a bare name such as `user32.dll`, or a generated instance of a
+//!   malleable VI) has no location and is not listed.
 //!
 //! Links come from the link info of binary files and from the member URLs
 //! and parent class links of project XML files. Whether a relative link
 //! has a target is decided by the functions the dependency graph and rule
-//! `BZ006` use, so the report never disagrees with them.
+//! `BZ006` use, so the report never disagrees with them. A missing file
+//! under the `Dependencies` item of a project is not listed when its URL is
+//! relative: the editor computes that item from the links of the project's
+//! VIs, `BZ006` skips it too, and the link of the VI that needs the file is
+//! reported.
 //!
 //! Nothing is reported as present or absent without a look at the disk: a
 //! target under a root that was given no directory is [`Status::Unchecked`].
@@ -23,6 +28,11 @@
 //! Stored paths that differ only in letter case, or that print the same,
 //! are one target: links are saved on file systems that ignore case, and
 //! the same file is stored in several spellings.
+//!
+//! A package is a directory, not a product. A product whose files sit in
+//! one directory and in directories below it appears as several packages:
+//! `<vilib>/LabVIEW Icon API/x.vi` is in `LabVIEW Icon API`, and
+//! `<vilib>/LabVIEW Icon API/lv_icon/y.vi` is in `LabVIEW Icon API/lv_icon`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -55,8 +65,8 @@ pub enum Status {
     Found,
     /// The root was given a directory and the target is not in it.
     Missing,
-    /// Nobody looked: the root was given no directory, or the stored path
-    /// has a component that is not a plain file name.
+    /// The file was not looked up: the root was given no directory, or
+    /// the stored path has a component that is not a plain file name.
     Unchecked,
 }
 
@@ -480,7 +490,8 @@ fn status_under(
     if looks.contains(&Some(true)) {
         Status::Found
     } else if looks.contains(&None) {
-        // An archive on the way cannot be read, so nobody has looked.
+        // An archive on the way cannot be read, so the file was not
+        // looked up.
         Status::Unchecked
     } else {
         Status::Missing

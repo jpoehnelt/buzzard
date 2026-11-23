@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: Apache-2.0
 """Oracle harness for buzzard-tdms: what does npTDMS make of a TDMS file?
 
-This script is part of buzzard and is MIT licensed. It uses npTDMS
+This script is part of buzzard and is Apache-2.0 licensed. It uses npTDMS
 (https://github.com/adamreeve/npTDMS, LGPL-3.0) only through its public
 API, as a separate program. Nothing of npTDMS is copied here or linked
 into the Rust crate; see README.md beside this file.

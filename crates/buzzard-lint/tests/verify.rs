@@ -503,23 +503,19 @@ fn real_machines_outside_the_repository() {
     }
 }
 
-/// The single changed bytes of real files that were reported to give
-/// false proofs, as `(file, offset in the inflated heap, old byte, new
-/// byte)`.
+/// Single changed bytes of real files, as `(file, offset in the inflated
+/// heap, old byte, new byte)`. Each must be a recorded loss, so that the
+/// diagram is not searched.
 ///
 /// * The first renumbers the inner terminal of the next-state tunnel in
 ///   one frame, so the wire into it ends nowhere.
-/// * The second makes that wire's signal object undecodable.
-///   Either way the frame looked unwired, the tunnel's default was taken
-///   for what the frame writes, and three states were "proven"
-///   unreachable.
+/// * The second makes that wire's signal object undecodable. Without a
+///   loss, either change makes the frame look unwired, and the tunnel's
+///   default stands for what the frame writes.
 /// * The third turns the frame index of a selector table entry into a
-///   second copy of another field. The absent index read as frame 0, a
-///   state `frame 1` was made up for the frame left without a value, and
-///   five states were "proven" unreachable.
-///
-/// Each is now a recorded loss, so the diagram is not searched at all.
-const REPORTED_DAMAGE: [(&str, usize, u8, u8); 3] = [
+///   second copy of another field. Without a loss, the absent index reads
+///   as frame 0 and leaves a frame that no value selects.
+const PINNED_DAMAGE: [(&str, usize, u8, u8); 3] = [
     (
         "GaborDernoczi_LabVIEW_State_Machine/State_Machine.vi",
         4899,
@@ -542,7 +538,7 @@ const REPORTED_DAMAGE: [(&str, usize, u8, u8); 3] = [
 
 /// The invariant of `a_damaged_heap_never_adds_a_proven_finding` on the
 /// real enumeration machines, which cannot be redistributed: first the
-/// three reported bytes, then a sample of every heap.
+/// three bytes of `PINNED_DAMAGE`, then a sample of every heap.
 #[test]
 #[ignore = "needs BUZZARD_FSM_SAMPLES to point at clones of the sample repositories"]
 fn damage_to_the_real_machines_proves_nothing_new() {
@@ -552,7 +548,7 @@ fn damage_to_the_real_machines_proves_nothing_new() {
     let root = PathBuf::from(
         std::env::var_os("BUZZARD_FSM_SAMPLES").expect("BUZZARD_FSM_SAMPLES is not set"),
     );
-    for (path, at, old, new) in REPORTED_DAMAGE {
+    for (path, at, old, new) in PINNED_DAMAGE {
         let bytes = std::fs::read(root.join(path)).unwrap();
         let file = RsrcFile::parse(&bytes).unwrap();
         let mut heap = zlib::decompress(file.first(b"BDHb").unwrap()).unwrap();
@@ -1924,9 +1920,9 @@ fn with_extra_node(mut diagram: BlockDiagram, class: &str, name: Option<&str>) -
 
 #[test]
 fn a_diagram_with_a_recorded_loss_is_not_searched() {
-    // The shape of the real file this was found on: one frame writes a
-    // constant through a wire and another leaves the tunnel unwired, so
-    // the tunnel is marked as using the default, which is "Wait".
+    // One frame writes a constant through a wire and another leaves the
+    // tunnel unwired, so the tunnel is marked as using the default, which
+    // is "Wait". `PINNED_DAMAGE` has a real file of this shape.
     let spec = Spec::enumeration(&["Wait", "Init", "Work"])
         .starts_in("Wait")
         .goes(0, "Init")
@@ -2001,7 +1997,7 @@ fn a_diagram_with_a_recorded_loss_is_not_searched() {
 #[test]
 fn a_frame_that_no_value_selects_gives_no_machine() {
     // "Exit" has no entry and is not the default: the table contradicts
-    // the frame list. A state "frame 2" used to be made up for it.
+    // the frame list. No state "frame 2" may be made up for it.
     let mut spec = base();
     spec.frames[2].matches.clear();
     let found = extract(&spec.build());
@@ -2072,7 +2068,7 @@ fn a_constant_without_a_case_is_structural_and_reported_once() {
 
     // The case structure sits in one frame of an event structure and
     // another event frame writes the constant: one finding for the
-    // machine, where every state used to be blamed for writing it.
+    // machine, and no state is blamed for writing it.
     let mut wrapped = Spec::strings(&["Init", "Run", "Exit"])
         .default(0)
         .starts(text("Init"))
@@ -2467,8 +2463,8 @@ fn a_huge_case_structure_is_not_modelled_and_a_large_one_is_quick() {
             .collect()
     };
     // Every next state comes from a subVI, so every state may go
-    // anywhere. That used to list every pair of states: 215 MB for 1,000
-    // states and 3.4 GB for 4,000.
+    // anywhere. The model must not list every pair of states, which would
+    // take 215 MB for 1,000 states and 3.4 GB for 4,000.
     let all_unknown = |count: usize| {
         let mut spec = Spec::enumeration(&items(count));
         for frame in &mut spec.frames {
@@ -2503,11 +2499,10 @@ fn a_huge_case_structure_is_not_modelled_and_a_large_one_is_quick() {
 
 // ---------------------------------------------------------- damaged heaps
 //
-// The decoder skips what it cannot resolve. A wire it skipped used to
-// look like a tunnel left unwired, which the tracer reads as the type's
-// default, and that turned one changed byte in a real file into states
-// "proven" unreachable. The decoder now records every loss and a diagram
-// with a loss is not searched for classic machines.
+// The decoder skips what it cannot resolve. A skipped wire would look
+// like a tunnel left unwired, which the tracer reads as the type's
+// default. So the decoder records every loss, and a diagram with a loss
+// is not searched for classic machines.
 
 /// The proven findings of a diagram, one line each.
 fn proven(diagram: &BlockDiagram) -> BTreeSet<String> {
@@ -2670,13 +2665,12 @@ fn damage(bytes: &[u8], step: usize) -> Damage {
     out
 }
 
-/// One changed byte of a file in the repository that gave a proof: the
-/// tag of the field that says which case of the machine's case structure
-/// is the default (`26 54 01`: field 565, one byte, frame 1). An absent
-/// field means frame 0, so with the tag damaged the default moved from
-/// "Idle" to "Init", the empty string that "Init" hands on selected
-/// "Init" itself, and "Idle" was "proven" unreachable. The object now
-/// has a field that cannot be named, or the same field twice, which is a
+/// One changed byte of a file in the repository: the tag of the field
+/// that says which case of the machine's case structure is the default
+/// (`26 54 01`: field 565, one byte, frame 1). An absent field means
+/// frame 0, so a damaged tag that went unnoticed would move the default
+/// from "Idle" to "Init" and prove "Idle" unreachable. The object has a
+/// field that cannot be named, or the same field twice, and either is a
 /// recorded loss.
 #[test]
 fn a_damaged_field_tag_in_a_real_file_proves_nothing() {

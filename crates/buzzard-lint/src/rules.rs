@@ -73,7 +73,8 @@ pub const RULES: &[Rule] = &[
     Rule {
         code: "BZ006",
         name: "missing-member",
-        summary: "A project, library or class lists a member whose file does not exist on disk.",
+        summary: "A project, library or class lists a member whose file does not exist on disk \
+                  or in its archive.",
         severity: Severity::Warning,
     },
     Rule {

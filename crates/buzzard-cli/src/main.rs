@@ -1,5 +1,5 @@
-//! The `buzzard` command: `check`, `inspect`, `deps` and `diff` over the analysis in
-//! `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, `mcp`
+//! The `buzzard` command: `check`, `inspect`, `deps`, `diff` and `verify` over the
+//! analysis in `buzzard-lint`, `lsp` for the language server in `buzzard-ls`, `mcp`
 //! for the Model Context Protocol server in `buzzard-mcp`, and `tdms` for
 //! the measurement file reader in `buzzard-tdms`.
 
@@ -28,8 +28,7 @@ mod deps_cmd;
 mod diff_cmd;
 mod tdms_cmd;
 
-/// Static analyzer and language server that reads binary .vi and .ctl files
-/// and .lvproj, .lvlib and .lvclass files directly, without the IDE.
+// `about` is the `description` of `Cargo.toml`.
 #[derive(Parser)]
 #[command(name = "buzzard", version, about)]
 struct Cli {
@@ -40,13 +39,19 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Analyze files and directories and report problems.
+    #[command(
+        after_help = "Exit status: 0 when no problems are found or --exit-zero is set, \
+        1 when problems are found, 2 for an unknown --ignore code, a path that does not exist, \
+        or a report that cannot be written."
+    )]
     Check {
-        /// Files or directories to analyze.
+        /// Files, directories, or member paths such as lib/util.llb/Init.vi.
         #[arg(default_value = ".")]
         paths: Vec<PathBuf>,
+        /// Output format.
         #[arg(long, value_enum, default_value_t = CheckFormat::Human)]
         format: CheckFormat,
-        /// Rule code to skip, e.g. BZ004. May be repeated.
+        /// Rule code to skip, such as BZ004. May be repeated.
         #[arg(long, value_name = "CODE")]
         ignore: Vec<String>,
         /// Longest allowed path in characters.
@@ -57,34 +62,64 @@ enum Command {
         exit_zero: bool,
     },
     /// Print what is known about a single file.
+    #[command(
+        after_help = "Exit status: 0, or 2 when the file cannot be read or has no block \
+        diagram for the svg, dot or mermaid format."
+    )]
     Inspect {
+        /// A file, or a member path such as lib/util.llb/Init.vi.
         file: PathBuf,
+        /// Output format.
         #[arg(long, value_enum, default_value_t = InspectFormat::Markdown)]
         format: InspectFormat,
     },
-    /// List what the files need from outside: installed files (under the
-    /// symbolic roots vilib, instrlib, userlib and so on) grouped by
-    /// package, machine-absolute links and relative links to nothing.
+    /// List what the files need from outside the project.
+    ///
+    /// The report holds the installed files (under the symbolic roots
+    /// vilib, instrlib, userlib and so on) grouped by package, the
+    /// machine-absolute links, and the relative links whose file does not
+    /// exist.
+    #[command(
+        after_help = "Exit status: 0 whatever the report holds, 2 for a path that does \
+        not exist or a --root that cannot be used."
+    )]
     Deps(deps_cmd::Args),
     /// Compare two versions of a file: settings, dependencies, nodes, wires.
+    #[command(
+        after_help = "Exit status: 0 when the two files are the same, 1 when they \
+        differ, 2 on an error. With --git the status is always 0."
+    )]
     Diff(diff_cmd::Args),
-    /// Find the state machines on block diagrams and check them: states
-    /// that can never be reached, loops that their condition terminal can
-    /// never stop, and constants that no case handles.
+    /// Find the state machines on block diagrams and check them.
+    ///
+    /// The findings are states that can never be reached, loops that their
+    /// condition terminal can never stop, and constants that no case
+    /// handles. Each finding is labelled proven, structural or heuristic.
+    #[command(
+        after_help = "Exit status: 0 when there are no findings, 1 when there are any, \
+        of any label, 2 on an error such as a path that does not exist. A file that cannot be parsed is listed \
+        and does not change the status."
+    )]
     Verify {
-        /// Files or directories to analyze.
+        /// Files, directories, or member paths such as lib/util.llb/Init.vi.
         #[arg(default_value = ".")]
         paths: Vec<PathBuf>,
+        /// Output format.
         #[arg(long, value_enum, default_value_t = VerifyFormat::Text)]
         format: VerifyFormat,
     },
-    /// Read TDMS measurement files: describe one, or export its channels
-    /// as a Parquet or CSV table.
+    /// Describe a TDMS measurement file, or export its channels as a
+    /// Parquet or CSV table.
     Tdms(tdms_cmd::Args),
-    /// Run the language server over stdin/stdout.
+    /// Run the language server over stdio.
+    #[command(
+        after_help = "Exit status: 0 after shutdown and then exit, 1 otherwise, 2 when \
+        the server cannot start."
+    )]
     Lsp,
-    /// Run the Model Context Protocol server over stdin/stdout, so that AI
-    /// agents can call the analysis as tools.
+    /// Run the Model Context Protocol server over stdio.
+    ///
+    /// AI agents call its tools to run the analysis.
     Mcp,
 }
 
@@ -230,7 +265,7 @@ fn check(
     print(&rendered, status)
 }
 
-/// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
+/// `buzzard verify`: check the state machines under `paths`.
 fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
     if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
         eprintln!("error: path does not exist: {}", missing.display());
@@ -250,6 +285,7 @@ fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
     print(&rendered, status)
 }
 
+/// `buzzard inspect` on a `.lvproj`, `.lvlib` or `.lvclass` file.
 fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
     match ProjectFile::from_path(file) {
         Ok(project) => {
@@ -379,7 +415,7 @@ fn inspect_binary(file: &Path, format: InspectFormat) -> ExitCode {
     }
 }
 
-/// `buzzard lsp`: serve the language server over stdin/stdout.
+/// `buzzard lsp`: serve the language server over stdio.
 fn lsp() -> ExitCode {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

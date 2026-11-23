@@ -822,7 +822,7 @@ fn names_cannot_break_the_line_format() {
 
 #[test]
 fn hostile_diagrams_do_not_panic() {
-    // Duplicate node, terminal and frame ids; wires to terminals nobody
+    // Duplicate node, terminal and frame ids; wires to terminals no node
     // owns, to themselves and with extreme ids; nesting 200 deep.
     let mut deep = frame(1, vec![function(10, 5, vec![terminal(11, NUM)])], &[]);
     for level in 0..200 {

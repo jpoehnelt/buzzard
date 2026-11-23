@@ -1,6 +1,6 @@
 [package]
 name = "buzzard-rsrc"
-description = "Parser for the binary RSRC resource container used by .vi/.ctl files"
+description = "Parser for the binary RSRC container of LabVIEW .vi and .ctl files and for .llb archives"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

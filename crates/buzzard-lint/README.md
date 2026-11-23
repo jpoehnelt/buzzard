@@ -5,8 +5,8 @@ static analyzer and language server for LabVIEW projects: the lint rules, the
 dataflow checks, the project XML parser, the dependency graph, SARIF output,
 diagram rendering, the semantic diff and the state machine verification.
 
-**This crate is an internal part of the buzzard tool. Its API may change in
-any 0.x release, including patch releases.** It is published so that
+This crate is an internal part of the buzzard tool. Its API may change in
+any 0.x release, including patch releases. It is published so that
 `cargo install buzzard-cli` works. To use the analysis, run the `buzzard`
 binary and read its JSON or SARIF output, which is the supported interface.
 
@@ -22,11 +22,10 @@ for finding in lint(&workspace, &graph, &LintConfig::default()) {
 }
 ```
 
-## Licence
+## License
 
 Apache-2.0. See `LICENSE` and `NOTICE` in this package.
 
-LabVIEW and National Instruments are trademarks of National Instruments
-Corporation. buzzard is an independent project and is not affiliated with,
-endorsed by, or sponsored by it; the names are used only to identify the
-file formats that buzzard reads.
+LabVIEW, NI, and National Instruments are trademarks of National Instruments
+Corporation, used only to identify the file formats that buzzard reads.
+buzzard is not affiliated with, endorsed by, or sponsored by that company.

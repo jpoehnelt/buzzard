@@ -1,6 +1,6 @@
 [package]
 name = "buzzard-tdms"
-description = "Fast, safe, read-only reader for TDMS measurement files, with Parquet and CSV export"
+description = "Read-only reader for TDMS measurement files, with Parquet and CSV export"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,6 +27,8 @@ parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
 bytemuck.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+# The workspace enables Snappy only. zstd is left out because `zstd-sys` is
+# `BSD-3-Clause AND BSD-2-Clause` and BSD-2-Clause is not allowed in `deny.toml`.
 parquet = { workspace = true, optional = true }
 arrow-array = { workspace = true, optional = true }
 arrow-schema = { workspace = true, optional = true }

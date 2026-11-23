@@ -3,7 +3,7 @@
 One real measurement file, copied byte for byte from a public data set.
 Every other test file is written at test time by `buzzard_tdms::build`.
 
-| File | Source | Licence |
+| File | Source | License |
 | --- | --- | --- |
 | `zenodo-7758683/waveforms-point21.tdms` | `Waveforms Point21.tdms` from Saullo G. P. Castro, "Impact hammer test of an Aluminium 6082 T6 plate, 260 x 246 x 1.5 mm, free boundary conditions", Zenodo, 2022, [doi:10.5281/zenodo.7758683](https://doi.org/10.5281/zenodo.7758683) | [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/legalcode) |
 
@@ -30,7 +30,7 @@ version 4713, with waveform properties (`wf_start_time`, `wf_increment`,
 
 It is the only file in the tests that was written by the software the
 format comes from. The expected values in `../real.rs` are the hashes that
-npTDMS computes for the same file; `../oracle.rs` compares the two readers
+npTDMS computes for the same file. `../oracle.rs` compares the two readers
 on it again whenever the oracle runs.
 
 ## Other real files

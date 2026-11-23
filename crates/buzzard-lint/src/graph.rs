@@ -3,7 +3,30 @@
 //! Edges come in three kinds (see [`EdgeKind`]). "Dependency" below means a
 //! `Uses` or `Inherits` edge; `Contains` edges describe ownership and never
 //! take part in cycle detection, because a member routinely refers back to
-//! the library or class that owns it.
+//! the library or class that owns it. Callers and callees follow `Uses`
+//! edges only.
+//!
+//! # Matching a link to a workspace file
+//!
+//! A link is matched by its stored path first. A file has one identity
+//! however its path is spelled (see [`crate::workspace::identity`]), so
+//! `.` and the absolute current directory give the same graph, and a file
+//! reached through two roots is one node. When the path does not lead to a
+//! workspace file:
+//!
+//! * A relative path, or an absolute path of another machine, falls back
+//!   to the file name if exactly one workspace file has that name. A path
+//!   under a symbolic root such as `<vilib>` never does: it names an
+//!   installed file, not a workspace file that shares its name. The parent
+//!   of a class is the exception and is still looked up by name.
+//! * With [`CaseSensitivity::Insensitive`] (Windows and macOS), a match
+//!   that differs only in letter case counts when it is the only one. With
+//!   [`CaseSensitivity::Sensitive`], letter case always matters.
+//! * Paths older than the `PTH2` form hold the bytes of the saving
+//!   machine's code page. A name with bytes outside ASCII is read as
+//!   Windows-1252, Shift-JIS, GBK, Big5, EUC-KR, Windows-1251,
+//!   Windows-1250 and Mac Roman. The link is followed when every reading
+//!   that matches a workspace file matches the same one.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
@@ -216,7 +239,7 @@ impl Lookup {
     }
 }
 
-/// True for a link whose stored location may simply be out of date: a
+/// True for a link whose stored location may be out of date: a
 /// relative path, or one pinned to a machine's file system layout.
 fn can_be_stale(link: &LvPath) -> bool {
     !link.is_empty() && (link.kind == PathKind::Relative || link.is_machine_absolute())

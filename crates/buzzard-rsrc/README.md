@@ -2,8 +2,8 @@
 
 A read-only parser for the binary RSRC resource container that LabVIEW saves
 `.vi`, `.ctl`, `.vit`, `.ctt` and `.vim` files in, and for the `.llb`
-archives that hold such files. It is pure Rust, has no
-`unsafe` code, and needs neither the editor nor its runtime.
+archives that hold such files. It is pure Rust, has no `unsafe` code, and
+needs no LabVIEW installation.
 
 It reads the resource directory, the version and save settings, the owning
 libraries, the links to other files, the type table and the block diagram
@@ -57,37 +57,34 @@ fn main() -> Result<(), buzzard_rsrc::RsrcError> {
 }
 ```
 
-A member name is data from the file: it may be `..` or hold a separator, so
-do not join it to a path. A member that declares more than
-`llb::MAX_MEMBER_BYTES`, or more than its compressed bytes could hold, is
-refused before anything is inflated, and so is an archive in which two
-members share bytes of the file. Members are read whether they are stored as
-they are, as a zlib stream, or in the older compression that leaves out zero
-bytes. An archive taken out of a built application has no directory
-(`llb::is_program_tree`) and is not read; the module documentation of `llb`
-has the layout.
+A member name is data from the file. It may be `..` or hold a separator, so
+do not join it to a path. The module documentation of `llb` has the size
+limits and the layout.
 
 This crate is the parser of [buzzard](https://github.com/jpoehnelt/buzzard),
-a static analyzer and language server for these files; the tool is the
-`buzzard` binary of the `buzzard-cli` crate, and the repository's README says
-how to install it. That README also lists what the parser does not read yet.
+a static analyzer and language server for these files. The tool is the
+`buzzard` binary of the `buzzard-cli` crate. The repository's README says
+how to install it and lists what the parser does not read yet.
 
 ## Stability
 
-The crate is at 0.x. A minor release (0.1 to 0.2) may change the API; a patch
-release does not. The enumerations that will grow as more of the format is
-decoded are `#[non_exhaustive]`. `builder::RsrcBuilder` writes synthetic
-files for tests; it is public so that programs built on this crate can test
-against it, and it covers only what buzzard's own tests need.
+The crate is at 0.x. A minor release (0.1 to 0.2) may change the API. A
+patch release does not. The enumerations that will grow as more of the
+format is decoded are `#[non_exhaustive]`. `builder::RsrcBuilder` and
+`builder::LlbBuilder` write synthetic files for tests. They are public so
+that programs built on this crate can test against them, and they cover only
+what buzzard's own tests need.
 
-## Licence
+## License
 
-Apache-2.0, with one table under MIT (`Apache-2.0 AND MIT`). See `LICENSE` and `NOTICE` in this package. Two generated tables
-hold names taken from other projects: built-in function names from LVKit
-(Apache-2.0) and heap tag and class names from pylabview (MIT). `NOTICE` has
-their copyright lines, what was taken, and the MIT licence text.
+Apache-2.0, with one table under MIT. The SPDX expression is
+`Apache-2.0 AND MIT`. See `LICENSE` and `NOTICE` in this package.
 
-LabVIEW and National Instruments are trademarks of National Instruments
-Corporation. buzzard is an independent project and is not affiliated with,
-endorsed by, or sponsored by it; the names are used only to identify the
-file formats that buzzard reads.
+Two generated tables hold names taken from other projects: built-in function
+names from LVKit (Apache-2.0) and heap tag and class names from pylabview
+(MIT). `NOTICE` has their copyright lines, what was taken, and the MIT
+license text.
+
+LabVIEW, NI, and National Instruments are trademarks of National Instruments
+Corporation, used only to identify the file formats that buzzard reads.
+buzzard is not affiliated with, endorsed by, or sponsored by that company.

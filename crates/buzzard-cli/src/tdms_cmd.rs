@@ -22,23 +22,36 @@ enum Command {
     /// Print the groups, channels, types, lengths and properties of a TDMS
     /// file, its segment count, and anything wrong with it such as a
     /// truncated last segment.
+    #[command(
+        after_help = "Exit status: 0, or 2 when the file cannot be opened. Anomalies \
+        are part of the report and do not change the status."
+    )]
     Info {
+        /// A TDMS file. The index file beside it is used when it matches.
         file: PathBuf,
+        /// Output format.
         #[arg(long, value_enum, default_value_t = InfoFormat::Text)]
         format: InfoFormat,
     },
     /// Write channels of a TDMS file as one table.
+    #[command(
+        after_help = "Exit status: 0, or 2 on any error. An error leaves no output \
+        file behind."
+    )]
     Export {
+        /// A TDMS file. The index file beside it is used when it matches.
         file: PathBuf,
         /// The file to write.
         #[arg(long, value_name = "PATH")]
         out: PathBuf,
-        /// What to export, in order: `group/channel` for one channel or
-        /// `group` for all channels of a group. Default: every channel.
+        /// What to export, in order: group/channel for one channel or
+        /// group for all channels of a group. Default: every channel.
         #[arg(long, num_args = 1.., value_name = "NAME")]
         channels: Vec<String>,
+        /// Output format.
         #[arg(long, value_enum, default_value_t = ExportFormat::Parquet)]
         format: ExportFormat,
+        /// Compression of Parquet column data. CSV ignores it.
         #[arg(long, value_enum, default_value_t = Compression::Snappy)]
         compression: Compression,
         /// Export stored values as they are, without applying the linear
