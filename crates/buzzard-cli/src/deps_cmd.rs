@@ -3,8 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use buzzard_lint::deps::{self, DepsReport, Roots};
-use buzzard_lint::{DependencyGraph, Workspace};
+use buzzard_lint::{patharg, printable, DependencyGraph, Failure, Workspace};
 use clap::ValueEnum;
+
+use crate::{to_json, Outcome, Report};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -20,6 +22,17 @@ pub(crate) struct Args {
     /// a directory is unchecked. May be repeated, once per root.
     #[arg(long = "root", value_name = "NAME=DIR")]
     roots: Vec<String>,
+    /// How much of the report to print. A report of every file can be
+    /// long, so ask for packages first.
+    #[arg(long, value_enum, default_value_t = Detail::Files)]
+    detail: Detail,
+}
+
+impl Args {
+    /// Whether the caller asked for a format that a program reads.
+    pub(crate) fn machine(&self) -> bool {
+        matches!(self.format, Format::Json)
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -29,33 +42,38 @@ enum Format {
     Markdown,
 }
 
-fn render(report: &DepsReport, format: Format) -> String {
-    match format {
-        Format::Text => deps::to_text(report),
-        Format::Markdown => deps::to_markdown(report),
-        Format::Json => {
-            serde_json::to_string_pretty(report).expect("a dependency report always serializes")
-                + "\n"
-        }
+#[derive(Clone, Copy, ValueEnum)]
+enum Detail {
+    /// The packages of each root with their counts, and the counts of the
+    /// links: the `Overview` that the MCP tool returns by default.
+    Packages,
+    /// Every external file and every link, with the files that use it.
+    Files,
+}
+
+fn render(report: &DepsReport, format: Format, detail: Detail) -> String {
+    match (detail, format) {
+        (Detail::Files, Format::Text) => deps::to_text(report),
+        (Detail::Files, Format::Markdown) => deps::to_markdown(report),
+        (Detail::Files, Format::Json) => to_json(report),
+        (Detail::Packages, Format::Text) => deps::overview_to_text(report),
+        (Detail::Packages, Format::Markdown) => deps::overview_to_markdown(report),
+        (Detail::Packages, Format::Json) => to_json(&report.overview()),
     }
 }
 
-/// Returns the report. An `Err` is a message for stderr and status 2.
-pub(crate) fn run(args: &Args) -> Result<String, String> {
+/// Returns the report. The status is 0 whatever the report holds.
+pub(crate) fn run(args: &Args) -> Outcome {
+    // The message repeats the argument, which may hold anything.
+    let bad_root =
+        |err: String| Failure::bad_argument(format!("--root: {}", printable::text(&err)));
     let mut roots = Roots::default();
     for spec in &args.roots {
-        let (name, dir) = Roots::split(spec).map_err(|err| format!("--root: {err}"))?;
-        roots
-            .add(name, Path::new(dir))
-            .map_err(|err| format!("--root: {err}"))?;
+        let (name, dir) = Roots::split(spec).map_err(bad_root)?;
+        patharg::check(Path::new(dir))?;
+        roots.add(name, Path::new(dir)).map_err(bad_root)?;
     }
-    if let Some(missing) = args
-        .paths
-        .iter()
-        .find(|p| !buzzard_lint::archive::exists(p))
-    {
-        return Err(format!("path does not exist: {}", missing.display()));
-    }
+    patharg::existing(&args.paths)?;
     let workspace = Workspace::scan(&args.paths);
     let graph = DependencyGraph::build(&workspace);
     let report = deps::scan(&workspace, &graph, &roots);
@@ -73,5 +91,5 @@ pub(crate) fn run(args: &Args) -> Result<String, String> {
             }
         );
     }
-    Ok(render(&report, args.format))
+    Ok(Report::ok(render(&report, args.format, args.detail)))
 }

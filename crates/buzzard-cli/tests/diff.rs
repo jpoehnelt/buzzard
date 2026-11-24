@@ -457,3 +457,34 @@ fn git_diff_with_textconv_shows_a_line_diff_of_the_summary() {
     let plain = git_ok(&dir.0, &["diff"]);
     assert!(plain.contains("Binary files"), "{plain}");
 }
+
+/// Git passes the name of a file as it is in the repository, so the
+/// driver accepts a name with a control character and prints it on one
+/// line.
+#[test]
+fn the_git_header_keeps_a_file_name_on_one_line() {
+    let forged = "a.vi\nbuzzard diff a/x b/x\n\u{1b}[31m";
+    let (code, stdout, stderr) = run(&[
+        "diff",
+        "--git",
+        forged,
+        &pylavi("add.vi"),
+        "abc",
+        "100644",
+        &pylavi("empty.vi"),
+        "def",
+        "100644",
+    ]);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "buzzard diff a/a.vi\\nbuzzard diff a/x b/x\\n\\u{{1b}}[31m \
+             b/a.vi\\nbuzzard diff a/x b/x\\n\\u{{1b}}[31m\n{ADD_TO_EMPTY}"
+        )
+    );
+    let (code, stdout, _) = run(&["diff", "--git", forged]);
+    assert_eq!(code, 0);
+    assert_eq!(stdout.lines().count(), 2, "{stdout}");
+    assert!(stdout.ends_with("\nunmerged\n"), "{stdout}");
+}

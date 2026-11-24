@@ -318,3 +318,190 @@ fn the_library_report_is_the_report_the_command_prints() {
         assert!(json.len() > 400, "{path}");
     }
 }
+
+fn export_args<'a>(path: &'a str, out: &'a str, more: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec!["tdms", "export", path, "--out", out, "--format", "csv"];
+    args.extend(more);
+    args
+}
+
+/// An export never replaces a file unless `--force` says so.
+#[test]
+fn export_refuses_to_replace_a_file_without_force() {
+    let dir = TempDir::new("tdms-export-force");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.csv");
+    let out_text = out.to_string_lossy().into_owned();
+    fs::write(&out, "keep me").expect("write the file");
+
+    let (status, stdout, stderr) = run(&export_args(&path, &out_text, &[]));
+    assert_eq!((status, stdout.as_str()), (2, ""));
+    assert_eq!(
+        stderr,
+        format!("error: {out_text} exists; pass --force to replace it\n")
+    );
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep me");
+
+    let (status, stdout, _) = run(&export_args(&path, &out_text, &["--json"]));
+    assert_eq!(status, 2);
+    let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(error["error"]["kind"], "output_exists");
+    assert_eq!(error["error"]["path"], out_text.as_str());
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep me");
+
+    // A directory is not replaced either, and `--force` cannot replace it.
+    let taken = dir.0.join("taken");
+    fs::create_dir(&taken).expect("create the directory");
+    let taken_text = taken.to_string_lossy().into_owned();
+    let (status, _, stderr) = run(&export_args(&path, &taken_text, &[]));
+    assert_eq!(status, 2);
+    assert!(stderr.contains("exists; pass --force"), "{stderr}");
+    let (status, stdout, _) = run(&export_args(&path, &taken_text, &["--force", "--json"]));
+    assert_eq!(status, 2);
+    let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(error["error"]["kind"], "write_failed");
+    assert!(taken.is_dir());
+    // The failed replacement left nothing beside the three entries.
+    assert_eq!(fs::read_dir(&dir.0).expect("list the directory").count(), 3);
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep me");
+
+    let (status, stdout, stderr) = run(&export_args(&path, &out_text, &["--force"]));
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "exported 6 rows of 2 columns to {out_text}\n\
+             skipped /'aux'/'unused': it never held a value\n"
+        )
+    );
+    let text = fs::read_to_string(&out).expect("read the export");
+    assert!(text.starts_with("run/pressure,run/note\n"), "{text}");
+
+    // The input is never the output, with or without `--force`.
+    let before = fs::read(&path).expect("read the sample");
+    for more in [&[][..], &["--force"], &["--force", "--dry-run"]] {
+        let (status, _, stderr) = run(&export_args(&path, &path, more));
+        assert_eq!(status, 2, "{more:?}");
+        assert!(
+            stderr.contains("exists; pass --force") || stderr.contains("names the input file"),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read(&path).expect("read the sample"),
+            before,
+            "{more:?}"
+        );
+    }
+}
+
+#[test]
+fn export_dry_run_reports_and_writes_nothing() {
+    let dir = TempDir::new("tdms-export-dry");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.csv");
+    let out_text = out.to_string_lossy().into_owned();
+
+    let (status, stdout, stderr) = run(&export_args(&path, &out_text, &["--dry-run"]));
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "would export 6 rows of 2 columns to {out_text}\n\
+             column run/pressure\n\
+             column run/note\n\
+             skipped /'aux'/'unused': it never held a value\n\
+             {out_text} does not exist; nothing was written\n"
+        )
+    );
+    assert!(!out.exists());
+
+    let (status, stdout, _) = run(&export_args(&path, &out_text, &["--dry-run", "--json"]));
+    assert_eq!(status, 0);
+    let dry: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(
+        dry,
+        serde_json::json!({
+            "input": path,
+            "out": out_text,
+            "format": "csv",
+            "dry_run": true,
+            "written": false,
+            "out_existed": false,
+            "rows": 6,
+            "columns": ["run/pressure", "run/note"],
+            "skipped": ["/'aux'/'unused'"],
+        })
+    );
+    assert!(!out.exists());
+
+    // The real run reports the same table, and the file holds it.
+    let (status, stdout, _) = run(&export_args(&path, &out_text, &["--json"]));
+    assert_eq!(status, 0);
+    let real: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(real["dry_run"], false);
+    assert_eq!(real["written"], true);
+    assert_eq!(real["out_existed"], false);
+    for key in ["input", "out", "format", "rows", "columns", "skipped"] {
+        assert_eq!(real[key], dry[key], "{key}");
+    }
+    let table = fs::read_to_string(&out).expect("read the export");
+    assert_eq!(table.lines().next(), Some("run/pressure,run/note"));
+    assert_eq!(table.lines().count(), 7);
+
+    // A dry run says that the target exists, and leaves it alone.
+    for (more, words) in [
+        (&["--dry-run"][..], "exists; an export needs --force"),
+        (&["--dry-run", "--force"], "exists and --force replaces it"),
+    ] {
+        let (status, stdout, _) = run(&export_args(&path, &out_text, more));
+        assert_eq!(status, 0, "{more:?}");
+        assert!(
+            stdout.ends_with(&format!("{out_text} {words}; nothing was written\n")),
+            "{stdout}"
+        );
+        assert_eq!(fs::read_to_string(&out).expect("read the export"), table);
+    }
+    let (_, stdout, _) = run(&export_args(&path, &out_text, &["--dry-run", "--json"]));
+    let dry: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(dry["out_existed"], true);
+    assert_eq!(dry["written"], false);
+
+    // A dry run fails where the export would.
+    let other = dir.0.join("other.csv").to_string_lossy().into_owned();
+    let (status, stdout, _) = run(&export_args(
+        &path,
+        &other,
+        &["--dry-run", "--json", "--channels", "run/nope"],
+    ));
+    assert_eq!(status, 2);
+    let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(error["error"]["kind"], "bad_argument");
+    assert!(!dir.0.join("other.csv").exists());
+}
+
+/// The dry run of the default format does the work of the Parquet export.
+#[cfg(feature = "parquet")]
+#[test]
+fn export_dry_run_and_json_cover_parquet() {
+    let dir = TempDir::new("tdms-export-dry-parquet");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.parquet");
+    let out_text = out.to_string_lossy().into_owned();
+    let args = ["tdms", "export", &path, "--out", &out_text, "--json"];
+    let (status, stdout, _) = run(&[&args[..], &["--dry-run"]].concat());
+    assert_eq!(status, 0);
+    let dry: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(dry["format"], "parquet");
+    assert_eq!(dry["rows"], 6);
+    assert!(!out.exists());
+    let (status, stdout, _) = run(&args);
+    assert_eq!(status, 0);
+    let real: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(real["columns"], dry["columns"]);
+    assert!(out.is_file());
+    // The second run is refused, and the table is still the first one.
+    let first = fs::read(&out).expect("read the export");
+    let (status, _, _) = run(&args);
+    assert_eq!(status, 2);
+    assert_eq!(fs::read(&out).expect("read the export"), first);
+}

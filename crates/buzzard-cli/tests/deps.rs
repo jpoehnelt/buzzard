@@ -347,7 +347,14 @@ fn errors_exit_with_status_two() {
         &["deps", "--root", "vilib=src", "--root", "VILIB=other"],
         "two directories",
     );
-    fails(&["deps", "--format", "sarif"], "invalid value");
+    // sarif is a machine format that `deps` does not print. The caller
+    // asked for one, so the error is on stdout too, as JSON.
+    let (code, stdout, stderr) = run(&["deps", "--format", "sarif"], &dir.0);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("invalid value"), "{stderr}");
+    let error: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(error["error"]["kind"], "usage");
+    fails(&["deps", "--format", "xml"], "invalid value");
 }
 
 #[test]
@@ -573,4 +580,66 @@ fn truncated_and_corrupted_files_never_panic() {
             assert_ne!(json["unparsed"], serde_json::json!([]));
         }
     }
+}
+
+/// `--detail packages` is the overview with counts in place of files.
+#[test]
+fn detail_packages_prints_counts_in_place_of_files() {
+    let dir = project("deps-detail");
+    for format in ["text", "json", "markdown"] {
+        let whole = deps(&["--format", format], &dir.0);
+        assert_eq!(
+            deps(&["--format", format, "--detail", "files"], &dir.0),
+            whole,
+            "{format}"
+        );
+        let short = deps(&["--format", format, "--detail", "packages"], &dir.0);
+        assert!(short.len() < whole.len(), "{format}: {short}");
+        assert_eq!(
+            deps(&["--format", format, "--detail", "packages"], &dir.0),
+            short,
+            "{format}"
+        );
+    }
+
+    let whole: Value = serde_json::from_str(&deps(&["--format", "json"], &dir.0)).unwrap();
+    let short = deps(&["--format", "json", "--detail", "packages"], &dir.0);
+    let short: Value = serde_json::from_str(&short).unwrap();
+    assert_eq!(short["files"], whole["files"]);
+    let (roots, counted) = (
+        whole["roots"].as_array().unwrap(),
+        short["roots"].as_array().unwrap(),
+    );
+    assert_eq!(roots.len(), counted.len());
+    for (root, counted) in roots.iter().zip(counted) {
+        assert_eq!(root["root"], counted["root"]);
+        let packages = root["packages"].as_array().unwrap();
+        let counts = counted["packages"].as_array().unwrap();
+        assert_eq!(packages.len(), counts.len());
+        for (package, count) in packages.iter().zip(counts) {
+            assert_eq!(package["name"], count["name"]);
+            // A count, where the report has the list of files.
+            assert_eq!(
+                count["files"],
+                package["targets"].as_array().map(Vec::len).unwrap()
+            );
+            assert!(count["referrers"].is_u64(), "{count}");
+        }
+    }
+    for links in ["absolute", "missing"] {
+        let listed = whole[links].as_array().unwrap();
+        let counted = short[links].as_array().unwrap();
+        assert_eq!(listed.len(), counted.len(), "{links}");
+        assert!(!listed.is_empty(), "{links}");
+        for link in counted {
+            assert!(link["referrers"].is_u64(), "{link}");
+        }
+    }
+
+    let text = deps(&["--detail", "packages"], &dir.0);
+    assert!(text.starts_with("<resource> (not checked: "), "{text}");
+    assert!(!text.contains("Clear Errors.vi"), "{text}");
+    // Both levels end in the same summary line.
+    let whole = deps(&[], &dir.0);
+    assert_eq!(text.lines().last(), whole.lines().last());
 }
