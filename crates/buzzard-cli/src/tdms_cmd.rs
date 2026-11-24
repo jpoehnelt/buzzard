@@ -41,13 +41,17 @@ enum Command {
     },
     /// Write channels of a TDMS file as one table.
     ///
-    /// The export does not replace a file: when --out names something that
+    /// The export does not replace a file: when --out names a file that
     /// exists, pass --force. --dry-run reads the channels and reports the
     /// rows, the columns, and the target, and writes nothing.
     #[command(
         after_help = "Exit status: 0, or 2 on any error, such as an --out that exists \
         without --force. An error leaves no new output file behind, and leaves an \
-        existing file as it was, with or without --force."
+        existing file as it was, with or without --force. The one exception is a \
+        report that cannot be written after the export: the status is 2 and the table \
+        stays. --force replaces a regular file, behind a link too, and keeps its \
+        permissions. An --out that is not a regular file, such as /dev/stdout or a \
+        pipe, is written into and needs no --force."
     )]
     Export {
         /// A TDMS file. The reader uses the index file beside it when the
@@ -79,7 +83,10 @@ enum Command {
         #[arg(long)]
         force: bool,
         /// Read the channels and report what an export would write, the
-        /// target, and whether the target exists. Nothing is written.
+        /// target, and whether the target exists. Nothing is written. A
+        /// dry run fails where it can see that the export would: a bad
+        /// channel name, an --out that is a directory or whose directory
+        /// does not exist.
         #[arg(long)]
         dry_run: bool,
         /// Print the result as JSON: `input`, `out`, `format`, `dry_run`,
@@ -190,6 +197,9 @@ pub(crate) fn run(args: &Args) -> Outcome {
 
 fn open(path: &Path) -> Result<TdmsFile, Failure> {
     patharg::check(path)?;
+    if path.is_dir() {
+        return Err(Failure::not_a_file(path));
+    }
     TdmsFile::open(path).map_err(|e| {
         let mut failure = Failure::unreadable(path, e);
         if std::fs::symlink_metadata(path).is_err() {
@@ -288,9 +298,8 @@ fn export(path: &Path, out: &Path, choices: ExportChoices<'_>) -> Outcome {
         scaled: !choices.raw,
         ..ExportOptions::default()
     };
-    // A link that leads nowhere exists too: a file created through it
-    // would appear somewhere else.
-    let out_existed = std::fs::symlink_metadata(out).is_ok();
+    let target = Target::of(out);
+    let out_existed = !matches!(target, Target::New);
     if same_file(out, path) {
         return Err(Failure::bad_argument(format!(
             "--out names the input file: {}",
@@ -314,38 +323,53 @@ fn export(path: &Path, out: &Path, choices: ExportChoices<'_>) -> Outcome {
             "this build has no Parquet support; use --format csv",
         ));
     }
+    // A directory is never a place for a table, with or without --force,
+    // in a real run and in a dry run.
+    if let Target::Directory = target {
+        return Err(Failure::cannot_create(
+            out,
+            &io::Error::from(io::ErrorKind::IsADirectory),
+        ));
+    }
     let exported = if choices.dry_run {
+        // A new file needs a directory to be created in.
+        if let (Target::New, Some(parent)) = (&target, out.parent()) {
+            if !parent.as_os_str().is_empty() && !parent.is_dir() {
+                return Err(Failure::cannot_create(
+                    out,
+                    &io::Error::from(io::ErrorKind::NotFound),
+                ));
+            }
+        }
         // The same work as a real export, into nothing: the rows and
         // columns are those a real run would write, and so are the errors.
         write(&file, &channels, io::sink(), choices, &options).map_err(failed)?
     } else {
-        if out_existed && !choices.force {
+        if target.needs_force() && !choices.force {
             return Err(Failure::output_exists(out));
         }
-        // A new file is written in place. A replacement is written beside
-        // the file and moved onto it when it is whole, so that an export
-        // that fails leaves the old file as it was.
-        let written_to = if out_existed {
-            beside(out)
-        } else {
-            out.to_path_buf()
+        let table = |to: File| {
+            write(&file, &channels, BufWriter::new(to), choices, &options).map_err(failed)
         };
-        let target = create(&written_to, out)?;
-        let moved = write(&file, &channels, BufWriter::new(target), choices, &options)
-            .map_err(failed)
-            .and_then(|exported| {
-                if out_existed {
-                    std::fs::rename(&written_to, out)
-                        .map_err(|err| Failure::cannot_create(out, &err))?;
-                }
-                Ok(exported)
-            });
-        match moved {
-            Ok(exported) => exported,
-            Err(failure) => {
-                // Do not leave half a table behind.
-                let _ = std::fs::remove_file(&written_to);
-                return Err(failure);
+        match &target {
+            Target::New => {
+                let created = create(out, out)?;
+                table(created).inspect_err(|_| {
+                    // Do not leave half a table behind.
+                    let _ = std::fs::remove_file(out);
+                })?
+            }
+            Target::Regular { file, permissions } => replace(file, permissions.clone(), table)?,
+            // Nothing here can be put back or taken away: the table goes
+            // into what `--out` names.
+            Target::InPlace { .. } | Target::Directory => {
+                let opened = File::options()
+                    .write(true)
+                    .truncate(true)
+                    .create(target.needs_force())
+                    .open(out)
+                    .map_err(|err| Failure::cannot_create(out, &err))?;
+                table(opened)?
             }
         }
     };
@@ -362,8 +386,84 @@ fn export(path: &Path, out: &Path, choices: ExportChoices<'_>) -> Outcome {
             skipped: &exported.skipped,
         })
     } else {
-        export_text(out, out_existed, choices, &exported)
+        export_text(out, &target, choices, &exported)
     }))
+}
+
+/// What `--out` names before the export.
+enum Target {
+    /// Nothing has the name.
+    New,
+    /// A regular file, which only `--force` replaces. `file` is the file
+    /// itself, behind every link that `--out` goes through.
+    Regular {
+        file: PathBuf,
+        permissions: std::fs::Permissions,
+    },
+    /// Something else that a table can be written into: a device such as
+    /// the null device, a pipe, standard output by its name, or a link
+    /// whose target does not exist. It is never replaced, because the
+    /// directory entry is what the caller means to keep.
+    InPlace {
+        /// A link that leads nowhere: a file created through it would
+        /// appear somewhere else, so it needs `--force` as a file does.
+        dangling: bool,
+    },
+    /// A directory.
+    Directory,
+}
+
+impl Target {
+    fn of(out: &Path) -> Self {
+        if std::fs::symlink_metadata(out).is_err() {
+            return Self::New;
+        }
+        match std::fs::metadata(out) {
+            Err(_) => Self::InPlace { dangling: true },
+            Ok(meta) if meta.is_dir() => Self::Directory,
+            Ok(meta) if meta.is_file() => Self::Regular {
+                file: out.canonicalize().unwrap_or_else(|_| out.to_path_buf()),
+                permissions: meta.permissions(),
+            },
+            Ok(_) => Self::InPlace { dangling: false },
+        }
+    }
+
+    /// Whether an export would destroy or create a file that the caller
+    /// did not name as new.
+    fn needs_force(&self) -> bool {
+        matches!(
+            self,
+            Self::Regular { .. } | Self::InPlace { dangling: true }
+        )
+    }
+}
+
+/// Replace the regular file `file` with what `write` writes. The table is
+/// written beside the file and moved onto it when it is whole, so that an
+/// export that fails leaves the old file as it was. The new file has the
+/// permissions of the old one. Another name of the old file (a hard link)
+/// keeps the old content.
+fn replace<T>(
+    file: &Path,
+    permissions: std::fs::Permissions,
+    write: impl FnOnce(File) -> Result<T, Failure>,
+) -> Result<T, Failure> {
+    let beside = beside(file);
+    let created = create(&beside, file)?;
+    let moved = created
+        .set_permissions(permissions)
+        .map_err(|err| Failure::cannot_create(&beside, &err))
+        .and_then(|()| write(created))
+        .and_then(|written| {
+            std::fs::rename(&beside, file).map_err(|err| Failure::cannot_create(file, &err))?;
+            Ok(written)
+        });
+    if moved.is_err() {
+        // Do not leave half a table behind.
+        let _ = std::fs::remove_file(&beside);
+    }
+    moved
 }
 
 /// The file that a replacement of `out` is written to first: `out` with
@@ -396,7 +496,7 @@ fn create(written_to: &Path, out: &Path) -> Result<File, Failure> {
 /// channels come from the TDMS file, so each is printed on one line.
 fn export_text(
     out: &Path,
-    out_existed: bool,
+    target: &Target,
     choices: ExportChoices<'_>,
     exported: &Exported,
 ) -> String {
@@ -427,11 +527,14 @@ fn export_text(
         let _ = writeln!(
             text,
             "{}",
-            match (out_existed, choices.force) {
-                (false, _) => format!("{shown} does not exist; nothing was written"),
-                (true, true) =>
-                    format!("{shown} exists and --force replaces it; nothing was written"),
-                (true, false) =>
+            match (target, choices.force) {
+                (Target::New, _) => format!("{shown} does not exist; nothing was written"),
+                (Target::InPlace { dangling: false }, _) => format!(
+                    "{shown} exists and is not a regular file; an export writes into it; \
+                     nothing was written"
+                ),
+                (_, true) => format!("{shown} exists and --force replaces it; nothing was written"),
+                (_, false) =>
                     format!("{shown} exists; an export needs --force; nothing was written"),
             }
         );
@@ -462,5 +565,62 @@ fn write<W: Write + Send>(
             let _ = (choices.compression, out);
             Err(buzzard_tdms::Error::Io(io::ErrorKind::Unsupported.into()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sandbox(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("buzzard-tdms-cmd-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A forced export that fails after it started to write leaves the
+    /// old file as it was, and nothing beside it.
+    #[test]
+    fn a_failed_replacement_leaves_the_old_file_and_nothing_else() {
+        let dir = sandbox("replace");
+        let file = dir.join("table.csv");
+        std::fs::write(&file, "keep me").unwrap();
+        let permissions = std::fs::metadata(&file).unwrap().permissions();
+
+        let failed: Result<(), Failure> = replace(&file, permissions.clone(), |mut to| {
+            to.write_all(b"half a table").unwrap();
+            // The old file is untouched while the new one is written.
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep me");
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+            Err(Failure::new(ErrorKind::WriteFailed, "the disk is full"))
+        });
+        assert_eq!(failed.unwrap_err().message, "the disk is full");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep me");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+        let done = replace(&file, permissions, |mut to| {
+            to.write_all(b"a whole table").unwrap();
+            Ok(7)
+        });
+        assert_eq!(done.unwrap(), 7);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "a whole table");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_target_is_told_by_what_the_name_leads_to() {
+        let dir = sandbox("target");
+        assert!(matches!(Target::of(&dir.join("new.csv")), Target::New));
+        assert!(matches!(Target::of(&dir), Target::Directory));
+        std::fs::write(dir.join("old.csv"), "x").unwrap();
+        let old = Target::of(&dir.join("old.csv"));
+        assert!(matches!(old, Target::Regular { .. }) && old.needs_force());
+        assert!(!Target::New.needs_force());
+        assert!(!Target::InPlace { dangling: false }.needs_force());
+        assert!(Target::InPlace { dangling: true }.needs_force());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -1226,3 +1226,12 @@ Scanned 3 files: 5 external files in 3 packages under 2 symbolic roots (2 found,
     assert!(markdown.contains("| `ws/gone.vi` | 2 files |"));
     assert!(markdown.contains("| `ws/bad.vi` | short |"));
 }
+
+/// The reports print a space for a character that would add a line or
+/// reorder the text of one.
+#[test]
+fn a_name_cannot_add_a_line_or_reorder_one() {
+    let name = "a\nb\u{9b}c\u{202e}d\u{2028}e|`f";
+    assert_eq!(clean(name), "a b c d e|`f");
+    assert_eq!(code(name), "`a b c d e  f`");
+}

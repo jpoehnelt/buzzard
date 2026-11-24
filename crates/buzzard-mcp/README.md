@@ -20,7 +20,10 @@ a failed call, and the prompt `buzzard`.
   text plus the `structuredContent` as compact JSON. A larger answer comes as
   a smaller one whose `budget` entry names the size of the whole answer and
   says how to get the rest. Only `buzzard_diagram` with `detail` `full`
-  returns more without `max_bytes`.
+  returns more without `max_bytes`. A failed call is inside the budget too.
+- `buzzard_diagram` returns a whole diagram in format `json` as the diagram
+  itself, with the one key `root`. A diagram or a frame that is over the
+  budget comes as its outline.
 - A failed call has `isError` set and carries
   `{"error": {"kind", "message", "path"}}` as `structuredContent`. The kinds
   are those of `buzzard_lint::ErrorKind`.

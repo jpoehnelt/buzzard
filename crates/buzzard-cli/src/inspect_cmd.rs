@@ -1,10 +1,9 @@
 //! The `inspect` subcommand: what one file holds.
 
-use std::fmt::Write as _;
 use std::path::Path;
 
 use buzzard_lint::project::is_project_file;
-use buzzard_lint::summary::{self, DiagramOutline};
+use buzzard_lint::summary;
 use buzzard_lint::{archive, patharg, printable, render, ErrorKind, Failure};
 use buzzard_lint::{Inspection, ProjectFile};
 use buzzard_rsrc::{BlockDiagram, ViMetadata};
@@ -42,10 +41,20 @@ pub(crate) enum Detail {
     Full,
 }
 
+/// A part of a block diagram that `inspect` prints in place of the whole:
+/// the step between the outline and the full JSON.
+#[derive(Clone, Copy)]
+pub(crate) enum Part {
+    /// One frame of one structure, as the outline names them.
+    Frame { structure: i32, frame: usize },
+    /// The nodes whose id is in a range, both ends included.
+    Nodes { first: i32, last: i32 },
+}
+
 /// `buzzard inspect`: a project file, the directory of an archive, or a
 /// binary file. A member path is tried first, because `x.llb/p.lvlib` is a
 /// member of an archive and the member's name decides how it is read.
-pub(crate) fn run(file: &Path, format: Format, detail: Detail) -> Outcome {
+pub(crate) fn run(file: &Path, format: Format, detail: Detail, part: Option<Part>) -> Outcome {
     patharg::check(file)?;
     if detail == Detail::Summary && format.is_picture() {
         return Err(Failure::bad_argument(
@@ -53,19 +62,74 @@ pub(crate) fn run(file: &Path, format: Format, detail: Detail) -> Outcome {
              draw the whole block diagram",
         ));
     }
+    if part.is_some() && !matches!(format, Format::Json) {
+        return Err(Failure::bad_argument(
+            "a frame or a range of nodes is printed as JSON; pass --format json",
+        ));
+    }
+    if matches!(part, Some(Part::Nodes { .. })) && detail == Detail::Summary {
+        return Err(Failure::bad_argument(
+            "--detail summary applies to the whole diagram or to one frame, not to a range \
+             of nodes",
+        ));
+    }
+    if file.is_dir() {
+        return Err(Failure::not_a_file(file));
+    }
     // A member is shown under the name its archive has for it.
     let canonical = archive::canonical(file);
     let file = canonical.as_deref().unwrap_or(file);
     let is_member = archive::split(file).is_some();
-    if is_project_file(file) && (is_member || file.is_file()) {
+    let is_project = is_project_file(file) && (is_member || file.is_file());
+    let is_listing = !is_member && archive::is_archive(file) && file.is_file();
+    if let Some(part) = part {
+        return if is_project || (is_listing && archive::list(file).is_ok_and(|l| l.is_some())) {
+            Err(Failure::unsupported(
+                file,
+                "a project file or an archive has no block diagram",
+            ))
+        } else {
+            selected(file, part, detail)
+        };
+    }
+    if is_project {
         project(file, format)
-    } else if !is_member && archive::is_archive(file) && file.is_file() {
+    } else if is_listing {
         archive(file, format, detail)
     } else if is_project_file(file) {
         project(file, format)
     } else {
         binary(file, format, detail)
     }
+}
+
+/// One frame or a range of nodes of the block diagram of `file`, as JSON.
+fn selected(file: &Path, part: Part, detail: Detail) -> Outcome {
+    let inspection = Inspection::from_path(file).map_err(|err| unreadable(file, err))?;
+    let Some(diagram) = &inspection.diagram else {
+        return Err(Failure::unsupported(file, "file has no block diagram"));
+    };
+    Ok(Report::ok(match part {
+        Part::Frame { structure, frame } => {
+            let Some(found) = summary::frame(diagram, structure, frame) else {
+                return Err(Failure::bad_argument(format!(
+                    "{}: no structure with the id {structure} has a frame {frame}; --detail \
+                     summary lists the structures and their frames",
+                    printable::path(file)
+                ))
+                .with_path(file));
+            };
+            match detail {
+                Detail::Full => to_json(found),
+                // The outline of a frame is the outline of the diagram
+                // that the frame is.
+                Detail::Summary => to_json(&summary::outline(&BlockDiagram {
+                    root: found.clone(),
+                })),
+            }
+        }
+        Part::Nodes { first, last } => to_json(&summary::nodes_in_range(diagram, first, last)),
+    }))
 }
 
 /// The error for a file that cannot be read or does not parse. A path that
@@ -174,147 +238,11 @@ fn binary(file: &Path, format: Format, detail: Detail) -> Outcome {
                 text.push('\n');
                 text.push_str(&match detail {
                     Detail::Full => summary::diagram_to_markdown(diagram),
-                    Detail::Summary => outline_to_markdown(&summary::outline(diagram)),
+                    Detail::Summary => summary::outline_to_markdown(&summary::outline(diagram)),
                 });
             }
             text
         }
     };
     Ok(Report::ok(text))
-}
-
-/// A name or label from the file, on one line and inside a code span.
-fn code(text: &str) -> String {
-    format!("`{}`", printable::text(text).replace('`', "'"))
-}
-
-/// The outline of a block diagram as Markdown: what `--detail summary`
-/// prints in place of the list of every node.
-fn outline_to_markdown(outline: &DiagramOutline) -> String {
-    let mut out = String::from("## Block diagram\n\n");
-    let _ = writeln!(
-        out,
-        "{} nodes, {} terminals, {} wires, {} diagrams.",
-        outline.nodes, outline.terminals, outline.wires, outline.diagrams
-    );
-    if let Some((first, last)) = outline.node_ids {
-        let _ = writeln!(out, "Node ids {first} to {last}.");
-    }
-    if !outline.complete {
-        let losses: Vec<String> = outline
-            .losses
-            .iter()
-            .map(|loss| match serde_json::to_value(loss) {
-                Ok(serde_json::Value::String(name)) => name,
-                _ => format!("{loss:?}"),
-            })
-            .collect();
-        let _ = writeln!(
-            out,
-            "\nThe diagram did not decode completely, so a missing node or wire proves \
-             nothing. Losses: {}.",
-            losses.join(", ")
-        );
-    }
-    if !outline.node_classes.is_empty() {
-        out.push_str("\n### Node classes\n\n");
-        for (class, count) in &outline.node_classes {
-            let _ = writeln!(out, "- {}: {count}", code(class));
-        }
-    }
-    if !outline.callees.is_empty() {
-        out.push_str("\n### Callees\n\n");
-        for callee in &outline.callees {
-            let _ = writeln!(
-                out,
-                "- {} ({}): {} call{}",
-                code(&callee.name),
-                code(&callee.class),
-                callee.calls,
-                if callee.calls == 1 { "" } else { "s" }
-            );
-        }
-    }
-    if !outline.structures.is_empty() {
-        out.push_str("\n### Structures\n\n");
-        for structure in &outline.structures {
-            // A damaged file may nest deeper than a list can show.
-            let indent = "  ".repeat(structure.depth.min(16));
-            let _ = writeln!(
-                out,
-                "{indent}- {} #{} ({}), {} frame{}",
-                printable::text(&structure.description),
-                structure.uid,
-                code(&structure.class),
-                structure.frames.len(),
-                if structure.frames.len() == 1 { "" } else { "s" }
-            );
-            for frame in &structure.frames {
-                let label = if frame.label.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", code(&frame.label))
-                };
-                let _ = writeln!(
-                    out,
-                    "{indent}  - frame {}{label}: {} nodes, {} wires",
-                    frame.index, frame.nodes, frame.wires
-                );
-            }
-        }
-    }
-    out
-}
-
-#[cfg(test)]
-mod tests {
-    use buzzard_lint::summary::{CalleeOutline, FrameOutline, StructureOutline};
-
-    use super::*;
-
-    #[test]
-    fn the_outline_puts_every_name_from_the_file_on_one_line() {
-        let outline = DiagramOutline {
-            nodes: 3,
-            terminals: 4,
-            wires: 2,
-            diagrams: 2,
-            complete: true,
-            losses: Vec::new(),
-            node_ids: Some((7, 90)),
-            node_classes: [("prim".to_owned(), 2), ("a\nb".to_owned(), 1)].into(),
-            callees: vec![CalleeOutline {
-                name: "Init.vi\n## Forged".to_owned(),
-                class: "iUse".to_owned(),
-                calls: 1,
-            }],
-            structures: vec![StructureOutline {
-                uid: 12,
-                class: "select".to_owned(),
-                description: "case structure".to_owned(),
-                depth: 1,
-                parent: Some(3),
-                frames: vec![FrameOutline {
-                    index: 0,
-                    label: "\"Idle\"\u{1b}[31m`".to_owned(),
-                    nodes: 2,
-                    wires: 1,
-                }],
-            }],
-        };
-        assert_eq!(
-            outline_to_markdown(&outline),
-            "## Block diagram\n\n\
-             3 nodes, 4 terminals, 2 wires, 2 diagrams.\n\
-             Node ids 7 to 90.\n\
-             \n### Node classes\n\n\
-             - `a\\nb`: 1\n\
-             - `prim`: 2\n\
-             \n### Callees\n\n\
-             - `Init.vi\\n## Forged` (`iUse`): 1 call\n\
-             \n### Structures\n\n\
-             \x20 - case structure #12 (`select`), 1 frame\n\
-             \x20   - frame 0 `\"Idle\"\\u{1b}[31m'`: 2 nodes, 1 wires\n"
-        );
-    }
 }

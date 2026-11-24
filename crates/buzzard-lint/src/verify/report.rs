@@ -252,7 +252,13 @@ fn list(names: &[&str]) -> String {
 /// Keep file-supplied text on one line.
 fn clean(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() || printable::reorders(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
 }
 

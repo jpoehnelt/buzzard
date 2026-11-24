@@ -447,8 +447,13 @@ fn diagram_exports_every_format() {
 
     let (json_text, structured) = export(Some("json"));
     let parsed: Value = serde_json::from_str(&json_text).unwrap();
-    assert_eq!(parsed, structured["diagram"]);
-    assert_eq!(structured["detail"], "full");
+    // The whole diagram is `structuredContent` itself, with the one key
+    // `root`, as it was before results had a budget.
+    assert_eq!(parsed, structured);
+    assert_eq!(
+        structured.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["root"]
+    );
     assert_eq!(parsed["root"]["nodes"].as_array().unwrap().len(), 2);
     assert_eq!(parsed["root"]["wires"].as_array().unwrap().len(), 3);
 
@@ -766,6 +771,27 @@ fn protocol_errors_use_the_json_rpc_codes() {
     }
     let reply = session.request("tools/call", json!({ "name": "no_such_tool" }));
     assert_eq!(reply["error"]["message"], "Unknown tool: no_such_tool");
+    // A name that the caller made up is printed on one line.
+    let reply = session.request("tools/call", json!({ "name": "\u{1b}[2J\nFORGED: x" }));
+    assert_eq!(
+        reply["error"]["message"],
+        "Unknown tool: \\u{1b}[2J\\nFORGED: x"
+    );
+    for roots in [
+        json!({ "\u{1b}[2J\nFORGED: x": "." }),
+        json!(["\u{1b}[2J\nFORGED: x=."]),
+        json!(["\u{1b}[2J\nFORGED: x"]),
+    ] {
+        let result = session.call("buzzard_deps", json!({ "paths": ["."], "roots": roots }));
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["error"]["kind"], "bad_argument");
+        let message = text(&result);
+        assert!(message.starts_with("argument `roots`: "), "{message}");
+        assert!(
+            !message.chars().any(|c| c.is_ascii_control()),
+            "{message:?}"
+        );
+    }
 }
 
 #[test]
@@ -1696,8 +1722,12 @@ fn tools_take_the_path_of_a_member_of_an_archive() {
             json!({ "path": "add.vi", "format": format }),
         );
         assert_eq!(member.0, loose.0, "{format}");
-        assert_eq!(member.1["path"], "lib.llb/add.vi");
-        assert_eq!(member.1.get("diagram"), loose.1.get("diagram"), "{format}");
+        if format == "json" {
+            assert_eq!(member.1, loose.1);
+            assert!(member.1["root"].is_object());
+        } else {
+            assert_eq!(member.1["path"], "lib.llb/add.vi");
+        }
     }
     assert_eq!(
         session.fails("buzzard_inspect", json!({ "path": "lib.llb/Absent.vi" })),
@@ -2293,7 +2323,40 @@ fn no_result_is_larger_than_its_byte_budget() {
     }
     assert!(reduced > 50, "{reduced} answers were reduced");
 
-    // The message of a failed call is bounded too.
+    // The message of a failed call is bounded too, and so is the path in
+    // its `structuredContent`: a control character is one byte of an
+    // argument and six of JSON.
+    for unit in ["\u{1b}", "\u{1}", "\n"] {
+        for max_bytes in [
+            None,
+            Some(1024),
+            Some(2048),
+            Some(8192),
+            Some(30000),
+            Some(65536),
+        ] {
+            for (tool, mut arguments) in [
+                ("buzzard_check", json!({ "paths": [unit.repeat(4096)] })),
+                ("buzzard_inspect", json!({ "path": unit.repeat(4096) })),
+                (
+                    "buzzard_diff",
+                    json!({ "old": unit.repeat(4096), "new": unit.repeat(4096) }),
+                ),
+            ] {
+                if let Some(max_bytes) = max_bytes {
+                    arguments["max_bytes"] = json!(max_bytes);
+                }
+                let result = session.call(tool, arguments);
+                assert_eq!(result["isError"], true);
+                assert_eq!(result["structuredContent"]["error"]["kind"], "bad_argument");
+                assert!(
+                    result_bytes(&result) <= max_bytes.unwrap_or(65536),
+                    "{tool} {unit:?} {max_bytes:?}: {}",
+                    result_bytes(&result)
+                );
+            }
+        }
+    }
     let long = "x".repeat(4000);
     for max_bytes in [1024, 2000, 65536] {
         let result = session.call(
@@ -2336,8 +2399,10 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
     let mut session = Session::new(crates_dir());
     let json_of = |path: &str| json!({ "path": path, "format": "json" });
     let (text, summary) = session.ok("buzzard_diagram", json_of(BIG_VI));
+    // The outline is the text that `buzzard inspect --detail summary`
+    // prints for the diagram.
     assert!(
-        text.starts_with("# Outline of the block diagram\n"),
+        text.starts_with("## Block diagram\n\n126 nodes, 915 terminals, 276 wires, 38 diagrams.\n"),
         "{text}"
     );
     assert_eq!(summary["detail"], "summary");
@@ -2353,9 +2418,9 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
     let full = session.call("buzzard_diagram", full_arguments.clone());
     assert_eq!(result_bytes(&full), full_bytes);
     let full = &full["structuredContent"];
-    assert_eq!(full["detail"], "full");
+    assert!(full.get("detail").is_none());
     assert!(full.get("budget").is_none());
-    let nodes = all_nodes(&full["diagram"]["root"]);
+    let nodes = all_nodes(&full["root"]);
     assert_eq!(outline["nodes"], nodes.len());
     assert_eq!(outline["complete"], true);
 
@@ -2371,7 +2436,7 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
     // An explicit limit holds for `detail` "full" too.
     full_arguments["max_bytes"] = json!(4096);
     let (_, limited) = session.ok("buzzard_diagram", full_arguments);
-    assert!(limited.get("diagram").is_none());
+    assert!(limited.get("root").is_none());
     assert_eq!(limited["budget"]["full_bytes"], full_bytes);
 
     // Every frame that the outline names is the frame of the whole diagram.
@@ -2398,12 +2463,57 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
                 frame["nodes"]
             );
             assert_eq!(serde_json::from_str::<Value>(&text).unwrap(), part["frame"]);
+            // `all_nodes` counts what the JSON of the frame holds.
+            assert_eq!(frame["all_nodes"], all_nodes(&part["frame"]).len());
             frames += 1;
         }
     }
     assert!(frames > 10, "{frames}");
 
-    // A range of node ids holds the nodes with those ids.
+    // A frame that is over the budget comes as its own outline, not as
+    // JSON that is cut in the middle, and the outline leads further in.
+    let (structure, frame) = structures
+        .iter()
+        .flat_map(|structure| {
+            structure["frames"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |frame| (structure, frame))
+        })
+        .max_by_key(|(_, frame)| frame["all_nodes"].as_u64().unwrap())
+        .unwrap();
+    assert!(frame["all_nodes"].as_u64() > frame["nodes"].as_u64());
+    let big_frame =
+        json!({ "path": BIG_VI, "structure": structure["uid"], "frame": frame["index"] });
+    let (text, inside) = session.ok("buzzard_diagram", big_frame.clone());
+    assert_eq!(inside["detail"], "summary");
+    assert_eq!(inside["structure"], structure["uid"]);
+    assert_eq!(inside["frame_index"], frame["index"]);
+    assert!(inside.get("frame").is_none());
+    assert_eq!(inside["outline"]["nodes"], frame["all_nodes"]);
+    assert_ne!(inside["outline"]["structures"], json!([]));
+    assert!(text.starts_with("## Block diagram\n"), "{text}");
+    assert!(text.contains("This is the outline of the frame."), "{text}");
+    let frame_bytes = inside["budget"]["full_bytes"].as_u64().unwrap();
+    assert!(
+        frame_bytes > 65536 && frame_bytes < full_bytes,
+        "{frame_bytes}"
+    );
+    // `detail` "summary" asks for that outline, and "full" for the frame.
+    let mut asked = big_frame.clone();
+    asked["detail"] = json!("summary");
+    let (_, outlined) = session.ok("buzzard_diagram", asked.clone());
+    assert_eq!(outlined["outline"], inside["outline"]);
+    assert!(outlined.get("budget").is_none());
+    asked["detail"] = json!("full");
+    let whole_frame = session.call("buzzard_diagram", asked);
+    assert_eq!(result_bytes(&whole_frame), frame_bytes);
+    assert_eq!(whole_frame["structuredContent"]["detail"], "frame");
+
+    // A range of node ids holds each node once: a structure comes with
+    // what is inside it, and what is inside is not listed again. No range
+    // is larger than the diagram.
     let (first, last) = (
         outline["node_ids"][0].as_i64().unwrap(),
         outline["node_ids"][1].as_i64().unwrap(),
@@ -2413,17 +2523,52 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
         json!({ "path": BIG_VI, "first_node": first, "last_node": first + 400, "max_bytes": 4_000_000 }),
     );
     assert_eq!(range["detail"], "nodes");
-    let expected: Vec<&Value> = nodes
+    let in_range = |node: &Value| (first..=first + 400).contains(&node["uid"].as_i64().unwrap());
+    let found = range["nodes"].as_array().unwrap();
+    assert!(found.len() > 1, "{}", found.len());
+    assert!(found.iter().all(in_range));
+    assert!(found.iter().all(|node| nodes.contains(&node)));
+    // Every node of the range is in the answer, on its own or inside a
+    // structure of the range, and none is there twice.
+    let mut held: Vec<i64> = found
         .iter()
-        .copied()
-        .filter(|node| (first..=first + 400).contains(&node["uid"].as_i64().unwrap()))
+        .flat_map(|node| {
+            let mut inside = vec![node];
+            inside.extend(
+                node["diagrams"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .flat_map(all_nodes),
+            );
+            inside
+        })
+        .map(|node| node["uid"].as_i64().unwrap())
         .collect();
-    assert!(expected.len() > 1, "{}", expected.len());
-    let found: Vec<&Value> = range["nodes"].as_array().unwrap().iter().collect();
-    assert_eq!(found.len(), expected.len());
-    for node in &expected {
-        assert!(found.contains(node), "{}", node["uid"]);
+    let count = held.len();
+    held.sort_unstable();
+    held.dedup();
+    assert_eq!(held.len(), count);
+    for node in nodes.iter().copied().filter(|node| in_range(node)) {
+        assert!(
+            held.contains(&node["uid"].as_i64().unwrap()),
+            "{}",
+            node["uid"]
+        );
     }
+    let everything = session.call(
+        "buzzard_diagram",
+        json!({ "path": BIG_VI, "first_node": first, "last_node": last, "max_bytes": 8_000_000 }),
+    );
+    assert!(
+        result_bytes(&everything) <= full_bytes,
+        "{}",
+        result_bytes(&everything)
+    );
+    assert_eq!(
+        everything["structuredContent"]["nodes"],
+        full["root"]["nodes"]
+    );
     let (_, none) = session.ok(
         "buzzard_diagram",
         json!({ "path": BIG_VI, "first_node": last, "last_node": first }),
@@ -2435,7 +2580,7 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
         "buzzard_diagram",
         json_of("buzzard-rsrc/tests/fixtures/pylavi/add.vi"),
     );
-    assert_eq!(small["detail"], "full");
+    assert!(small["root"].is_object());
     let (text, small) = session.ok(
         "buzzard_diagram",
         json!({ "path": "buzzard-rsrc/tests/fixtures/pylavi/add.vi", "detail": "summary" }),
@@ -2444,7 +2589,7 @@ fn a_large_diagram_comes_as_its_outline_until_more_is_asked_for() {
     assert_eq!(small["outline"]["wires"], 3);
     assert!(small.get("budget").is_none());
     assert!(
-        text.contains("2 node(s), 6 terminal(s), and 3 wire(s) in 1 diagram(s)."),
+        text.contains("2 nodes, 6 terminals, 3 wires, 1 diagrams."),
         "{text}"
     );
 }
@@ -2470,7 +2615,7 @@ fn diagram_checks_the_arguments_of_a_selection() {
         ),
         (
             json!({ "first_node": 1, "last_node": 2, "detail": "full" }),
-            "`detail` applies to the whole diagram; leave it out with a frame or a range of nodes",
+            "`detail` applies to the whole diagram or to one frame; leave it out with a range of nodes",
         ),
         (json!({ "detail": "all" }), "argument `detail` must be one of: auto, summary, full"),
         (
@@ -2499,6 +2644,22 @@ fn check_shows_the_problems_that_fit_and_counts_all_of_them() {
     let problems = all["summary"]["problems"].as_u64().unwrap();
     assert!(problems > 30, "{}", all["summary"]);
     assert_eq!(all["summary"]["truncated"], false);
+    assert_eq!(all["summary"]["not_shown"], 0);
+    // `limit` leaves problems out, and the notice names it.
+    let limited = session.call("buzzard_check", json!({ "paths": ["."], "limit": 2 }));
+    assert_eq!(limited["structuredContent"]["summary"]["shown"], 2);
+    assert_eq!(
+        limited["structuredContent"]["summary"]["not_shown"],
+        problems - 2
+    );
+    assert!(
+        text(&limited).contains(&format!(
+            "... {} more not shown; raise `limit` or narrow `paths`.\n",
+            problems - 2
+        )),
+        "{}",
+        text(&limited)
+    );
     let mut last_shown = 0;
     for max_bytes in [1024, 2048, 8192] {
         let result = session.call(
@@ -2515,6 +2676,9 @@ fn check_shows_the_problems_that_fit_and_counts_all_of_them() {
         }
         assert_eq!(part["summary"]["truncated"], true);
         let shown = part["summary"]["shown"].as_u64().unwrap();
+        // The count of what is left out has the name it has in the JSON
+        // of `buzzard check --limit`.
+        assert_eq!(part["summary"]["not_shown"], problems - shown);
         assert!(shown >= last_shown && shown < problems, "{shown}");
         last_shown = shown;
         // The problems shown are the first ones, and no line is cut.
@@ -2526,7 +2690,11 @@ fn check_shows_the_problems_that_fit_and_counts_all_of_them() {
         );
         let text = text(&result);
         assert!(
-            text.contains(&format!("... {} more not shown;", problems - shown)),
+            // The budget left them out, so the notice names `max_bytes`.
+            text.contains(&format!(
+                "... {} more not shown; raise `max_bytes` or narrow `paths`.\n",
+                problems - shown
+            )),
             "{text}"
         );
         assert!(
@@ -2670,6 +2838,20 @@ fn every_failure_has_a_kind_and_names_its_path() {
         ("buzzard_inspect", json!({}), "bad_argument", None),
         (
             "buzzard_inspect",
+            json!({ "path": "." }),
+            "bad_argument",
+            Some("."),
+        ),
+        // A directory in place of a file is the same mistake for every
+        // tool that takes one file, and on the command line.
+        (
+            "buzzard_diagram",
+            json!({ "path": "." }),
+            "bad_argument",
+            Some("."),
+        ),
+        (
+            "buzzard_tdms_info",
             json!({ "path": "." }),
             "bad_argument",
             Some("."),
@@ -3091,6 +3273,15 @@ fn a_confined_server_reads_only_inside_its_roots() {
         ),
         ("buzzard_tdms_info", json!({ "path": "install/data.tdms" })),
     ];
+    let result = session.call("buzzard_inspect", json!({ "path": "ws/../../none.vi" }));
+    assert_eq!(
+        text(&result),
+        "the path is outside the directories this server may read: ws/../../none.vi"
+    );
+    assert_eq!(
+        result["structuredContent"]["error"]["path"],
+        "ws/../../none.vi"
+    );
     for (tool, arguments) in refused {
         let (kind, message) = session.fails_as(tool, arguments.clone());
         assert_eq!(kind, "outside_root", "{tool} {arguments}: {message}");
@@ -3098,6 +3289,14 @@ fn a_confined_server_reads_only_inside_its_roots() {
             message.starts_with("the path is outside the directories this server may read: "),
             "{message}"
         );
+        // The message names the argument as the caller wrote it, and never
+        // the directory that the server runs in.
+        let base = dir.0.to_string_lossy();
+        // A JSON string doubles the separators of a Windows path.
+        let absolute = outside.replace('\\', "\\\\");
+        if !arguments.to_string().contains(&absolute) {
+            assert!(!message.contains(&*base), "{tool} {arguments}: {message}");
+        }
         // Without roots the same call gets past the path.
         let result = open.call(tool, arguments.clone());
         assert_ne!(

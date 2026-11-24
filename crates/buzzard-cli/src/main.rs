@@ -1,5 +1,6 @@
-//! The `buzzard` command: `check`, `inspect`, `deps`, `diff`, and `verify`
-//! over the analysis in `buzzard-lint`, `lsp` for the language server in
+//! The `buzzard` command: `check`, `inspect`, `deps`, `diff`, `verify`, and
+//! `rules` over the analysis in `buzzard-lint`, `guide` for the guide for
+//! agents, `lsp` for the language server in
 //! `buzzard-ls`, `mcp` for the Model Context Protocol server in `buzzard-mcp`,
 //! and `tdms` for the measurement file reader in `buzzard-tdms`.
 
@@ -14,7 +15,7 @@ use std::process::ExitCode;
 
 use buzzard_lint::verify::report::{self, Verified};
 use buzzard_lint::{
-    check as checked, lint, patharg, rules, sarif, DependencyGraph, Failure, LintConfig, Severity,
+    check as checked, lint, patharg, printable, rules, sarif, DependencyGraph, Failure, LintConfig,
     Workspace,
 };
 use clap::{Parser, Subcommand, ValueEnum};
@@ -45,8 +46,22 @@ pub(crate) type Outcome = Result<Report, Failure>;
 #[derive(Parser)]
 #[command(name = "buzzard", version, about, after_long_help = errors::help())]
 struct Cli {
+    /// How to report an error that ends the command. With json, the error
+    /// is also one JSON object on one line of stdout, whatever format the
+    /// report has. --format json, --format sarif, and --json imply it.
+    #[arg(long, global = true, value_enum, default_value_t = ErrorFormat::Text, value_name = "FORMAT")]
+    error_format: ErrorFormat,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ErrorFormat {
+    /// `error: <message>` on stderr.
+    Text,
+    /// The line on stderr, and `{"error":{"kind","message","path"}}` on
+    /// stdout.
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -78,7 +93,7 @@ enum Command {
         /// problem and says how many are not shown. With a limit, json
         /// prints an object with `diagnostics` and `summary` in place of
         /// the list, and sarif adds the counts to the properties of the
-        /// run.
+        /// run when problems are left out.
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
     },
@@ -94,7 +109,8 @@ enum Command {
     #[command(
         after_help = "Exit status: 0, or 2 when buzzard cannot read the file, when you \
         ask for svg, dot, or mermaid and the file has no block diagram or with --detail \
-        summary, or when the path holds a control character."
+        summary, when the file has no such frame, or when the path is a directory or holds \
+        a control character."
     )]
     Inspect {
         /// A file, or a member path such as lib/util.llb/Init.vi.
@@ -106,6 +122,33 @@ enum Command {
         /// An archive and a project file have one level of detail.
         #[arg(long, value_enum, default_value_t = inspect_cmd::Detail::Full)]
         detail: inspect_cmd::Detail,
+        /// Print one frame of the block diagram as JSON: the id of a
+        /// structure in the outline of --detail summary. Needs --frame and
+        /// --format json. With --detail summary, the outline of that frame.
+        #[arg(long, value_name = "ID", requires = "frame", allow_negative_numbers = true,
+              conflicts_with_all = ["first_node", "last_node"])]
+        structure: Option<i32>,
+        /// The index of a frame of --structure, from 0.
+        #[arg(long, value_name = "INDEX", requires = "structure")]
+        frame: Option<usize>,
+        /// Print the nodes with an id from --first-node to --last-node as
+        /// JSON. A structure comes with everything inside it. Needs
+        /// --format json.
+        #[arg(
+            long,
+            value_name = "ID",
+            requires = "last_node",
+            allow_negative_numbers = true
+        )]
+        first_node: Option<i32>,
+        /// The largest node id of the range.
+        #[arg(
+            long,
+            value_name = "ID",
+            requires = "first_node",
+            allow_negative_numbers = true
+        )]
+        last_node: Option<i32>,
     },
     /// List what the files need from outside the project.
     ///
@@ -159,6 +202,14 @@ enum Command {
         #[arg(long, value_enum, default_value_t = RulesFormat::Text)]
         format: RulesFormat,
     },
+    /// Print the guide to buzzard for an AI agent.
+    ///
+    /// The guide says which command, format, and size limit to ask for,
+    /// what the exit statuses, labels, and error kinds mean, and how to
+    /// treat names from files. `buzzard mcp` serves the same text as the
+    /// prompt `buzzard`.
+    #[command(after_help = "Exit status: 0, or 2 when buzzard cannot write the guide.")]
+    Guide,
     /// Run the language server over stdio.
     #[command(
         after_help = "Exit status: 0 after shutdown and then exit, or when the client \
@@ -223,17 +274,17 @@ impl Command {
             Self::Deps(args) => args.machine(),
             Self::Diff(args) => args.machine(),
             Self::Tdms(args) => args.machine(),
-            Self::Lsp | Self::Mcp { .. } => false,
+            Self::Guide | Self::Lsp | Self::Mcp { .. } => false,
         }
     }
 }
 
 fn main() -> ExitCode {
-    let command = match Cli::try_parse() {
-        Ok(cli) => cli.command,
+    let (command, error_format) = match Cli::try_parse() {
+        Ok(cli) => (cli.command, cli.error_format),
         Err(err) => return errors::usage(&err),
     };
-    let machine = command.machine();
+    let machine = command.machine() || error_format == ErrorFormat::Json;
     let outcome = match command {
         Command::Check {
             paths,
@@ -247,12 +298,27 @@ fn main() -> ExitCode {
             file,
             format,
             detail,
-        } => inspect_cmd::run(&file, format, detail),
+            structure,
+            frame,
+            first_node,
+            last_node,
+        } => {
+            // clap makes each pair come together and never both pairs.
+            let part = match (structure.zip(frame), first_node.zip(last_node)) {
+                (Some((structure, frame)), _) => {
+                    Some(inspect_cmd::Part::Frame { structure, frame })
+                }
+                (None, Some((first, last))) => Some(inspect_cmd::Part::Nodes { first, last }),
+                (None, None) => None,
+            };
+            inspect_cmd::run(&file, format, detail, part)
+        }
         Command::Verify { paths, format } => verify(&paths, format),
         Command::Rules { format } => Ok(Report::ok(match format {
             RulesFormat::Text => rules::listing_to_text(),
             RulesFormat::Json => rules::listing_to_json(),
         })),
+        Command::Guide => Ok(Report::ok(buzzard_mcp::guide().to_owned())),
         Command::Deps(args) => deps_cmd::run(&args),
         Command::Diff(args) => diff_cmd::run(&args),
         Command::Tdms(args) => tdms_cmd::run(&args),
@@ -260,11 +326,23 @@ fn main() -> ExitCode {
         Command::Mcp { roots } => {
             let served = roots
                 .iter()
-                .try_for_each(|root| patharg::check(root))
+                .try_for_each(|root| {
+                    patharg::check(root)?;
+                    // The error names the root as the caller wrote it.
+                    if root.is_dir() {
+                        Ok(())
+                    } else {
+                        Err(Failure::bad_argument(format!(
+                            "the root is not an existing directory: {}",
+                            printable::path(root)
+                        ))
+                        .with_path(root))
+                    }
+                })
                 .and_then(|()| buzzard_mcp::run_stdio(&roots));
             return match served {
                 Ok(()) => ExitCode::SUCCESS,
-                Err(failure) => errors::fail(&failure, false),
+                Err(failure) => errors::fail(&failure, machine),
             };
         }
     };
@@ -297,26 +375,21 @@ fn check(
     let diagnostics = lint(&workspace, &graph, &config);
     let files = workspace.files().len();
     let version = env!("CARGO_PKG_VERSION");
+    let shown = checked::limit(&diagnostics, files, limit);
     // Without a limit, each format is the one that the command always
     // printed: json is the list of findings and nothing else.
     let text = match (limit, format) {
         (None, CheckFormat::Human) => checked::to_human(&diagnostics, files),
         (None, CheckFormat::Json) => to_json(&diagnostics),
         (None, CheckFormat::Sarif) => to_json(&sarif::to_sarif(&workspace, &diagnostics, version)),
-        (Some(_), format) => {
-            let shown = checked::limit(&diagnostics, files, limit);
-            match format {
-                CheckFormat::Human => shown.to_human(),
-                CheckFormat::Json => shown.to_json(),
-                CheckFormat::Sarif => to_json(&shown.to_sarif(&workspace, version)),
-            }
-        }
+        (Some(_), CheckFormat::Human) => shown.to_human(),
+        (Some(_), CheckFormat::Json) => shown.to_json(),
+        (Some(_), CheckFormat::Sarif) => to_json(&shown.to_sarif(&workspace, version)),
     };
     // The status counts every problem, shown or not.
-    let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
     Ok(Report {
         text,
-        status: u8::from(failed && !exit_zero),
+        status: u8::from(shown.failed() && !exit_zero),
     })
 }
 

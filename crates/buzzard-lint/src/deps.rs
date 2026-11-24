@@ -789,7 +789,13 @@ fn plural(count: usize, one: &str, many: &str) -> String {
 /// Keep file-supplied text on one line.
 fn clean(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() || crate::printable::reorders(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -799,7 +805,7 @@ fn code(text: &str) -> String {
         .chars()
         .map(|c| match c {
             '|' | '`' => ' ',
-            c if c.is_control() => ' ',
+            c if c.is_control() || crate::printable::reorders(c) => ' ',
             other => other,
         })
         .collect();

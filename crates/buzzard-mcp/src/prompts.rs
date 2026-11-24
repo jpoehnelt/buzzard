@@ -26,6 +26,13 @@ fn parts() -> (&'static str, &'static str) {
     }
 }
 
+/// The guide as a reader gets it: the text after the front matter. The
+/// prompt `buzzard` and `buzzard guide` both give this text.
+#[must_use]
+pub fn guide() -> &'static str {
+    parts().1
+}
+
 /// The `description` of the front matter.
 fn description() -> &'static str {
     parts()
@@ -56,7 +63,10 @@ pub(crate) fn get(params: &Value) -> Result<Value, String> {
         })),
         Some(other) => {
             let shown: String = other.chars().take(64).collect();
-            Err(format!("unknown prompt: {shown}"))
+            Err(format!(
+                "unknown prompt: {}",
+                buzzard_lint::printable::text(&shown)
+            ))
         }
         None => Err("name must be a string".to_owned()),
     }

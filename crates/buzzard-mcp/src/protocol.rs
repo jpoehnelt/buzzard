@@ -178,7 +178,13 @@ impl Server {
                 // The client chooses the method name, which can have any
                 // length, so the reply shows 64 characters at most.
                 let shown: String = other.chars().take(64).collect();
-                Err((METHOD_NOT_FOUND, format!("Method not found: {shown}")))
+                Err((
+                    METHOD_NOT_FOUND,
+                    format!(
+                        "Method not found: {}",
+                        buzzard_lint::printable::text(&shown)
+                    ),
+                ))
             }
         }
     }
@@ -193,7 +199,11 @@ impl Server {
         };
         if !tools::NAMES.contains(&name.as_str()) {
             let shown: String = name.chars().take(64).collect();
-            return Err((INVALID_PARAMS, format!("Unknown tool: {shown}")));
+            // The name is the caller's text, printed on one line.
+            return Err((
+                INVALID_PARAMS,
+                format!("Unknown tool: {}", buzzard_lint::printable::text(&shown)),
+            ));
         }
         let arguments = match params.remove("arguments") {
             None | Some(Value::Null) => Map::new(),

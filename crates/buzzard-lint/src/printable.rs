@@ -10,14 +10,30 @@
 
 use std::path::Path;
 
+/// Whether `c` moves or reorders the text around it without being an
+/// ASCII control character: the line and paragraph separators (U+2028,
+/// U+2029) and the characters that set the direction of text (U+202A to
+/// U+202E, U+2066 to U+2069). A name with one of them can show a line that
+/// the report does not hold, or show `exe.vi` for a name that ends in
+/// `iv.exe`.
+///
+/// A name of a legacy code page is read one character per byte, so it
+/// never holds one of these: they are all above U+00FF.
+#[must_use]
+pub fn reorders(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
 /// `text` on one line. Each ASCII control character is written as its
-/// Rust escape (`\n`, `\t`, `\u{1b}`), and everything else is as it was.
+/// Rust escape (`\n`, `\t`, `\u{1b}`), and so is each character that
+/// [`reorders`] text (`\u{202e}`). Everything else is as it was.
 /// The bytes 0x80 to 0x9f of a name in a legacy code page are letters,
-/// not controls, and are kept.
+/// not controls, and are kept: such a name is the name of a member that a
+/// member path has to spell.
 pub fn text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
-        if c.is_ascii_control() {
+        if c.is_ascii_control() || reorders(c) {
             out.extend(c.escape_default());
         } else {
             out.push(c);
@@ -56,6 +72,14 @@ mod tests {
         );
         // Bytes of a legacy code page above 0x7f are letters.
         assert_eq!(text("\u{83}\u{65}\u{e9}"), "\u{83}\u{65}\u{e9}");
+        // A separator of lines and an override of the direction of text
+        // are written out.
+        assert_eq!(
+            text("a\u{2028}b\u{2029}c\u{202e}d\u{2066}e\u{2069}"),
+            "a\\u{2028}b\\u{2029}c\\u{202e}d\\u{2066}e\\u{2069}"
+        );
+        // Letters of scripts that are written right to left are not.
+        assert_eq!(text("\u{5d0}\u{627}.vi"), "\u{5d0}\u{627}.vi");
         // Characters that are legal in a file name and that buzzard never
         // decodes stay as they are.
         assert_eq!(text("50% done?#1.vi"), "50% done?#1.vi");

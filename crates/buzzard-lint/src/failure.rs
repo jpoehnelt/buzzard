@@ -212,6 +212,17 @@ impl Failure {
         Self::new(ErrorKind::BadArgument, message)
     }
 
+    /// `path` is a directory where one file is expected. The caller can
+    /// correct the argument, so the kind is `bad_argument` on every
+    /// surface.
+    pub fn not_a_file(path: &Path) -> Self {
+        Self::bad_argument(format!(
+            "{} is a directory; pass one file",
+            printable::path(path)
+        ))
+        .with_path(path)
+    }
+
     /// The command line or the call is malformed.
     pub fn usage(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Usage, message)
@@ -362,6 +373,14 @@ mod tests {
             ErrorKind::OutputExists
         );
         assert_eq!(String::from(unreadable), "a.vi: file is truncated");
+    }
+
+    #[test]
+    fn a_directory_in_place_of_a_file_is_an_argument_to_correct() {
+        let failure = Failure::not_a_file(Path::new("lib\nx"));
+        assert_eq!(failure.kind, ErrorKind::BadArgument);
+        assert_eq!(failure.message, "lib\\nx is a directory; pass one file");
+        assert_eq!(failure.path.as_deref(), Some("lib\nx"));
     }
 
     #[test]

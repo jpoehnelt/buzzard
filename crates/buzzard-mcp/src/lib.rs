@@ -25,7 +25,7 @@ use std::path::PathBuf;
 
 use buzzard_lint::{ErrorKind, Failure};
 
-pub use prompts::GUIDE;
+pub use prompts::{guide, GUIDE};
 pub use protocol::{Server, MAX_LINE_BYTES, SUPPORTED_PROTOCOL_VERSIONS};
 
 /// Serve on standard input and output until the client closes the pipe.

@@ -110,8 +110,12 @@ const MORE_BYTES: &str = "Pass a larger `max_bytes` for all of it.";
 const MORE_DIAGRAM: &str = "Read the outline, then ask for one frame (`structure` and `frame`), \
 for a range of node ids (`first_node` and `last_node`), or for all of it with `detail` \
 \"full\" or a larger `max_bytes`.";
-const MORE_SELECTION: &str = "Ask for a smaller frame or a shorter range of node ids, or pass \
-a larger `max_bytes`.";
+const MORE_FRAME: &str = "This is the outline of the frame. Ask for a frame of one of the \
+structures inside it (`all_nodes` says how much each holds), for a range of node ids, or for \
+the whole frame with `detail` \"full\" or a larger `max_bytes`.";
+const MORE_NODES: &str = "Ask for a shorter range of node ids, or pass a larger `max_bytes`. A \
+structure in the range comes with everything inside it: the outline gives the `all_nodes` of \
+each frame.";
 
 const BUDGET_NOTE: &str = "The result is at most `max_bytes` bytes (65536 by default), counted \
 as its text plus its structuredContent as compact JSON. A larger answer is replaced by a \
@@ -174,9 +178,18 @@ impl State {
         patharg::check(Path::new(raw))?;
         let path = normalize(&self.base.join(raw));
         if let Some(confinement) = &self.confinement {
-            confinement
-                .admit(&path)
-                .map_err(|failure| self.relabel(failure, &[&path]))?;
+            // The failure names the argument as the caller wrote it. The
+            // resolved path would tell where the server runs.
+            confinement.admit(&path).map_err(|failure| {
+                Failure::new(
+                    failure.kind,
+                    format!(
+                        "the path is outside the directories this server may read: {}",
+                        printable::text(raw)
+                    ),
+                )
+                .with_shown_path(raw)
+            })?;
         }
         Ok(path)
     }
@@ -450,19 +463,8 @@ pub(crate) fn call(
     };
     match answer {
         Ok(answer) => Ok(bound::fit(answer, asked, budget::DEFAULT_MAX_BYTES)),
-        Err(mut failure) => {
-            // A message quotes arguments, so it is bounded like an answer.
-            let room = budget / 3;
-            failure.message = bound::fit_message(&failure.message, room);
-            if failure
-                .path
-                .as_ref()
-                .is_some_and(|path| path.len() > room / 2)
-            {
-                failure.path = None;
-            }
-            Err(failure)
-        }
+        // A failure quotes arguments, so it is bounded like an answer.
+        Err(failure) => Err(bound::fit_failure(failure, budget)),
     }
 }
 
@@ -478,17 +480,19 @@ struct CheckTotals<'a> {
 }
 
 impl CheckTotals<'_> {
-    /// The answer with the first `rows` diagnostics.
-    fn output(&self, rows: Vec<(String, Value)>) -> Output {
+    /// The answer with the first `rows` diagnostics. `by_budget` says that
+    /// `max_bytes` left the others out, and not `limit`.
+    fn output(&self, rows: Vec<(String, Value)>, by_budget: bool) -> Output {
         let shown = rows.len();
-        let truncated = shown < self.problems;
+        let not_shown = self.problems.saturating_sub(shown);
+        let truncated = not_shown > 0;
         let (lines, diagnostics): (Vec<String>, Vec<Value>) = rows.into_iter().unzip();
         let mut text = lines.concat();
         if truncated {
             let _ = writeln!(
                 text,
-                "... {} more not shown; raise `limit` or narrow `paths`.",
-                self.problems - shown
+                "... {not_shown} more not shown; raise `{}` or narrow `paths`.",
+                if by_budget { "max_bytes" } else { "limit" }
             );
         }
         if self.problems == 0 {
@@ -512,6 +516,7 @@ impl CheckTotals<'_> {
                     "infos": self.infos,
                     "by_code": self.by_code,
                     "shown": shown,
+                    "not_shown": not_shown,
                     "truncated": truncated,
                 },
             }),
@@ -592,13 +597,13 @@ fn check(
             .saturating_add(budget::json_bytes(value, false))
             .saturating_add(1)
     };
-    let frame_bytes = bound::size(&totals.output(Vec::new())).saturating_add(64);
+    let frame_bytes = bound::size(&totals.output(Vec::new(), true)).saturating_add(64);
     let full_bytes = rows
         .iter()
         .map(row_bytes)
         .fold(frame_bytes, u64::saturating_add);
     if full_bytes <= budget as u64 {
-        return Ok(Answer::whole(totals.output(rows), MORE_CHECK));
+        return Ok(Answer::whole(totals.output(rows, false), MORE_CHECK));
     }
     // Leave room for the notice that says what is missing.
     let room = (budget as u64).saturating_sub((budget as u64 / 2).min(1024));
@@ -612,7 +617,11 @@ fn check(
         fitting += 1;
     }
     rows.truncate(fitting);
-    Ok(Answer::reduced(totals.output(rows), full_bytes, MORE_CHECK))
+    Ok(Answer::reduced(
+        totals.output(rows, true),
+        full_bytes,
+        MORE_CHECK,
+    ))
 }
 
 const MORE_CHECK: &str = "Pass a larger `max_bytes`, narrower `paths`, or codes to `ignore`. \
@@ -698,7 +707,10 @@ fn root_directories(state: &State, args: &Args<'_>) -> Result<Roots, Failure> {
         Some(Value::Array(_)) => args
             .text_list("roots", false)?
             .into_iter()
-            .map(|spec| Roots::split(spec).map_err(|err| bad(format!("argument `roots`: {err}"))))
+            .map(|spec| {
+                Roots::split(spec)
+                    .map_err(|err| bad(format!("argument `roots`: {}", printable::text(&err))))
+            })
             .collect::<Result<_, _>>()?,
         Some(_) => {
             return Err(bad(
@@ -717,7 +729,7 @@ fn root_directories(state: &State, args: &Args<'_>) -> Result<Roots, Failure> {
         }
         roots
             .add(name, &state.resolve(dir)?)
-            .map_err(|err| bad(format!("argument `roots`: {err}")))?;
+            .map_err(|err| bad(format!("argument `roots`: {}", printable::text(&err))))?;
     }
     Ok(roots)
 }
@@ -809,17 +821,24 @@ fn unreadable(state: &State, path: &Path, reason: &dyn std::fmt::Display) -> Fai
     .with_shown_path(state.show(path))
 }
 
+/// A directory where one file is expected. The caller can correct the
+/// argument, so the kind is `bad_argument`, as on the command line
+/// ([`Failure::not_a_file`]).
+fn directory(state: &State, path: &Path) -> Failure {
+    bad(format!(
+        "{} is a directory; this tool takes a single file",
+        state.print(path)
+    ))
+    .with_shown_path(state.show(path))
+}
+
 /// Resolve the `path` argument to an existing regular file, or to the
 /// path of a member of an `.llb` archive that is an existing regular file.
 /// Whether the archive has that member is known only when it is read.
 fn existing_file(state: &State, args: &Args<'_>) -> Result<PathBuf, Failure> {
     let path = state.resolve(args.path("path")?)?;
     if path.is_dir() {
-        return Err(bad(format!(
-            "{} is a directory; this tool takes a single file",
-            state.print(&path)
-        ))
-        .with_shown_path(state.show(&path)));
+        return Err(directory(state, &path));
     }
     if !path.is_file() && archive::split(&path).is_none() {
         return Err(Failure::new(
@@ -947,93 +966,13 @@ fn selection(args: &Args<'_>) -> Result<Option<Selection>, Failure> {
     }
 }
 
-/// The outline of a diagram as text. Names come from the file, so each is
-/// printed on one line.
-fn outline_to_text(outline: &summary::DiagramOutline) -> String {
-    let mut text = String::from("# Outline of the block diagram\n\n");
-    let _ = writeln!(
-        text,
-        "{} node(s), {} terminal(s), and {} wire(s) in {} diagram(s).",
-        outline.nodes, outline.terminals, outline.wires, outline.diagrams
-    );
-    if let Some((first, last)) = outline.node_ids {
-        let _ = writeln!(text, "Node ids: {first} to {last}.");
-    }
-    if outline.complete {
-        text.push_str("The diagram decoded completely.\n");
-    } else {
-        let losses: Vec<String> = outline
-            .losses
-            .iter()
-            .map(|loss| {
-                serde_json::to_value(loss)
-                    .ok()
-                    .and_then(|value| value.as_str().map(str::to_owned))
-                    .unwrap_or_else(|| format!("{loss:?}"))
-            })
-            .collect();
-        let _ = writeln!(
-            text,
-            "The diagram did NOT decode completely (losses: {}), so a node or wire that is \
-             not listed may still exist.",
-            losses.join(", ")
-        );
-    }
-    if !outline.node_classes.is_empty() {
-        text.push_str("\n## Node classes\n\n");
-        for (class, count) in &outline.node_classes {
-            let _ = writeln!(text, "- {}: {count}", printable::text(class));
-        }
-    }
-    if !outline.callees.is_empty() {
-        text.push_str("\n## Callees\n\n");
-        for callee in &outline.callees {
-            let _ = writeln!(
-                text,
-                "- {} ({}): {} call(s)",
-                printable::text(&callee.name),
-                printable::text(&callee.class),
-                callee.calls
-            );
-        }
-    }
-    if !outline.structures.is_empty() {
-        text.push_str("\n## Structures\n\n");
-        for structure in &outline.structures {
-            let _ = writeln!(
-                text,
-                "{}- structure {} ({}, {}), {} frame(s)",
-                "  ".repeat(structure.depth.min(32)),
-                structure.uid,
-                printable::text(&structure.class),
-                printable::text(&structure.description),
-                structure.frames.len()
-            );
-            for frame in &structure.frames {
-                let label = if frame.label.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {}", printable::text(&frame.label))
-                };
-                let _ = writeln!(
-                    text,
-                    "{}  - frame {}{label}: {} node(s), {} wire(s)",
-                    "  ".repeat(structure.depth.min(32)),
-                    frame.index,
-                    frame.nodes,
-                    frame.wires
-                );
-            }
-        }
-    }
-    text
-}
-
 /// One frame or a range of nodes of `diagram`, as JSON. `shown` and
-/// `printed` name the file in the answer and in a message.
+/// `printed` name the file in the answer and in a message. `detail` is
+/// `auto`, or for a frame `summary` or `full`.
 fn selected(
     diagram: &BlockDiagram,
     selection: &Selection,
+    detail: &str,
     shown: &str,
     printed: &str,
 ) -> Result<Answer, Failure> {
@@ -1045,18 +984,39 @@ fn selected(
                      outline (`detail` \"summary\") lists the structures and their frames"
                 )));
             };
-            let value = to_value(found)?;
-            let envelope = json!({
-                "path": shown,
-                "format": "json",
-                "detail": "frame",
-                "structure": structure,
-                "frame_index": frame,
+            let envelope = |detail: &str| {
+                json!({
+                    "path": shown,
+                    "format": "json",
+                    "detail": detail,
+                    "structure": structure,
+                    "frame_index": frame,
+                })
+            };
+            // The outline of a frame is the outline of the diagram that
+            // the frame is. It stands for a frame that is over the budget.
+            let inside = summary::outline(&BlockDiagram {
+                root: found.clone(),
             });
-            let mut structured = envelope.clone();
+            let mut outlined = envelope("summary");
+            outlined["outline"] = to_value(&inside)?;
+            let outline = Output {
+                text: summary::outline_to_markdown(&inside),
+                structured: outlined,
+            };
+            if detail == "summary" {
+                return Ok(Answer::whole(outline, MORE_FRAME));
+            }
+            let value = to_value(found)?;
+            let mut structured = envelope("frame");
             let text = pretty(&value);
             structured["frame"] = value;
-            Ok(Answer::whole(Output { text, structured }, MORE_SELECTION).or_structured(envelope))
+            let answer = Answer::whole(Output { text, structured }, MORE_FRAME).or(outline);
+            Ok(if detail == "full" {
+                answer.unbounded()
+            } else {
+                answer
+            })
         }
         Selection::Nodes { first, last } => {
             let value = to_value(&summary::nodes_in_range(diagram, first, last))?;
@@ -1070,7 +1030,7 @@ fn selected(
             let mut structured = envelope.clone();
             let text = pretty(&value);
             structured["nodes"] = value;
-            Ok(Answer::whole(Output { text, structured }, MORE_SELECTION).or_structured(envelope))
+            Ok(Answer::whole(Output { text, structured }, MORE_NODES).or_structured(envelope))
         }
     }
 }
@@ -1101,10 +1061,10 @@ fn diagram(
                 "a frame or a range of nodes is returned as JSON; leave `format` out",
             ));
         }
-        if detail != "auto" {
+        if detail != "auto" && matches!(selection, Some(Selection::Nodes { .. })) {
             return Err(bad(
-                "`detail` applies to the whole diagram; leave it out with a frame or a range \
-                 of nodes",
+                "`detail` applies to the whole diagram or to one frame; leave it out with a \
+                 range of nodes",
             ));
         }
     }
@@ -1133,7 +1093,7 @@ fn diagram(
         )));
     };
     match &selection {
-        Some(selection) => selected(diagram, selection, &shown, &printed),
+        Some(selection) => selected(diagram, selection, detail, &shown, &printed),
         None => whole_diagram(diagram, &shown, format, detail, asked),
     }
 }
@@ -1149,7 +1109,7 @@ fn whole_diagram(
 ) -> Result<Answer, Failure> {
     let outline = summary::outline(diagram);
     let outline = Output {
-        text: outline_to_text(&outline),
+        text: summary::outline_to_markdown(&outline),
         structured: json!({
             "path": shown,
             "format": format,
@@ -1160,18 +1120,16 @@ fn whole_diagram(
     if detail == "summary" {
         return Ok(Answer::whole(outline, MORE_DIAGRAM));
     }
-    let mut envelope = json!({ "path": shown, "format": format, "detail": "full" });
+    let mut structured = json!({ "path": shown, "format": format, "detail": "full" });
     if format == "json" {
         // The JSON of a diagram is often over a megabyte, in the text and
         // again in `structuredContent`. Its size is known without building
         // it, so an answer that will not be sent is not built.
-        // The text is the indented JSON and a line break. The envelope
-        // gains `,"diagram":` and the compact JSON.
+        // The text is the indented JSON and a line break, and
+        // `structuredContent` is the compact JSON.
         let full_bytes = budget::json_bytes(diagram, true)
             .saturating_add(1)
-            .saturating_add(budget::json_bytes(diagram, false))
-            .saturating_add(budget::json_bytes(&envelope, false))
-            .saturating_add(11);
+            .saturating_add(budget::json_bytes(diagram, false));
         let limit = asked.unwrap_or(budget::DEFAULT_MAX_BYTES) as u64;
         if full_bytes > limit && (detail == "auto" || asked.is_some()) {
             return Ok(Answer::reduced(outline, full_bytes, MORE_DIAGRAM));
@@ -1179,24 +1137,17 @@ fn whole_diagram(
     }
     let text = match format {
         "json" => {
-            let value = to_value(diagram)?;
-            let text = pretty(&value);
-            envelope["diagram"] = value;
-            text
+            // The whole diagram is the `structuredContent` itself, as it
+            // was before a result had a budget: a client reads `root`.
+            structured = to_value(diagram)?;
+            pretty(&structured)
         }
         "mermaid" => render::to_mermaid(diagram),
         "dot" => render::to_dot(diagram),
         "svg" => render::to_svg(diagram),
         _ => summary::diagram_to_markdown(diagram),
     };
-    let answer = Answer::whole(
-        Output {
-            text,
-            structured: envelope,
-        },
-        MORE_DIAGRAM,
-    )
-    .or(outline);
+    let answer = Answer::whole(Output { text, structured }, MORE_DIAGRAM).or(outline);
     Ok(if detail == "full" {
         answer.unbounded()
     } else {
@@ -1258,6 +1209,9 @@ fn tdms_info(state: &mut State, arguments: &Map<String, Value>) -> Result<Answer
     let format = args.choice("format", &["text", "json"])?;
     let path = state.resolve(args.path("path")?)?;
     let shown = state.show(&path);
+    if path.is_dir() {
+        return Err(directory(state, &path));
+    }
     if !path.is_file() {
         return Err(Failure::new(
             ErrorKind::PathNotFound,
@@ -1563,7 +1517,7 @@ pub(crate) fn definitions(state: &State) -> Value {
                     "minimum": 1,
                     "maximum": MAX_DIAGNOSTIC_LIMIT,
                     "default": DEFAULT_DIAGNOSTIC_LIMIT,
-                    "description": "The largest number of diagnostics to return. The summary always counts all of them and says whether the list was truncated.",
+                    "description": "The largest number of diagnostics to return. The summary always counts all of them and says how many were left out (`not_shown`).",
                 },
                 "refresh": refresh,
             }),
@@ -1713,10 +1667,15 @@ pub(crate) fn definitions(state: &State) -> Value {
              their frames, and what the decoder lost. `detail` \"summary\" always returns \
              the outline. From the outline, ask for one frame with `structure` (the id of \
              the structure) and `frame` (the index of the frame), or for the nodes with an \
-             id from `first_node` to `last_node`. Both come as JSON. `detail` \"full\" \
-             returns the whole diagram whatever its size, unless `max_bytes` is given. \
-             structuredContent names the `detail` that was returned and holds the \
-             `outline`, the `diagram` (format `json` only), the `frame`, or the `nodes`. \
+             id from `first_node` to `last_node`. Both come as JSON. The `all_nodes` of a \
+             frame in the outline counts the nodes of everything inside the frame, and the \
+             size of the frame follows it. A frame that is over the budget comes back as \
+             its own outline, which lists the structures inside it. `detail` \"full\" \
+             returns the whole diagram, or the whole frame, whatever its size, unless \
+             `max_bytes` is given. When the whole diagram is returned in format `json`, \
+             structuredContent is the diagram itself, with the one key `root`. Every other \
+             answer names the `detail` that was returned and holds the `outline`, the \
+             `frame`, or the `nodes`. \
              The call fails with a message when the file has no diagram that can be \
              decoded, for example a password-protected VI or a project file. The decoder is \
              reverse-engineered. It gives a node kind that it does not know a generic label \
@@ -1735,7 +1694,7 @@ pub(crate) fn definitions(state: &State) -> Value {
                     "type": "string",
                     "enum": ["auto", "summary", "full"],
                     "default": "auto",
-                    "description": "`auto` returns the diagram when it is inside the budget and its outline otherwise. `summary` returns the outline. `full` returns the diagram whatever its size.",
+                    "description": "`auto` returns the diagram when it is inside the budget and its outline otherwise. `summary` returns the outline. `full` returns the diagram whatever its size. With `structure` and `frame`, the same for that frame.",
                 },
                 "structure": {
                     "type": "integer",
@@ -1748,7 +1707,7 @@ pub(crate) fn definitions(state: &State) -> Value {
                 },
                 "first_node": {
                     "type": "integer",
-                    "description": "The smallest node id of a range. Pass it with `last_node` to get those nodes as JSON. A structure in the range comes with everything inside it.",
+                    "description": "The smallest node id of a range. Pass it with `last_node` to get those nodes as JSON. A structure in the range comes with everything inside it, and a node inside it is not listed a second time.",
                 },
                 "last_node": {
                     "type": "integer",

@@ -11,7 +11,7 @@
 //! of bytes of its `structuredContent` as compact JSON ([`size`]). The
 //! JSON-RPC line is longer by the escaping of the text.
 
-use buzzard_lint::budget;
+use buzzard_lint::{budget, Failure};
 use serde_json::{json, Map, Value};
 
 /// The smallest accepted `max_bytes`. The notice of a reduced answer always
@@ -189,6 +189,38 @@ pub(crate) fn fit_message(message: &str, max: usize) -> String {
     }
 }
 
+/// Keep a failed call inside the budget of `max` bytes: its message, which
+/// is the text of the result, plus its `structuredContent` as compact
+/// JSON. A failure quotes arguments, which can be thousands of bytes long,
+/// and a control character in one is six bytes of JSON. A path that takes
+/// more than a quarter of the budget is left out, and the message, which
+/// quotes it, is cut until the result fits.
+pub(crate) fn fit_failure(mut failure: Failure, max: usize) -> Failure {
+    let size = |failure: &Failure| {
+        (failure.message.len() as u64)
+            .saturating_add(budget::json_bytes(&failure.to_value(), false))
+    };
+    if size(&failure) <= max as u64 {
+        return failure;
+    }
+    if failure
+        .path
+        .as_ref()
+        .is_some_and(|path| budget::json_bytes(path, false) > max as u64 / 4)
+    {
+        failure.path = None;
+    }
+    let whole = std::mem::take(&mut failure.message);
+    let mut room = max / 3;
+    loop {
+        failure.message = fit_message(&whole, room);
+        if size(&failure) <= max as u64 || room <= CUT_NOTICE_BYTES {
+            return failure;
+        }
+        room /= 2;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +319,48 @@ mod tests {
         let cut = fit_message(&long, 1024);
         assert!(cut.len() <= 1024, "{}", cut.len());
         assert!(cut.ends_with("bytes not shown."), "{cut}");
+    }
+
+    /// A failure is inside the budget whatever its arguments hold: a
+    /// control character is one byte of an argument and six of JSON.
+    #[test]
+    fn a_failure_fits_whatever_it_quotes() {
+        use buzzard_lint::ErrorKind;
+
+        let size = |failure: &Failure| {
+            failure.message.len() as u64 + budget::json_bytes(&failure.to_value(), false)
+        };
+        for unit in ["\u{1b}", "\u{1}", "a", "\"", "\u{202e}", "\\u{1b}"] {
+            for max in [MIN_MAX_BYTES, 2048, 8192, 30_000, 65_536] {
+                let path = unit.repeat(4096);
+                let failure = Failure::new(
+                    ErrorKind::BadArgument,
+                    format!(
+                        "the path holds a control character: {}",
+                        path.escape_default()
+                    ),
+                )
+                .with_shown_path(path.clone());
+                let whole = size(&failure);
+                let fitted = fit_failure(failure.clone(), max);
+                assert!(
+                    size(&fitted) <= max as u64,
+                    "{unit:?} {max}: {}",
+                    size(&fitted)
+                );
+                assert_eq!(fitted.kind, ErrorKind::BadArgument);
+                assert!(
+                    fitted.message.starts_with("the path holds"),
+                    "{unit:?} {max}"
+                );
+                // A failure that fits is returned as it is.
+                if whole <= max as u64 {
+                    assert_eq!(fitted, failure);
+                }
+            }
+        }
+        let small = Failure::new(ErrorKind::PathNotFound, "file does not exist: a.vi")
+            .with_shown_path("a.vi");
+        assert_eq!(fit_failure(small.clone(), MIN_MAX_BYTES), small);
     }
 }

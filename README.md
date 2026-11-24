@@ -63,6 +63,8 @@ buzzard inspect crates/buzzard-rsrc/tests/fixtures/pylavi/add.vi --format json
 - To print the settings, links, and block diagram as Markdown, omit `--format`.
 - To print an outline in place of every node and wire, pass `--detail summary`.
   The full JSON of one VI is often over 1 MB.
+- To print one frame or a range of nodes as JSON, pass `--structure <ID>
+  --frame <N>` or `--first-node <ID> --last-node <ID>` with `--format json`.
 - To draw the block diagram, pass `--format svg`, `dot`, or `mermaid`.
 - To list the members of an `.llb` archive, pass the archive.
 
@@ -78,7 +80,7 @@ removed: subVI `Conditional State String.vi` #224
 ```
 
 - To look up an object id such as `#42`, run `inspect --format json`.
-- To leave out nodes that only changed position or size, pass `--ignore-moves`.
+- To leave out nodes that only moved or changed size, pass `--ignore-moves`.
   For Markdown or JSON, pass `--format markdown` or `json`.
 - To compare a file with nothing, pass `/dev/null` as the other file.
 
@@ -122,8 +124,7 @@ crates/buzzard-lint/tests/fixtures/verify/jki-smo/process.vi
 ...
 ```
 
-- To print JSON, pass `--format json`. To print the transition graphs for
-  Graphviz, pass `--format dot`.
+- To print JSON or the graphs for Graphviz, pass `--format json` or `dot`.
 - To fail a CI job on findings, use the exit status. `verify` exits 1 for
   findings of any [label](#labels-of-a-verify-finding).
 
@@ -139,8 +140,8 @@ buzzard tdms export crates/buzzard-tdms/tests/fixtures/zenodo-7758683/waveforms-
 `--format csv`. `buzzard` reads a file with a damaged end as far as the file
 goes. The [buzzard-tdms README](crates/buzzard-tdms/README.md) has the details.
 
-- To replace a file that `--out` names, pass `--force`. Without `--force`,
-  `export` exits 2 and leaves the file as it was.
+- To replace a file that `--out` names, pass `--force`. Without it, `export`
+  exits 2 and leaves the file as it was. `/dev/stdout` needs no `--force`.
 - To see the rows, columns, and target of an export and write nothing, pass
   `--dry-run`. To print the result of either run as JSON, pass `--json`.
 
@@ -149,9 +150,9 @@ goes. The [buzzard-tdms README](crates/buzzard-tdms/README.md) has the details.
 - To start the language server over stdio, run `buzzard lsp`. For VS Code, use
   the extension in [`editors/vscode`](editors/vscode).
 - To start the MCP server over stdio, run `buzzard mcp`. To register the server
-  in Claude Code, run `claude mcp add buzzard -- buzzard mcp`.
-- To let the MCP tools read only inside a directory, pass `--root <DIR>` once
-  per directory.
+  in Claude Code, run `claude mcp add buzzard -- buzzard mcp`. To let its tools
+  read only inside a directory, pass `--root <DIR>` once per directory.
+- To print the guide for AI agents, run `buzzard guide`.
 
 ## Reference
 
@@ -241,22 +242,22 @@ The server's `tools/list` response gives the arguments and the `outputSchema`
 of each tool.
 
 - Every tool is read-only. `buzzard_deps` returns counts per package, or with `detail` `files` what `buzzard deps` prints.
-- A result is at most `max_bytes` bytes, 65536 by default. The size is the text plus the `structuredContent` as compact JSON. A larger answer comes as a smaller one whose `budget` entry gives the size of the whole answer and says how to get the rest. Only `buzzard_diagram` with `detail` `full` returns more without `max_bytes`.
+- A result is at most `max_bytes` bytes, 65536 by default. The size is the text plus the `structuredContent` as compact JSON. A larger answer comes as a smaller one whose `budget` entry gives the size of the whole answer and says how to get the rest. Only `buzzard_diagram` with `detail` `full` returns more without `max_bytes`. A whole diagram in format `json` has the diagram itself (`root`) as `structuredContent`.
 - A failed call is a result with `isError` set and the [error object](#errors) as `structuredContent`. Findings and differences are not failures.
 - The server resolves a relative path against the directory it was started in. With `--root`, the server refuses a path that leads outside every root, once links and `..` are resolved, with the kind `outside_root`.
 - The server caches the most recent parsed workspace. It parses again when a file's size or modification time differs, or when a call sets `refresh: true`.
-- The prompt `buzzard` (`prompts/list`, `prompts/get`) is a guide for agents to the tools and the commands. `.claude/skills/buzzard/SKILL.md` holds the same text as a skill.
+- The prompt `buzzard` (`prompts/list`, `prompts/get`) is a guide for agents to the tools and the commands. `buzzard guide` prints it, and `.claude/skills/buzzard/SKILL.md` holds the same text as a skill.
 
 ### Errors
 
 A command that fails exits with status 2 and prints `error: <message>` on
-stderr. With `--format json`, `--format sarif`, or `--json`, the command also
-prints one JSON object on one line of stdout, of the form
+stderr. With `--error-format json`, and with `--format json`, `--format sarif`,
+or `--json`, the command also prints one JSON object on one line of stdout:
 `{"error":{"kind":"path_not_found","message":"...","path":"lib/a.vi"}}`.
 
 - The object has `path` when the error is about one path. The kinds are `path_not_found`, `unknown_rule`, `unreadable_file`, `bad_argument`, `outside_root`, `unsupported`, `output_exists`, `write_failed`, `usage`, and `internal`. `buzzard --help` gives the meaning of each kind.
-- A path argument that holds an ASCII control character is refused with `bad_argument`. `buzzard` takes `?`, `#`, `%`, and every other character of a file name as it is.
-- Human, text, and Markdown output never print an ASCII control character of a file name. They print an escape such as `\n`, and `deps` prints a space. JSON and SARIF hold the name itself.
+- A path argument that holds an ASCII control character is refused with `bad_argument`, and so is a directory where one file is expected. `buzzard` takes `?`, `#`, `%`, and every other character of a file name as it is.
+- Human, text, and Markdown output never print an ASCII control character, or a character that reorders text such as U+202E, from a file name, a member name, or a name or value of a TDMS file. They print an escape such as `\n`, and `deps` prints a space. JSON and SARIF hold the text itself.
 
 ## Limitations
 
@@ -270,7 +271,7 @@ prints one JSON object on one line of stdout, of the form
 - `buzzard` does not decode the block diagram of a file saved before version 8. It does not open packed libraries (`.lvlibp`) or installer packages.
 - No real archive with zlib members was found. Generated archives test them.
 - `buzzard` counts a file twice when a symbolic link also leads to the file.
-- `tdms info` prints the names and the property values of a TDMS file as they are in its text report, line breaks included.
+- Text output prints the characters U+0080 to U+009F of a name as they are, because they are letters in a member name of a legacy code page. Some terminals act on U+009B.
 
 ## Contributing
 

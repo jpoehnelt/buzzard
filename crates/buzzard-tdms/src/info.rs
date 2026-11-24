@@ -22,9 +22,37 @@ fn scaling_text(channel: &Channel<'_>) -> Option<String> {
     }
 }
 
+/// Text from the file on one line. Each ASCII control character is written
+/// as its Rust escape (`\n`, `\u{1b}`), and so are the separators of lines
+/// and the characters that set the direction of text (U+2028, U+2029,
+/// U+202A to U+202E, U+2066 to U+2069). This is the rule of
+/// `buzzard_lint::printable::text`, which this crate cannot call, because
+/// it depends on no other crate of the workspace.
+fn one_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let reorders = matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+        );
+        if c.is_ascii_control() || reorders {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn property_lines(out: &mut String, indent: &str, properties: &[Property]) {
     for p in properties {
-        let _ = writeln!(out, "{indent}{} ({}) = {}", p.name, p.dtype, p.value);
+        let _ = writeln!(
+            out,
+            "{indent}{} ({}) = {}",
+            one_line(&p.name),
+            p.dtype,
+            one_line(&p.value.to_string())
+        );
     }
 }
 
@@ -33,8 +61,10 @@ fn property_lines(out: &mut String, indent: &str, properties: &[Property]) {
 ///
 /// `shown` is the path as the report names it. A caller that prints the
 /// report for a person passes the path with its control characters
-/// escaped. The names and values from the file are printed as they are,
-/// so a property that holds a line break spans two lines.
+/// escaped. Every name and value from the file is printed on one line: a
+/// line break or another control character in a name, a unit, or a
+/// property is written as its escape, so that the file cannot add a line to
+/// the report or drive a terminal. The JSON report holds the text itself.
 pub fn to_text(shown: &str, file: &TdmsFile) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "file: {shown}");
@@ -61,7 +91,7 @@ pub fn to_text(shown: &str, file: &TdmsFile) -> String {
     } else {
         out.push_str("anomalies:\n");
         for anomaly in file.anomalies() {
-            let _ = writeln!(out, "  {anomaly}");
+            let _ = writeln!(out, "  {}", one_line(&anomaly.to_string()));
         }
     }
     if !file.properties().is_empty() {
@@ -73,7 +103,7 @@ pub fn to_text(shown: &str, file: &TdmsFile) -> String {
         let _ = writeln!(
             out,
             "group '{}' ({count} channel{})",
-            group.name(),
+            one_line(group.name()),
             if count == 1 { "" } else { "s" }
         );
         property_lines(&mut out, "  ", group.properties());
@@ -81,18 +111,18 @@ pub fn to_text(shown: &str, file: &TdmsFile) -> String {
             let _ = write!(
                 out,
                 "  channel '{}': {}, {} values",
-                channel.name(),
+                one_line(channel.name()),
                 channel.dtype(),
                 channel.len()
             );
             if let Some(unit) = channel.unit() {
-                let _ = write!(out, ", unit {unit}");
+                let _ = write!(out, ", unit {}", one_line(unit));
             }
             if let Some(waveform) = channel.waveform() {
                 let _ = write!(out, ", increment {}", waveform.increment);
             }
             if let Some(scaling) = scaling_text(&channel) {
-                let _ = write!(out, ", scaling {scaling}");
+                let _ = write!(out, ", scaling {}", one_line(&scaling));
             }
             out.push('\n');
             for scaler in channel.scalers() {

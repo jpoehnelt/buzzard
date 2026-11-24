@@ -135,6 +135,86 @@ const FAILURES: &[(&[&str], &str, Option<&str>)] = &[
         Some("nope.tdms"),
     ),
     (&["tdms", "export", "--json"], "usage", None),
+    // A directory where one file is expected is the same mistake in every
+    // command, and on the MCP server.
+    (
+        &["inspect", ".", "--format", "json"],
+        "bad_argument",
+        Some("."),
+    ),
+    (
+        &["tdms", "info", ".", "--format", "json"],
+        "bad_argument",
+        Some("."),
+    ),
+    // The format of the error is asked for apart from that of the report.
+    (
+        &[
+            "inspect",
+            "Bad.lvproj",
+            "--format",
+            "svg",
+            "--error-format",
+            "json",
+        ],
+        "unreadable_file",
+        Some("Bad.lvproj"),
+    ),
+    (
+        &["inspect", "a.vi", "--format", "dot", "--error-format=json"],
+        "unsupported",
+        Some("a.vi"),
+    ),
+    (
+        &[
+            "--error-format",
+            "json",
+            "verify",
+            "nope",
+            "--format",
+            "dot",
+        ],
+        "path_not_found",
+        Some("nope"),
+    ),
+    (
+        &["inspect", "nope.vi", "--error-format", "json"],
+        "path_not_found",
+        Some("nope.vi"),
+    ),
+    (
+        &[
+            "tdms",
+            "export",
+            "nope.tdms",
+            "--out",
+            "out.csv",
+            "--error-format",
+            "json",
+        ],
+        "path_not_found",
+        Some("nope.tdms"),
+    ),
+    (
+        &["mcp", "--root", "nope", "--error-format", "json"],
+        "bad_argument",
+        Some("nope"),
+    ),
+    (&["guide", "extra", "--error-format", "json"], "usage", None),
+    (
+        &[
+            "inspect",
+            "a.vi",
+            "--structure",
+            "1",
+            "--frame",
+            "0",
+            "--error-format",
+            "json",
+        ],
+        "bad_argument",
+        None,
+    ),
     (&["rules", "--format", "json", "extra"], "usage", None),
     (&["nothing", "--format", "json"], "usage", None),
 ];
@@ -146,7 +226,10 @@ fn without_machine_format<'a>(args: &[&'a str]) -> Vec<&'a str> {
     let mut words = args.iter();
     while let Some(&word) = words.next() {
         match word {
-            "--json" | "--format=json" => {}
+            "--json" | "--format=json" | "--error-format=json" => {}
+            "--error-format" => {
+                words.next();
+            }
             "--format" => match words.next() {
                 Some(&"json" | &"sarif") | None => {}
                 Some(&other) => kept.extend(["--format", other]),
@@ -180,13 +263,17 @@ fn an_error_is_one_json_object_when_a_machine_format_was_asked() {
             vec!["kind", "message"]
         };
         assert_eq!(error.keys().collect::<Vec<_>>(), expected, "{args:?}");
-        // The prose is still on stderr, and it is the message.
+        // The prose is still on stderr, and it is the message. The message
+        // of a usage error also holds the list that follows the first
+        // line.
         let message = error["message"].as_str().expect("a string");
-        assert_eq!(
-            stderr.lines().next(),
-            Some(format!("error: {message}").as_str()),
-            "{args:?}"
-        );
+        let first = stderr.lines().next().expect("a line on stderr");
+        let prose = first.strip_prefix("error: ").expect("the line of an error");
+        if kind == "usage" {
+            assert!(message.starts_with(prose), "{args:?}: {stderr}");
+        } else {
+            assert_eq!(message, prose, "{args:?}");
+        }
 
         // Without the machine format the same error prints nothing on
         // stdout, as before.
@@ -196,6 +283,67 @@ fn an_error_is_one_json_object_when_a_machine_format_was_asked() {
         assert!(stderr.starts_with("error: "), "{plain:?}: {stderr}");
     }
     assert!(!dir.0.join("out.csv").exists());
+}
+
+/// The object of a usage error names what is missing, which clap prints on
+/// the lines after the first.
+#[test]
+fn a_usage_error_names_the_arguments_that_are_missing() {
+    let dir = workspace("agent-usage");
+    let (code, stdout, _) = run(&["inspect", "--format", "json"], &dir.0);
+    assert_eq!(code, 2);
+    let parsed: Value = serde_json::from_str(&stdout).expect("stdout is JSON");
+    assert_eq!(
+        parsed["error"]["message"],
+        "the following required arguments were not provided: <FILE>"
+    );
+    let (_, stdout, _) = run(&["tdms", "export", "--json"], &dir.0);
+    let parsed: Value = serde_json::from_str(&stdout).expect("stdout is JSON");
+    assert_eq!(
+        parsed["error"]["message"],
+        "the following required arguments were not provided: --out <PATH>, <FILE>"
+    );
+}
+
+/// `--error-format text` is the default and changes nothing, and
+/// `--error-format json` changes nothing of a command that succeeds.
+#[test]
+fn the_error_format_changes_only_how_an_error_is_printed() {
+    let dir = workspace("agent-error-format");
+    let plain = run(&["inspect", "a.vi"], &dir.0);
+    assert_eq!(plain.0, 0);
+    assert_eq!(
+        run(&["inspect", "a.vi", "--error-format", "json"], &dir.0),
+        plain
+    );
+    assert_eq!(
+        run(&["inspect", "a.vi", "--error-format", "text"], &dir.0),
+        plain
+    );
+    let (code, stdout, stderr) = run(&["inspect", "nope.vi", "--error-format", "text"], &dir.0);
+    assert_eq!((code, stdout.as_str()), (2, ""), "{stderr}");
+}
+
+/// `buzzard guide` prints the guide that the MCP server serves as a
+/// prompt: the skill file without its front matter.
+#[test]
+fn guide_prints_the_guide_for_agents() {
+    let dir = workspace("agent-guide");
+    let (code, stdout, stderr) = run(&["guide"], &dir.0);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert_eq!(stdout, buzzard_mcp::guide());
+    assert!(stdout.starts_with("# "), "{stdout}");
+    let skill = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.claude/skills/buzzard/SKILL.md"),
+    )
+    .expect("read the skill file");
+    assert!(skill
+        .replace("\r\n", "\n")
+        .ends_with(&stdout.replace("\r\n", "\n")));
+    assert!(
+        stdout.contains("buzzard guide"),
+        "the guide names the command"
+    );
 }
 
 #[test]
@@ -573,4 +721,169 @@ fn the_summary_of_a_large_diagram_is_small() {
             whole
         );
     }
+}
+
+/// The step between the outline and the megabyte: one frame, the outline
+/// of one frame, or a range of node ids.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk from the outline to a frame, its outline, and a range"
+)]
+#[test]
+fn inspect_prints_one_frame_or_a_range_of_nodes() {
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../buzzard-lint/tests/fixtures/verify/jki-smo");
+    let json = |more: &[&str]| -> Value {
+        let mut args = vec!["inspect", "process.vi", "--format", "json"];
+        args.extend(more);
+        let (code, stdout, stderr) = run(&args, &dir);
+        assert_eq!(code, 0, "{args:?}: {stderr}");
+        serde_json::from_str(&stdout).expect("stdout is JSON")
+    };
+    let full = json(&[]);
+    let summary = json(&["--detail", "summary"]);
+    let structures = summary["diagram"]["structures"].as_array().unwrap();
+    // A frame whose own nodes are few and whose JSON is large says so.
+    let (structure, frame) = structures
+        .iter()
+        .flat_map(|structure| {
+            structure["frames"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(move |frame| (structure, frame))
+        })
+        .max_by_key(|(_, frame)| frame["all_nodes"].as_u64().unwrap())
+        .unwrap();
+    assert!(frame["all_nodes"].as_u64() > frame["nodes"].as_u64());
+    let uid = structure["uid"].to_string();
+    let index = frame["index"].to_string();
+    let one = json(&["--structure", &uid, "--frame", &index]);
+    assert_eq!(
+        one["nodes"].as_array().unwrap().len() as u64,
+        frame["nodes"]
+    );
+    assert_eq!(
+        one["wires"].as_array().unwrap().len() as u64,
+        frame["wires"]
+    );
+    // The outline of the frame lists the structures inside it, and its
+    // count of nodes is the one the outline of the diagram promised.
+    let inside = json(&[
+        "--structure",
+        &uid,
+        "--frame",
+        &index,
+        "--detail",
+        "summary",
+    ]);
+    assert_eq!(inside["nodes"], frame["all_nodes"]);
+    assert_ne!(inside["structures"], serde_json::json!([]));
+    assert!(inside.get("root").is_none());
+
+    // A range holds each node once, so no range is larger than the
+    // diagram.
+    let ids = &summary["diagram"]["node_ids"];
+    let (first, last) = (ids[0].to_string(), ids[1].to_string());
+    let args = [
+        "inspect",
+        "process.vi",
+        "--format",
+        "json",
+        "--first-node",
+        &first,
+        "--last-node",
+        &last,
+    ];
+    let (code, all, _) = run(&args, &dir);
+    assert_eq!(code, 0);
+    assert!(
+        all.len()
+            < serde_json::to_string_pretty(&full["diagram"])
+                .unwrap()
+                .len()
+                + 4096
+    );
+    let all: Value = serde_json::from_str(&all).unwrap();
+    assert_eq!(
+        all.as_array().unwrap(),
+        full["diagram"]["root"]["nodes"].as_array().unwrap()
+    );
+    let none = json(&["--first-node", "-5", "--last-node", "-1"]);
+    assert_eq!(none, serde_json::json!([]));
+
+    // What cannot be asked for.
+    for (more, kind, words) in [
+        (
+            &["--structure", "-7", "--frame", "0"][..],
+            "bad_argument",
+            "no structure with the id -7",
+        ),
+        (
+            &["--structure", &uid, "--frame", "99999"],
+            "bad_argument",
+            "has a frame 99999",
+        ),
+        (
+            &[
+                "--first-node",
+                "1",
+                "--last-node",
+                "2",
+                "--detail",
+                "summary",
+            ],
+            "bad_argument",
+            "not to a range",
+        ),
+        (&["--structure", "1"], "usage", "--frame"),
+        (&["--first-node", "1"], "usage", "--last-node"),
+        (
+            &[
+                "--structure",
+                "1",
+                "--frame",
+                "0",
+                "--first-node",
+                "1",
+                "--last-node",
+                "2",
+            ],
+            "usage",
+            "cannot be used with",
+        ),
+    ] {
+        let mut args = vec!["inspect", "process.vi", "--format", "json"];
+        args.extend(more);
+        let (code, stdout, stderr) = run(&args, &dir);
+        assert_eq!(code, 2, "{args:?}");
+        let error: Value = serde_json::from_str(&stdout).expect("stdout is JSON");
+        assert_eq!(error["error"]["kind"], kind, "{args:?}: {stdout}");
+        assert!(stderr.contains(words), "{args:?}: {stderr}");
+    }
+    let (code, stdout, stderr) = run(
+        &["inspect", "process.vi", "--structure", &uid, "--frame", "0"],
+        &dir,
+    );
+    assert_eq!((code, stdout.as_str()), (2, ""));
+    assert!(stderr.contains("pass --format json"), "{stderr}");
+    // A project file has no frames.
+    let dir = workspace("agent-frame");
+    fs::write(dir.0.join("Kit.lvlib"), "<Library LVVersion=\"23008000\"/>").unwrap();
+    let (code, stdout, _) = run(
+        &[
+            "inspect",
+            "Kit.lvlib",
+            "--format",
+            "json",
+            "--structure",
+            "1",
+            "--frame",
+            "0",
+        ],
+        &dir.0,
+    );
+    assert_eq!(code, 2);
+    let error: Value = serde_json::from_str(&stdout).expect("stdout is JSON");
+    assert_eq!(error["error"]["kind"], "unsupported");
 }

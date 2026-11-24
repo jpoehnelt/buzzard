@@ -156,20 +156,60 @@ fn a_frame_and_a_range_of_nodes_are_parts_of_the_diagram() {
     let one = summary::frame(diagram, 3023, 0).unwrap();
     assert!(budget::json_bytes(one, true) < budget::json_bytes(diagram, true) / 2);
 
+    // The count of a frame with everything inside it is the count of the
+    // nodes that its JSON holds.
+    for structure in &outline.structures {
+        for frame in &structure.frames {
+            let part = summary::frame(diagram, structure.uid, frame.index).unwrap();
+            let whole = buzzard_rsrc::BlockDiagram { root: part.clone() };
+            assert_eq!(frame.all_nodes, whole.nodes().count(), "{}", structure.uid);
+            assert!(frame.all_nodes >= frame.nodes);
+        }
+    }
+    assert!(outline
+        .structures
+        .iter()
+        .flat_map(|structure| &structure.frames)
+        .any(|frame| frame.all_nodes > frame.nodes));
+
+    // A range holds each node once: a structure comes with what is inside
+    // it, and what is inside is not listed again.
+    let held = |nodes: &[&buzzard_rsrc::Node]| -> usize {
+        nodes
+            .iter()
+            .map(|node| {
+                1 + node
+                    .diagrams
+                    .iter()
+                    .map(|frame| {
+                        buzzard_rsrc::BlockDiagram {
+                            root: frame.clone(),
+                        }
+                        .nodes()
+                        .count()
+                    })
+                    .sum::<usize>()
+            })
+            .sum()
+    };
     let (low, high) = outline.node_ids.unwrap();
-    assert_eq!(
-        summary::nodes_in_range(diagram, low, high).len(),
-        outline.nodes
-    );
+    let all = summary::nodes_in_range(diagram, low, high);
+    assert_eq!(all.len(), diagram.root.nodes.len());
+    assert_eq!(held(&all), outline.nodes);
+    assert!(budget::json_bytes(&all, false) <= budget::json_bytes(diagram, false));
     let cases = summary::nodes_in_range(diagram, 3023, 3023);
     assert_eq!(cases.len(), 1);
     assert_eq!(cases[0].class, "select");
     assert!(summary::nodes_in_range(diagram, high, low).is_empty() || low == high);
     assert_eq!(summary::nodes_in_range(diagram, i32::MIN, low - 1).len(), 0);
     assert_eq!(
-        summary::nodes_in_range(diagram, i32::MIN, i32::MAX).len(),
+        held(&summary::nodes_in_range(diagram, i32::MIN, i32::MAX)),
         outline.nodes
     );
+    // A node inside a structure that is outside the range is found.
+    let inner = summary::frame(diagram, 3023, 0).unwrap().nodes[0].uid;
+    let found = summary::nodes_in_range(diagram, inner, inner);
+    assert!(found.iter().any(|node| node.uid == inner));
 }
 
 #[test]

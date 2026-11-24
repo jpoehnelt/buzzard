@@ -2,8 +2,9 @@
 //!
 //! Every such error exits with status 2 and prints `error: <message>` on
 //! stderr. When the caller asked for a format that a program reads
-//! (`--format json`, `--format sarif`, or `--json`), the error is also one
-//! JSON object on one line of stdout, as [`Failure::to_json`] writes it.
+//! (`--format json`, `--format sarif`, or `--json`), or for
+//! `--error-format json` with any format, the error is also one JSON
+//! object on one line of stdout, as [`Failure::to_json`] writes it.
 //! The kinds are those of [`ErrorKind`], and no other code in this crate
 //! names a kind as text.
 
@@ -53,35 +54,67 @@ pub(crate) fn usage(err: &clap::Error) -> ExitCode {
 }
 
 /// The first line of what clap prints, without the `error: ` in front.
+/// When that line ends in a colon, it introduces a list on the lines that
+/// follow, such as the required arguments that are missing. The entries
+/// are then part of the message, on the same line.
 fn usage_message(rendered: &str) -> String {
-    rendered
-        .lines()
-        .next()
-        .and_then(|line| line.strip_prefix("error: "))
-        .unwrap_or("the command line is incomplete; see --help")
-        .to_owned()
+    let mut lines = rendered.lines();
+    let Some(first) = lines.next().and_then(|line| line.strip_prefix("error: ")) else {
+        return "the command line is incomplete; see --help".to_owned();
+    };
+    if !first.ends_with(':') {
+        return first.to_owned();
+    }
+    let listed: Vec<&str> = lines
+        .take_while(|line| line.starts_with(' '))
+        .map(str::trim)
+        .collect();
+    if listed.is_empty() {
+        first.to_owned()
+    } else {
+        format!("{first} {}", listed.join(", "))
+    }
 }
 
 /// Whether the words of a command line ask for a format that a program
-/// reads: `--json`, or `--format` with `json` or `sarif`. Words after `--`
-/// are values, never options.
+/// reads: `--json`, `--format` with `json` or `sarif`, or `--error-format`
+/// with `json`. Words after `--` are values, never options.
 pub(crate) fn machine_asked(args: impl IntoIterator<Item = OsString>) -> bool {
-    let is_machine = |value: &str| matches!(value, "json" | "sarif");
-    let mut after_format = false;
+    /// The option whose value the next word is.
+    #[derive(Clone, Copy, PartialEq)]
+    enum After {
+        Nothing,
+        Format,
+        ErrorFormat,
+    }
+    let is_machine = |after: After, value: &str| match after {
+        After::Nothing => false,
+        After::Format => matches!(value, "json" | "sarif"),
+        After::ErrorFormat => value == "json",
+    };
+    let mut after = After::Nothing;
     for arg in args {
         let Some(arg) = arg.to_str() else {
-            after_format = false;
+            after = After::Nothing;
             continue;
         };
-        if std::mem::take(&mut after_format) && is_machine(arg) {
+        if is_machine(std::mem::replace(&mut after, After::Nothing), arg) {
             return true;
         }
         match arg {
             "--" => return false,
             "--json" => return true,
-            "--format" => after_format = true,
+            "--format" => after = After::Format,
+            "--error-format" => after = After::ErrorFormat,
             _ => {
-                if arg.strip_prefix("--format=").is_some_and(is_machine) {
+                let joined = arg
+                    .strip_prefix("--format=")
+                    .map(|value| (After::Format, value))
+                    .or_else(|| {
+                        arg.strip_prefix("--error-format=")
+                            .map(|value| (After::ErrorFormat, value))
+                    });
+                if joined.is_some_and(|(after, value)| is_machine(after, value)) {
                     return true;
                 }
             }
@@ -95,7 +128,8 @@ pub(crate) fn help() -> String {
     let mut text = String::from(
         "Errors: a command that cannot do what was asked exits with status 2 and prints\n\
          `error: <message>` on stderr. With --format json, --format sarif, or --json it\n\
-         also prints one JSON object on one line of stdout:\n\
+         also prints one JSON object on one line of stdout, and with --error-format json\n\
+         it does so whatever format the report has:\n\
          \x20 {\"error\":{\"kind\":\"...\",\"message\":\"...\",\"path\":\"...\"}}\n\
          `path` is present when the error is about one path. The kinds:\n",
     );
@@ -131,6 +165,19 @@ mod tests {
         assert!(!asked(&["check", "--", "--json"]));
         assert!(!asked(&["check", "--format", "--", "json"]));
         assert!(asked(&["check", "--format", "--format", "json"]));
+        // The format of an error is asked for apart from the report's.
+        assert!(asked(&[
+            "inspect",
+            "--format",
+            "svg",
+            "--error-format",
+            "json"
+        ]));
+        assert!(asked(&["--error-format=json", "verify", "--format=dot"]));
+        assert!(!asked(&["check", "--error-format", "text"]));
+        assert!(!asked(&["check", "--error-format", "sarif"]));
+        assert!(!asked(&["check", "--error-format=text", "json"]));
+        assert!(!asked(&["check", "--", "--error-format", "json"]));
     }
 
     #[test]
@@ -142,6 +189,17 @@ mod tests {
         assert_eq!(
             usage_message("Static analyzer\n\nUsage: buzzard <COMMAND>\n"),
             "the command line is incomplete; see --help"
+        );
+        // A list that the first line introduces is part of the message.
+        assert_eq!(
+            usage_message(
+                "error: the following required arguments were not provided:\n  --out <PATH>\n  <FILE>\n\nUsage: buzzard tdms export --out <PATH> <FILE>\n"
+            ),
+            "the following required arguments were not provided: --out <PATH>, <FILE>"
+        );
+        assert_eq!(
+            usage_message("error: a list of nothing:\n\nUsage: x\n"),
+            "a list of nothing:"
         );
         assert_eq!(
             usage_message(""),

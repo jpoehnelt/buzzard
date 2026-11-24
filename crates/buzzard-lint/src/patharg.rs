@@ -316,7 +316,7 @@ mod tests {
         let deep = root.join("x").join("y.vi");
         assert_eq!(confined.admit(&deep), Ok(deep));
 
-        for outside in [
+        let mut outsides = vec![
             dir.join("secret.vi"),
             root.join("..").join("secret.vi"),
             root.join("sub").join("..").join("..").join("secret.vi"),
@@ -326,9 +326,18 @@ mod tests {
             dir.clone(),
             // `..` after a name that does not exist.
             root.join("missing").join("..").join("..").join("secret.vi"),
-            root.join("missing").join("..").join("sub").join("a.vi"),
             dir.join("missing.vi"),
-        ] {
+        ];
+        // Where this path leads is inside the root once `missing` exists
+        // as a directory, and nothing says that it will. On Windows the
+        // system removes `missing\..` from a path before it looks at the
+        // disk, and `Path::join` removes it from the resolved root that
+        // this test builds on, so the path names `sub\a.vi` there, which
+        // is inside.
+        if cfg!(unix) {
+            outsides.push(root.join("missing").join("..").join("sub").join("a.vi"));
+        }
+        for outside in outsides {
             let failure = confined.admit(&outside).unwrap_err();
             assert_eq!(
                 failure.kind,

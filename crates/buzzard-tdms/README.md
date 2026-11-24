@@ -160,7 +160,9 @@ write the chosen channels as one table. Each channel is one column named
 The `parquet` feature is off by default. Without it the crate depends on
 `bytemuck`, `rayon`, and `thiserror` only. Compression is Snappy or none.
 
-`info::to_text` is the report of `buzzard tdms info`. The `json` feature,
+`info::to_text` is the report of `buzzard tdms info`. It prints every name
+and value from the file on one line, with a control character as its escape.
+The `json` feature,
 also off by default, adds `info::report` and `info::to_json` for the same
 report as JSON, and depends on `serde` and `serde_json`.
 

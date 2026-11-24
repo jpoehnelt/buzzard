@@ -58,9 +58,12 @@
           },
           "warnings": {
             "type": "integer"
+          },
+          "not_shown": {
+            "type": "integer"
           }
         },
-        "description": "Counts over every problem, shown or not. `shown` is the length of `diagnostics`, and `truncated` says whether problems were left out."
+        "description": "Counts over every problem, shown or not. `shown` is the length of `diagnostics`, `not_shown` is the number of problems left out, as in `buzzard check --limit`, and `truncated` says whether any were."
       }
     }
   },
@@ -1343,7 +1346,28 @@
                   "type": "string"
                 },
                 "frames": {
-                  "type": "array"
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "index": {
+                        "type": "integer"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "nodes": {
+                        "type": "integer"
+                      },
+                      "wires": {
+                        "type": "integer"
+                      },
+                      "all_nodes": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "description": "`nodes` and `wires` count what is directly in the frame. `all_nodes` counts the nodes of the frame and of every structure inside it, and the size of the frame as JSON follows it."
                 },
                 "parent": {
                   "type": [
@@ -1364,16 +1388,7 @@
             "type": "integer"
           }
         },
-        "description": "With `detail` \"summary\": counts, the range of node ids, node classes with counts, callees, the structures with their frames, and the kinds of loss the decoder recorded. `complete` is false when anything was lost."
-      },
-      "diagram": {
-        "type": "object",
-        "properties": {
-          "root": {
-            "$ref": "#/$defs/diagram"
-          }
-        },
-        "description": "With `detail` \"full\" and format `json`: the whole decoded graph."
+        "description": "With `detail` \"summary\": counts, the range of node ids, node classes with counts, callees, the structures with their frames, and the kinds of loss the decoder recorded. `complete` is false when anything was lost. With `structure` and `frame`, the outline of that frame."
       },
       "structure": {
         "type": "integer",
@@ -1401,6 +1416,10 @@
           "$ref": "#/$defs/node"
         },
         "description": "With `detail` \"nodes\": the nodes of the range, each with everything inside it."
+      },
+      "root": {
+        "$ref": "#/$defs/diagram",
+        "description": "When the whole diagram is returned in format `json`: the decoded graph, as `buzzard inspect --format json` holds it under `diagram`. It then stands alone, without `path`, `format`, and `detail`."
       }
     },
     "$defs": {
