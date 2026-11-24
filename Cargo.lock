@@ -306,6 +306,7 @@ dependencies = [
  "buzzard-lint",
  "buzzard-ls",
  "buzzard-rsrc",
+ "buzzard-tdms",
  "serde",
  "serde_json",
 ]
@@ -331,6 +332,7 @@ dependencies = [
  "parquet",
  "proptest",
  "rayon",
+ "serde",
  "serde_json",
  "thiserror",
 ]

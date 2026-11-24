@@ -66,6 +66,10 @@ use crate::dataflow::{describe, function_name};
 use crate::render::label;
 use crate::Inspection;
 
+mod files;
+
+pub use files::{compare, is_null_device};
+
 /// What [`diff`] leaves out of the report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DiffOptions {
@@ -437,7 +441,13 @@ fn dependencies(old: &[LinkRef], new: &[LinkRef]) -> DependencyChanges {
 /// Remove characters that would break the one-line-per-change format.
 fn clean(text: &str) -> String {
     text.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
+        .map(|c| {
+            if c.is_control() || crate::printable::reorders(c) {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect()
 }
 

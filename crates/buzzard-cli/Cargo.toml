@@ -29,7 +29,7 @@ buzzard-lint.workspace = true
 buzzard-ls.workspace = true
 buzzard-mcp.workspace = true
 buzzard-rsrc.workspace = true
-buzzard-tdms.workspace = true
+buzzard-tdms = { workspace = true, features = ["json"] }
 clap.workspace = true
 rayon.workspace = true
 serde_json.workspace = true

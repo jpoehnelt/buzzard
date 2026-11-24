@@ -267,7 +267,12 @@ impl Snapshot {
             }
             FileState::Archive(archive) => Some(summary::archive_to_markdown(&title, archive)),
             FileState::Failed(reason) => {
-                Some(format!("### {title}\n\nCannot analyze file: {reason}\n"))
+                // A file name is data and is printed on one line, as the
+                // other summaries print it.
+                Some(format!(
+                    "### {}\n\nCannot analyze file: {reason}\n",
+                    buzzard_lint::printable::text(&title)
+                ))
             }
         }
     }

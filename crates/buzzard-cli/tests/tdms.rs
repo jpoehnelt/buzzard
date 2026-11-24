@@ -288,3 +288,500 @@ fn export_writes_parquet_by_default_and_is_deterministic() {
         format!("exported 20000 rows of 20 columns to {out}\n")
     );
 }
+
+/// `buzzard_tdms::info` is the report that `tdms info` has always printed.
+/// The command and the MCP server both print it, so the two cannot
+/// differ, and this test keeps the library at the bytes of the command.
+#[test]
+fn the_library_report_is_the_report_the_command_prints() {
+    let dir = TempDir::new("tdms-info-library");
+    let real = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("buzzard-tdms")
+        .join("tests")
+        .join("fixtures")
+        .join("zenodo-7758683")
+        .join("waveforms-point21.tdms");
+    let real = real.to_string_lossy().into_owned();
+    for path in [write_sample(&dir), real] {
+        let file = buzzard_tdms::TdmsFile::open(&path).expect("open the file");
+        let (status, text, stderr) = run(&["tdms", "info", &path]);
+        assert_eq!((status, stderr.as_str()), (0, ""), "{path}");
+        assert_eq!(text, buzzard_tdms::info::to_text(&path, &file), "{path}");
+        let (status, json, stderr) = run(&["tdms", "info", &path, "--format", "json"]);
+        assert_eq!((status, stderr.as_str()), (0, ""), "{path}");
+        assert_eq!(
+            json,
+            buzzard_tdms::info::to_json(&path, &file).expect("the report serializes"),
+            "{path}"
+        );
+        assert!(json.len() > 400, "{path}");
+    }
+}
+
+fn export_args<'a>(path: &'a str, out: &'a str, more: &[&'a str]) -> Vec<&'a str> {
+    let mut args = vec!["tdms", "export", path, "--out", out, "--format", "csv"];
+    args.extend(more);
+    args
+}
+
+/// An export never replaces a file unless `--force` says so.
+#[test]
+fn export_refuses_to_replace_a_file_without_force() {
+    let dir = TempDir::new("tdms-export-force");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.csv");
+    let out_text = out.to_string_lossy().into_owned();
+    fs::write(&out, "keep me").expect("write the file");
+
+    let (status, stdout, stderr) = run(&export_args(&path, &out_text, &[]));
+    assert_eq!((status, stdout.as_str()), (2, ""));
+    assert_eq!(
+        stderr,
+        format!("error: {out_text} exists; pass --force to replace it\n")
+    );
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep me");
+
+    let (status, stdout, _) = run(&export_args(&path, &out_text, &["--json"]));
+    assert_eq!(status, 2);
+    let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(error["error"]["kind"], "output_exists");
+    assert_eq!(error["error"]["path"], out_text.as_str());
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep me");
+
+    // A directory is not replaced either, and `--force` cannot replace it.
+    let taken = dir.0.join("taken");
+    fs::create_dir(&taken).expect("create the directory");
+    let taken_text = taken.to_string_lossy().into_owned();
+    // The message does not promise a `--force` that cannot work, and a dry
+    // run fails as the export would.
+    for more in [
+        &["--json"][..],
+        &["--force", "--json"],
+        &["--dry-run", "--json"],
+        &["--force", "--dry-run", "--json"],
+    ] {
+        let (status, stdout, stderr) = run(&export_args(&path, &taken_text, more));
+        assert_eq!(status, 2, "{more:?}");
+        assert!(stderr.starts_with("error: cannot create "), "{stderr}");
+        assert!(!stderr.contains("--force"), "{stderr}");
+        let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+        assert_eq!(error["error"]["kind"], "write_failed", "{more:?}");
+        assert_eq!(error["error"]["path"], taken_text.as_str());
+    }
+    assert!(taken.is_dir());
+    // The failed replacement left nothing beside the three entries.
+    assert_eq!(fs::read_dir(&dir.0).expect("list the directory").count(), 3);
+    assert_eq!(fs::read_to_string(&out).unwrap(), "keep me");
+
+    let (status, stdout, stderr) = run(&export_args(&path, &out_text, &["--force"]));
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "exported 6 rows of 2 columns to {out_text}\n\
+             skipped /'aux'/'unused': it never held a value\n"
+        )
+    );
+    let text = fs::read_to_string(&out).expect("read the export");
+    assert!(text.starts_with("run/pressure,run/note\n"), "{text}");
+
+    // The input is never the output, with or without `--force`.
+    let before = fs::read(&path).expect("read the sample");
+    for more in [&[][..], &["--force"], &["--force", "--dry-run"]] {
+        let (status, _, stderr) = run(&export_args(&path, &path, more));
+        assert_eq!(status, 2, "{more:?}");
+        assert!(
+            stderr.contains("exists; pass --force") || stderr.contains("names the input file"),
+            "{stderr}"
+        );
+        assert_eq!(
+            fs::read(&path).expect("read the sample"),
+            before,
+            "{more:?}"
+        );
+    }
+}
+
+#[test]
+fn export_dry_run_reports_and_writes_nothing() {
+    let dir = TempDir::new("tdms-export-dry");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.csv");
+    let out_text = out.to_string_lossy().into_owned();
+
+    let (status, stdout, stderr) = run(&export_args(&path, &out_text, &["--dry-run"]));
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "would export 6 rows of 2 columns to {out_text}\n\
+             column run/pressure\n\
+             column run/note\n\
+             skipped /'aux'/'unused': it never held a value\n\
+             {out_text} does not exist; nothing was written\n"
+        )
+    );
+    assert!(!out.exists());
+
+    let (status, stdout, _) = run(&export_args(&path, &out_text, &["--dry-run", "--json"]));
+    assert_eq!(status, 0);
+    let dry: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(
+        dry,
+        serde_json::json!({
+            "input": path,
+            "out": out_text,
+            "format": "csv",
+            "dry_run": true,
+            "written": false,
+            "out_existed": false,
+            "rows": 6,
+            "columns": ["run/pressure", "run/note"],
+            "skipped": ["/'aux'/'unused'"],
+        })
+    );
+    assert!(!out.exists());
+
+    // The real run reports the same table, and the file holds it.
+    let (status, stdout, _) = run(&export_args(&path, &out_text, &["--json"]));
+    assert_eq!(status, 0);
+    let real: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(real["dry_run"], false);
+    assert_eq!(real["written"], true);
+    assert_eq!(real["out_existed"], false);
+    for key in ["input", "out", "format", "rows", "columns", "skipped"] {
+        assert_eq!(real[key], dry[key], "{key}");
+    }
+    let table = fs::read_to_string(&out).expect("read the export");
+    assert_eq!(table.lines().next(), Some("run/pressure,run/note"));
+    assert_eq!(table.lines().count(), 7);
+
+    // A dry run says that the target exists, and leaves it alone.
+    for (more, words) in [
+        (&["--dry-run"][..], "exists; an export needs --force"),
+        (&["--dry-run", "--force"], "exists and --force replaces it"),
+    ] {
+        let (status, stdout, _) = run(&export_args(&path, &out_text, more));
+        assert_eq!(status, 0, "{more:?}");
+        assert!(
+            stdout.ends_with(&format!("{out_text} {words}; nothing was written\n")),
+            "{stdout}"
+        );
+        assert_eq!(fs::read_to_string(&out).expect("read the export"), table);
+    }
+    let (_, stdout, _) = run(&export_args(&path, &out_text, &["--dry-run", "--json"]));
+    let dry: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(dry["out_existed"], true);
+    assert_eq!(dry["written"], false);
+
+    // A dry run fails where the export would.
+    let other = dir.0.join("other.csv").to_string_lossy().into_owned();
+    let (status, stdout, _) = run(&export_args(
+        &path,
+        &other,
+        &["--dry-run", "--json", "--channels", "run/nope"],
+    ));
+    assert_eq!(status, 2);
+    let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(error["error"]["kind"], "bad_argument");
+    assert!(!dir.0.join("other.csv").exists());
+}
+
+/// The dry run of the default format does the work of the Parquet export.
+#[cfg(feature = "parquet")]
+#[test]
+fn export_dry_run_and_json_cover_parquet() {
+    let dir = TempDir::new("tdms-export-dry-parquet");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.parquet");
+    let out_text = out.to_string_lossy().into_owned();
+    let args = ["tdms", "export", &path, "--out", &out_text, "--json"];
+    let (status, stdout, _) = run(&[&args[..], &["--dry-run"]].concat());
+    assert_eq!(status, 0);
+    let dry: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(dry["format"], "parquet");
+    assert_eq!(dry["rows"], 6);
+    assert!(!out.exists());
+    let (status, stdout, _) = run(&args);
+    assert_eq!(status, 0);
+    let real: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert_eq!(real["columns"], dry["columns"]);
+    assert!(out.is_file());
+    // The second run is refused, and the table is still the first one.
+    let first = fs::read(&out).expect("read the export");
+    let (status, _, _) = run(&args);
+    assert_eq!(status, 2);
+    assert_eq!(fs::read(&out).expect("read the export"), first);
+}
+
+/// A dry run fails where it can see that the export would: a new file
+/// needs a directory to be created in.
+#[test]
+fn export_dry_run_fails_for_a_target_that_cannot_be_created() {
+    let dir = TempDir::new("tdms-export-dry-target");
+    let path = write_sample(&dir);
+    let out = dir.0.join("no-such-directory").join("table.csv");
+    let out_text = out.to_string_lossy().into_owned();
+    for more in [&["--dry-run", "--json"][..], &["--json"]] {
+        let (status, stdout, stderr) = run(&export_args(&path, &out_text, more));
+        assert_eq!(status, 2, "{more:?}: {stderr}");
+        let error: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+        assert_eq!(error["error"]["kind"], "write_failed", "{more:?}");
+        assert_eq!(error["error"]["path"], out_text.as_str());
+        assert!(stderr.starts_with("error: cannot create "), "{stderr}");
+    }
+    assert!(!out.exists());
+    // A relative name in the current directory has a directory.
+    let (status, _, stderr) = run(&export_args(
+        &path,
+        "buzzard-test-never-written.csv",
+        &["--dry-run"],
+    ));
+    assert_eq!(status, 0, "{stderr}");
+    assert!(!std::path::Path::new("buzzard-test-never-written.csv").exists());
+}
+
+/// `--force` replaces a regular file and nothing else. A link stays a
+/// link, the file behind it gets the table, and the file keeps its mode.
+/// Something that is not a regular file is written into, without
+/// `--force`, and is still there afterwards.
+#[cfg(unix)]
+#[test]
+fn export_replaces_a_file_and_never_a_link_or_a_device() {
+    use std::os::unix::fs::{symlink, FileTypeExt, PermissionsExt};
+
+    let dir = TempDir::new("tdms-export-special");
+    let path = write_sample(&dir);
+    let text = |name: &str| dir.0.join(name).to_string_lossy().into_owned();
+
+    // A link to a regular file.
+    let real = dir.0.join("real.csv");
+    fs::write(&real, "keep me").unwrap();
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
+    symlink("real.csv", dir.0.join("link.csv")).unwrap();
+    let (status, _, stderr) = run(&export_args(&path, &text("link.csv"), &[]));
+    assert_eq!(status, 2);
+    assert!(stderr.contains("exists; pass --force"), "{stderr}");
+    assert_eq!(fs::read_to_string(&real).unwrap(), "keep me");
+    let (status, _, stderr) = run(&export_args(&path, &text("link.csv"), &["--force"]));
+    assert_eq!(status, 0, "{stderr}");
+    assert!(fs::symlink_metadata(dir.0.join("link.csv"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    let table = fs::read_to_string(&real).unwrap();
+    assert!(table.starts_with("run/pressure,run/note\n"), "{table}");
+    // The mode of the file that was replaced.
+    assert_eq!(
+        fs::metadata(&real).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    // A device is written into and stays a device. No `--force` is asked
+    // for, with or without `--dry-run`.
+    symlink("/dev/null", dir.0.join("null")).unwrap();
+    for out in ["/dev/null".to_owned(), text("null")] {
+        let (status, stdout, stderr) = run(&export_args(&path, &out, &["--dry-run"]));
+        assert_eq!(status, 0, "{stderr}");
+        assert!(
+            stdout.contains("is not a regular file; an export writes into it"),
+            "{stdout}"
+        );
+        for more in [&[][..], &["--force"]] {
+            let (status, stdout, stderr) = run(&export_args(&path, &out, more));
+            assert_eq!(status, 0, "{out} {more:?}: {stderr}");
+            assert!(stdout.starts_with("exported 6 rows"), "{stdout}");
+            assert!(
+                fs::metadata(&out).unwrap().file_type().is_char_device(),
+                "{out}"
+            );
+        }
+    }
+    assert!(fs::symlink_metadata(dir.0.join("null"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    // Standard output by its name is a pipe here.
+    let output = Command::new(BIN)
+        .args(export_args(&path, "/dev/stdout", &[]))
+        .output()
+        .expect("run the buzzard binary");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("run/pressure,run/note\n"), "{stdout}");
+
+    // A link that leads nowhere would create a file somewhere else.
+    symlink("not-yet.csv", dir.0.join("dangling.csv")).unwrap();
+    let (status, _, stderr) = run(&export_args(&path, &text("dangling.csv"), &[]));
+    assert_eq!(status, 2);
+    assert!(stderr.contains("exists; pass --force"), "{stderr}");
+    assert!(!dir.0.join("not-yet.csv").exists());
+    let (status, _, stderr) = run(&export_args(&path, &text("dangling.csv"), &["--force"]));
+    assert_eq!(status, 0, "{stderr}");
+    assert!(fs::read_to_string(dir.0.join("not-yet.csv"))
+        .unwrap()
+        .starts_with("run/pressure"));
+
+    // Nothing was left beside the files: the sample, real.csv, link.csv,
+    // null, dangling.csv, and not-yet.csv.
+    assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 6);
+}
+
+/// The one error that leaves a new output file behind: the export is
+/// done and its report cannot be written.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_report_that_cannot_be_written_leaves_the_table() {
+    let dir = TempDir::new("tdms-export-full");
+    let path = write_sample(&dir);
+    let out = dir.0.join("table.csv");
+    let full = fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("open /dev/full");
+    let output = Command::new(BIN)
+        .args(export_args(&path, &out.to_string_lossy(), &["--json"]))
+        .stdout(full)
+        .output()
+        .expect("run the buzzard binary");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.starts_with("error: cannot write output: "),
+        "{stderr}"
+    );
+    assert!(fs::read_to_string(&out)
+        .unwrap()
+        .starts_with("run/pressure,run/note\n"));
+}
+
+/// A name or a value from the TDMS file cannot add a line to a text
+/// report or drive a terminal, in `info` and in `export`. JSON holds the
+/// text itself.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one hostile file through both commands and both formats"
+)]
+#[test]
+fn a_name_in_a_tdms_file_cannot_forge_a_line_of_a_report() {
+    let dir = TempDir::new("tdms-forged");
+    let mut builder = FileBuilder::new();
+    builder
+        .segment()
+        .object(Object::root().prop(
+            "note\nforged",
+            PropertyValue::String("a\nfile: x\u{1b}[2J".into()),
+        ))
+        .object(Object::group("g\ngroup 'forged' (9 channels)"))
+        .object(
+            Object::channel("g\ngroup 'forged' (9 channels)", "c\ncolumn evil")
+                .data(Values::F64(vec![1.0, 2.0]))
+                .prop(
+                    "unit_string",
+                    PropertyValue::String("x\nA\u{1b}[2J\u{202e}".into()),
+                ),
+        )
+        .object(Object::channel(
+            "g\ngroup 'forged' (9 channels)",
+            "never\nskipped evil: it",
+        ));
+    let path = dir.0.join("hostile.tdms");
+    fs::write(&path, builder.build().bytes).unwrap();
+    let path = path.to_string_lossy().into_owned();
+    let quiet = |text: &str| {
+        !text
+            .chars()
+            .any(|c| (c.is_ascii_control() && c != '\n') || c == '\u{202e}')
+    };
+
+    let (status, info, stderr) = run(&["tdms", "info", &path]);
+    assert_eq!(status, 0, "{stderr}");
+    assert!(quiet(&info), "{info:?}");
+    assert_eq!(
+        info.lines()
+            .filter(|line| line.starts_with("group '"))
+            .count(),
+        1,
+        "{info}"
+    );
+    assert_eq!(
+        info.lines()
+            .filter(|line| line.starts_with("file: "))
+            .count(),
+        1,
+        "{info}"
+    );
+    assert_eq!(
+        info.lines()
+            .filter(|line| line.trim_start().starts_with("channel '"))
+            .count(),
+        2,
+        "{info}"
+    );
+    assert!(
+        info.contains("  note\\nforged (string) = a\\nfile: x\\u{1b}[2J\n"),
+        "{info}"
+    );
+    assert!(
+        info.contains("channel 'c\\ncolumn evil': f64, 2 values, unit x\\nA\\u{1b}[2J\\u{202e}\n"),
+        "{info}"
+    );
+
+    let out = dir.0.join("t.csv").to_string_lossy().into_owned();
+    let (status, dry, stderr) = run(&export_args(&path, &out, &["--dry-run"]));
+    assert_eq!(status, 0, "{stderr}");
+    assert!(quiet(&dry), "{dry:?}");
+    assert_eq!(
+        dry.lines()
+            .filter(|line| line.starts_with("column "))
+            .count(),
+        1,
+        "{dry}"
+    );
+    assert_eq!(
+        dry.lines()
+            .filter(|line| line.starts_with("skipped "))
+            .count(),
+        1,
+        "{dry}"
+    );
+    // The two commands print the name the same way.
+    assert!(dry.contains("c\\ncolumn evil"), "{dry}");
+    let (status, real, _) = run(&export_args(&path, &out, &[]));
+    assert_eq!(status, 0);
+    assert_eq!(
+        real.lines()
+            .filter(|line| line.starts_with("skipped "))
+            .count(),
+        1,
+        "{real}"
+    );
+    assert_eq!(real.lines().count(), 2, "{real}");
+
+    // JSON holds the names themselves.
+    let (_, json, _) = run(&["tdms", "info", &path, "--format", "json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(parsed["groups"][0]["channels"][0]["name"], "c\ncolumn evil");
+    assert_eq!(
+        parsed["groups"][0]["channels"][0]["unit"],
+        "x\nA\u{1b}[2J\u{202e}"
+    );
+
+    // The name of the file itself. A control character in it is refused as
+    // an argument, and a character that reorders text is written out.
+    let hostile = dir.0.join("rlo\u{202e}smdt.tdms");
+    if fs::copy(&path, &hostile).is_ok() {
+        let (status, info, stderr) = run(&["tdms", "info", &hostile.to_string_lossy()]);
+        assert_eq!(status, 0, "{stderr}");
+        assert!(quiet(&info), "{info:?}");
+        assert!(
+            info.lines()
+                .next()
+                .unwrap()
+                .ends_with("rlo\\u{202e}smdt.tdms"),
+            "{info}"
+        );
+    }
+}

@@ -1,10 +1,12 @@
 //! The `BZxxx` lint rules.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use buzzard_rsrc::{RefKind, ViMetadata};
 use rayon::prelude::*;
+use serde::Serialize;
 
 use crate::archive::Archives;
 use crate::dataflow::Finding;
@@ -130,6 +132,78 @@ pub fn rule(code: &str) -> Option<&'static Rule> {
     RULES.iter().find(|r| r.code == code)
 }
 
+/// The codes of `codes` that are not in [`RULES`], in the order given.
+/// `--ignore` refuses them, so that a mistyped code does not silently
+/// leave a rule on.
+pub fn unknown_codes<S: AsRef<str>>(codes: &[S]) -> Vec<&str> {
+    codes
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|code| rule(code).is_none())
+        .collect()
+}
+
+/// One rule as a listing shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Listed {
+    /// As [`Rule::code`].
+    pub code: &'static str,
+    /// As [`Rule::name`].
+    pub name: &'static str,
+    /// The default severity: `error`, `warning`, or `info`.
+    pub severity: Severity,
+    /// As [`Rule::summary`].
+    pub summary: &'static str,
+}
+
+/// The JSON shape of the listing: an object, so that it can grow.
+#[derive(Serialize)]
+struct Listing {
+    rules: Vec<Listed>,
+}
+
+/// Every rule of [`RULES`], in code order.
+pub fn listed() -> Vec<Listed> {
+    RULES
+        .iter()
+        .map(|rule| Listed {
+            code: rule.code,
+            name: rule.name,
+            severity: rule.severity,
+            summary: rule.summary,
+        })
+        .collect()
+}
+
+/// The rules as text: one line per rule with its code, default severity,
+/// name, and summary.
+pub fn listing_to_text() -> String {
+    let mut out = String::new();
+    for rule in RULES {
+        let _ = writeln!(
+            out,
+            "{} {:<7} {}: {}",
+            rule.code,
+            rule.severity.as_str(),
+            rule.name,
+            rule.summary
+        );
+    }
+    out
+}
+
+/// The rules as JSON: `{"rules": [{"code", "name", "severity",
+/// "summary"}]}`, indented, with a line break at the end.
+#[expect(
+    clippy::missing_panics_doc,
+    reason = "a list of static strings always serializes"
+)]
+pub fn listing_to_json() -> String {
+    serde_json::to_string_pretty(&Listing { rules: listed() })
+        .expect("the rule listing always serializes")
+        + "\n"
+}
+
 /// Settings for [`lint`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LintConfig {
@@ -227,11 +301,10 @@ pub fn lint(
     out
 }
 
+/// The file's name as a message shows it: on one line, because a message
+/// is prose in every output format.
 fn display_name(path: &Path) -> String {
-    path.file_name()
-        .unwrap_or(path.as_os_str())
-        .to_string_lossy()
-        .into_owned()
+    crate::printable::file_name(path)
 }
 
 fn check_separate_code(meta: &ViMetadata, emit: &mut impl FnMut(&'static str, String)) {
@@ -509,5 +582,53 @@ fn check_debug_and_lock(meta: &ViMetadata, emit: &mut impl FnMut(&'static str, S
             "BZ004",
             "block diagram is password-protected and cannot be reviewed".to_owned(),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_listing_has_every_rule_in_code_order() {
+        let rules = listed();
+        assert_eq!(rules.len(), RULES.len());
+        let codes: Vec<&str> = rules.iter().map(|rule| rule.code).collect();
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(codes, sorted);
+
+        let text = listing_to_text();
+        assert_eq!(text.lines().count(), RULES.len());
+        assert!(text.starts_with("BZ000 error   unreadable-file: The file could not be read"));
+        assert!(text.contains("\nBZ001 warning compiled-code-not-separated: Compiled code"));
+
+        let json: serde_json::Value = serde_json::from_str(&listing_to_json()).unwrap();
+        let listed = json["rules"].as_array().unwrap();
+        assert_eq!(listed.len(), RULES.len());
+        for (entry, rule) in listed.iter().zip(RULES) {
+            assert_eq!(
+                *entry,
+                serde_json::json!({
+                    "code": rule.code,
+                    "name": rule.name,
+                    "severity": rule.severity.as_str(),
+                    "summary": rule.summary,
+                })
+            );
+        }
+        assert!(listing_to_json().ends_with("}\n"));
+    }
+
+    #[test]
+    fn unknown_codes_are_named_in_the_order_given() {
+        assert_eq!(unknown_codes(&["BZ001", "BZ203"]), Vec::<&str>::new());
+        assert_eq!(
+            unknown_codes(&["BZ999", "BZ001", "bz001", ""]),
+            ["BZ999", "bz001", ""]
+        );
+        let owned = vec!["x".to_owned()];
+        assert_eq!(unknown_codes(&owned), ["x"]);
     }
 }

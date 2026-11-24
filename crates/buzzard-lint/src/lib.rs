@@ -5,12 +5,18 @@
 //! scheduling.
 
 pub mod archive;
+pub mod budget;
+pub mod check;
 pub mod dataflow;
 pub mod deps;
 pub mod diagnostic;
 pub mod diff;
+pub mod failure;
 pub mod graph;
 pub mod inspector;
+mod lossy;
+pub mod patharg;
+pub mod printable;
 pub mod project;
 pub mod render;
 pub mod rules;
@@ -20,8 +26,9 @@ pub mod verify;
 pub mod workspace;
 
 pub use diagnostic::{Diagnostic, Severity};
+pub use failure::{ErrorKind, Failure};
 pub use graph::{DependencyGraph, EdgeKind};
-pub use inspector::{Inspection, RsrcInspector, ViInspector};
+pub use inspector::{Inspection, InspectionSummary, RsrcInspector, ViInspector};
 pub use project::{Member, ParentClass, ProjectFile, ProjectKind};
 pub use rules::{lint, LintConfig, Rule, RULES};
 pub use workspace::{Analysis, FileState, Workspace};

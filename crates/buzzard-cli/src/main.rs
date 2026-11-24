@@ -1,5 +1,6 @@
-//! The `buzzard` command: `check`, `inspect`, `deps`, `diff`, and `verify`
-//! over the analysis in `buzzard-lint`, `lsp` for the language server in
+//! The `buzzard` command: `check`, `inspect`, `deps`, `diff`, `verify`, and
+//! `rules` over the analysis in `buzzard-lint`, `guide` for the guide for
+//! agents, `lsp` for the language server in
 //! `buzzard-ls`, `mcp` for the Model Context Protocol server in `buzzard-mcp`,
 //! and `tdms` for the measurement file reader in `buzzard-tdms`.
 
@@ -8,32 +9,59 @@
     reason = "a command-line tool reports its errors on stderr"
 )]
 
-use std::fmt::Write as _;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use buzzard_lint::archive;
-use buzzard_lint::project::is_project_file;
 use buzzard_lint::verify::report::{self, Verified};
-use buzzard_lint::Inspection;
 use buzzard_lint::{
-    lint, render, sarif, summary, DependencyGraph, Diagnostic, LintConfig, ProjectFile, Severity,
+    check as checked, lint, patharg, printable, rules, sarif, DependencyGraph, Failure, LintConfig,
     Workspace,
 };
-use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::{Parser, Subcommand, ValueEnum};
 
 mod deps_cmd;
 mod diff_cmd;
+mod errors;
+mod inspect_cmd;
 mod tdms_cmd;
+
+/// What a command prints on stdout, and the status it exits with.
+pub(crate) struct Report {
+    pub(crate) text: String,
+    pub(crate) status: u8,
+}
+
+impl Report {
+    /// A report of a command that exits with status 0.
+    pub(crate) fn ok(text: String) -> Self {
+        Self { text, status: 0 }
+    }
+}
+
+/// A report, or the error that ends the command with status 2.
+pub(crate) type Outcome = Result<Report, Failure>;
 
 // `about` is the `description` of `Cargo.toml`.
 #[derive(Parser)]
-#[command(name = "buzzard", version, about)]
+#[command(name = "buzzard", version, about, after_long_help = errors::help())]
 struct Cli {
+    /// How to report an error that ends the command. With json, the error
+    /// is also one JSON object on one line of stdout, whatever format the
+    /// report has. --format json, --format sarif, and --json imply it.
+    #[arg(long, global = true, value_enum, default_value_t = ErrorFormat::Text, value_name = "FORMAT")]
+    error_format: ErrorFormat,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ErrorFormat {
+    /// `error: <message>` on stderr.
+    Text,
+    /// The line on stderr, and `{"error":{"kind","message","path"}}` on
+    /// stdout.
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -42,7 +70,8 @@ enum Command {
     #[command(
         after_help = "Exit status: 0 when no problem is an error or a warning, or when \
         --exit-zero is set. 1 when a problem is an error or a warning. 2 for an unknown \
-        --ignore code, a path that does not exist, or a report that buzzard cannot write."
+        --ignore code, a path that does not exist or that holds a control character, or a \
+        report that buzzard cannot write. --limit does not change the status."
     )]
     Check {
         /// Files, directories, or member paths such as lib/util.llb/Init.vi.
@@ -60,20 +89,66 @@ enum Command {
         /// Exit with status 0 whatever problems the report holds.
         #[arg(long)]
         exit_zero: bool,
+        /// Print the first N problems only. The summary still counts every
+        /// problem and says how many are not shown. With a limit, json
+        /// prints an object with `diagnostics` and `summary` in place of
+        /// the list, and sarif adds the counts to the properties of the
+        /// run when problems are left out.
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
     },
     /// Print what one file holds.
     ///
     /// For an .llb archive, the report is the directory of the archive.
+    ///
+    /// The json format with --detail full holds every node, terminal, and
+    /// wire of the block diagram, and is often over 1 MB for one VI. Ask
+    /// for --detail summary first: it is the same metadata with an outline
+    /// of the diagram, and it states the size of the full JSON in
+    /// `full_json_bytes`.
     #[command(
-        after_help = "Exit status: 0, or 2 when buzzard cannot read the file, or when \
-        you ask for svg, dot, or mermaid and the file has no block diagram."
+        after_help = "Exit status: 0, or 2 when buzzard cannot read the file, when you \
+        ask for svg, dot, or mermaid and the file has no block diagram or with --detail \
+        summary, when the file has no such frame, or when the path is a directory or holds \
+        a control character."
     )]
     Inspect {
         /// A file, or a member path such as lib/util.llb/Init.vi.
         file: PathBuf,
         /// Output format.
-        #[arg(long, value_enum, default_value_t = InspectFormat::Markdown)]
-        format: InspectFormat,
+        #[arg(long, value_enum, default_value_t = inspect_cmd::Format::Markdown)]
+        format: inspect_cmd::Format,
+        /// How much of a block diagram the json and markdown formats hold.
+        /// An archive and a project file have one level of detail.
+        #[arg(long, value_enum, default_value_t = inspect_cmd::Detail::Full)]
+        detail: inspect_cmd::Detail,
+        /// Print one frame of the block diagram as JSON: the id of a
+        /// structure in the outline of --detail summary. Needs --frame and
+        /// --format json. With --detail summary, the outline of that frame.
+        #[arg(long, value_name = "ID", requires = "frame", allow_negative_numbers = true,
+              conflicts_with_all = ["first_node", "last_node"])]
+        structure: Option<i32>,
+        /// The index of a frame of --structure, from 0.
+        #[arg(long, value_name = "INDEX", requires = "structure")]
+        frame: Option<usize>,
+        /// Print the nodes with an id from --first-node to --last-node as
+        /// JSON. A structure comes with everything inside it. Needs
+        /// --format json.
+        #[arg(
+            long,
+            value_name = "ID",
+            requires = "last_node",
+            allow_negative_numbers = true
+        )]
+        first_node: Option<i32>,
+        /// The largest node id of the range.
+        #[arg(
+            long,
+            value_name = "ID",
+            requires = "first_node",
+            allow_negative_numbers = true
+        )]
+        last_node: Option<i32>,
     },
     /// List what the files need from outside the project.
     ///
@@ -83,14 +158,15 @@ enum Command {
     /// a file under a symbolic root such as vilib, instrlib, or userlib.
     #[command(
         after_help = "Exit status: 0 whatever the report holds, 2 for a path that does \
-        not exist or a --root that buzzard cannot use."
+        not exist or that holds a control character, or a --root that buzzard cannot use."
     )]
     Deps(deps_cmd::Args),
     /// Compare the settings, dependencies, nodes, and wires of two versions
     /// of a file.
     #[command(
         after_help = "Exit status: 0 when the two files are the same, 1 when they \
-        differ, 2 on an error. With --git the status is always 0."
+        differ, 2 on an error, such as a path that holds a control character. With --git \
+        the status is always 0."
     )]
     Diff(diff_cmd::Args),
     /// Find the state machines on block diagrams and check them.
@@ -100,7 +176,8 @@ enum Command {
     /// handles. Each finding is labeled proven, structural, or heuristic.
     #[command(
         after_help = "Exit status: 0 when there are no findings. 1 when there are \
-        findings, of any label. 2 on an error, such as a path that does not exist. The \
+        findings, of any label. 2 on an error, such as a path that does not exist or that \
+        holds a control character. The \
         report lists each file that buzzard cannot read or parse, and such a file does \
         not change the status."
     )]
@@ -115,6 +192,24 @@ enum Command {
     /// Describe a TDMS measurement file, or export its channels as a
     /// Parquet or CSV table.
     Tdms(tdms_cmd::Args),
+    /// List the rules of `check`: code, severity, name, and summary.
+    ///
+    /// The codes are the values of `check --ignore` and the `ruleId` of
+    /// SARIF.
+    #[command(after_help = "Exit status: 0, or 2 when buzzard cannot write the list.")]
+    Rules {
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = RulesFormat::Text)]
+        format: RulesFormat,
+    },
+    /// Print the guide to buzzard for an AI agent.
+    ///
+    /// The guide says which command, format, and size limit to ask for,
+    /// what the exit statuses, labels, and error kinds mean, and how to
+    /// treat names from files. `buzzard mcp` serves the same text as the
+    /// prompt `buzzard`.
+    #[command(after_help = "Exit status: 0, or 2 when buzzard cannot write the guide.")]
+    Guide,
     /// Run the language server over stdio.
     #[command(
         after_help = "Exit status: 0 after shutdown and then exit, or when the client \
@@ -124,12 +219,22 @@ enum Command {
     Lsp,
     /// Run the Model Context Protocol server over stdio.
     ///
-    /// AI agents call its tools to run the analysis.
+    /// AI agents call its tools to run the analysis. The tools read files
+    /// and write none.
     #[command(
         after_help = "Exit status: 0 when the client closes the connection, 2 when \
-        reading a request or writing a response fails."
+        reading a request or writing a response fails, or when a --root is not a \
+        directory."
     )]
-    Mcp,
+    Mcp {
+        /// A directory that the tools may read. With one or more roots,
+        /// every path argument of every tool must lead into a root once
+        /// links and `..` are resolved, and the server refuses any other
+        /// path. Without a root, a tool reads any file that the process
+        /// can read. May be repeated.
+        #[arg(long = "root", value_name = "DIR")]
+        roots: Vec<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -150,86 +255,100 @@ enum VerifyFormat {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-enum InspectFormat {
-    /// A summary of the file.
-    Markdown,
-    /// What buzzard reads from the file, as JSON.
+enum RulesFormat {
+    /// One line per rule.
+    Text,
+    /// An object with the list `rules`.
     Json,
-    /// The block diagram as a picture, laid out as in LabVIEW.
-    Svg,
-    /// The block diagram as a Graphviz graph.
-    Dot,
-    /// The block diagram as a Mermaid flowchart.
-    Mermaid,
 }
 
-/// JSON shape of `inspect`: the metadata fields plus the block diagram.
-#[derive(serde::Serialize)]
-struct InspectOutput<'a> {
-    #[serde(flatten)]
-    metadata: &'a ViMetadata,
-    diagram: Option<&'a BlockDiagram>,
+impl Command {
+    /// Whether the caller asked for a format that a program reads. An
+    /// error is then printed as JSON on stdout too.
+    fn machine(&self) -> bool {
+        match self {
+            Self::Check { format, .. } => matches!(format, CheckFormat::Json | CheckFormat::Sarif),
+            Self::Inspect { format, .. } => matches!(format, inspect_cmd::Format::Json),
+            Self::Verify { format, .. } => matches!(format, VerifyFormat::Json),
+            Self::Rules { format } => matches!(format, RulesFormat::Json),
+            Self::Deps(args) => args.machine(),
+            Self::Diff(args) => args.machine(),
+            Self::Tdms(args) => args.machine(),
+            Self::Guide | Self::Lsp | Self::Mcp { .. } => false,
+        }
+    }
 }
 
 fn main() -> ExitCode {
-    match Cli::parse().command {
+    let (command, error_format) = match Cli::try_parse() {
+        Ok(cli) => (cli.command, cli.error_format),
+        Err(err) => return errors::usage(&err),
+    };
+    let machine = command.machine() || error_format == ErrorFormat::Json;
+    let outcome = match command {
         Command::Check {
             paths,
             format,
             ignore,
             max_path_length,
             exit_zero,
-        } => check(&paths, format, ignore, max_path_length, exit_zero),
-        Command::Inspect { file, format } => {
-            // A member is shown under the name its archive has for it.
-            inspect(&archive::canonical(&file).unwrap_or(file), format)
+            limit,
+        } => check(&paths, format, ignore, max_path_length, exit_zero, limit),
+        Command::Inspect {
+            file,
+            format,
+            detail,
+            structure,
+            frame,
+            first_node,
+            last_node,
+        } => {
+            // clap makes each pair come together and never both pairs.
+            let part = match (structure.zip(frame), first_node.zip(last_node)) {
+                (Some((structure, frame)), _) => {
+                    Some(inspect_cmd::Part::Frame { structure, frame })
+                }
+                (None, Some((first, last))) => Some(inspect_cmd::Part::Nodes { first, last }),
+                (None, None) => None,
+            };
+            inspect_cmd::run(&file, format, detail, part)
         }
         Command::Verify { paths, format } => verify(&paths, format),
-        Command::Deps(args) => match deps_cmd::run(&args) {
-            Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
-            Err(message) => {
-                eprintln!("error: {message}");
-                ExitCode::from(2)
-            }
-        },
-        Command::Diff(args) => match diff_cmd::run(&args) {
-            Ok((rendered, status)) => print(&rendered, ExitCode::from(status)),
-            Err(message) => {
-                eprintln!("error: {message}");
-                ExitCode::from(2)
-            }
-        },
-        Command::Tdms(args) => match tdms_cmd::run(&args) {
-            Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
-            Err(message) => {
-                eprintln!("error: {message}");
-                ExitCode::from(2)
-            }
-        },
-        Command::Lsp => lsp(),
-        Command::Mcp => match buzzard_mcp::run_stdio() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                eprintln!("error: mcp transport failed: {err}");
-                ExitCode::from(2)
-            }
-        },
-    }
-}
-
-/// `buzzard inspect`: a project file, the directory of an archive, or a
-/// binary file. A member path is tried first, because `x.llb/p.lvlib` is a
-/// member of an archive and the member's name decides how it is read.
-fn inspect(file: &Path, format: InspectFormat) -> ExitCode {
-    let is_member = archive::split(file).is_some();
-    if is_project_file(file) && (is_member || file.is_file()) {
-        inspect_project(file, format)
-    } else if !is_member && archive::is_archive(file) && file.is_file() {
-        inspect_archive(file, format)
-    } else if is_project_file(file) {
-        inspect_project(file, format)
-    } else {
-        inspect_binary(file, format)
+        Command::Rules { format } => Ok(Report::ok(match format {
+            RulesFormat::Text => rules::listing_to_text(),
+            RulesFormat::Json => rules::listing_to_json(),
+        })),
+        Command::Guide => Ok(Report::ok(buzzard_mcp::guide().to_owned())),
+        Command::Deps(args) => deps_cmd::run(&args),
+        Command::Diff(args) => diff_cmd::run(&args),
+        Command::Tdms(args) => tdms_cmd::run(&args),
+        Command::Lsp => return lsp(),
+        Command::Mcp { roots } => {
+            let served = roots
+                .iter()
+                .try_for_each(|root| {
+                    patharg::check(root)?;
+                    // The error names the root as the caller wrote it.
+                    if root.is_dir() {
+                        Ok(())
+                    } else {
+                        Err(Failure::bad_argument(format!(
+                            "the root is not an existing directory: {}",
+                            printable::path(root)
+                        ))
+                        .with_path(root))
+                    }
+                })
+                .and_then(|()| buzzard_mcp::run_stdio(&roots));
+            return match served {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(failure) => errors::fail(&failure, machine),
+            };
+        }
+    };
+    match outcome {
+        Ok(report) => print(&report.text, ExitCode::from(report.status)),
+        Err(failure) => errors::fail(&failure, machine),
     }
 }
 
@@ -240,19 +359,13 @@ fn check(
     ignore: Vec<String>,
     max_path_length: usize,
     exit_zero: bool,
-) -> ExitCode {
-    let unknown: Vec<&String> = ignore
-        .iter()
-        .filter(|code| buzzard_lint::rules::rule(code).is_none())
-        .collect();
+    limit: Option<usize>,
+) -> Outcome {
+    let unknown = rules::unknown_codes(&ignore);
     if !unknown.is_empty() {
-        eprintln!("error: unknown rule code(s): {unknown:?}");
-        return ExitCode::from(2);
+        return Err(Failure::unknown_rules(&unknown));
     }
-    if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
-        eprintln!("error: path does not exist: {}", missing.display());
-        return ExitCode::from(2);
-    }
+    patharg::existing(paths)?;
     let config = LintConfig {
         max_path_length,
         ignore: ignore.into_iter().collect(),
@@ -260,172 +373,39 @@ fn check(
     let workspace = Workspace::scan(paths);
     let graph = DependencyGraph::build(&workspace);
     let diagnostics = lint(&workspace, &graph, &config);
-    let rendered = match format {
-        CheckFormat::Human => render_human(&diagnostics, workspace.files().len()),
-        CheckFormat::Json => to_json(&diagnostics),
-        CheckFormat::Sarif => to_json(&sarif::to_sarif(
-            &workspace,
-            &diagnostics,
-            env!("CARGO_PKG_VERSION"),
-        )),
+    let files = workspace.files().len();
+    let version = env!("CARGO_PKG_VERSION");
+    let shown = checked::limit(&diagnostics, files, limit);
+    // Without a limit, each format is the one that the command always
+    // printed: json is the list of findings and nothing else.
+    let text = match (limit, format) {
+        (None, CheckFormat::Human) => checked::to_human(&diagnostics, files),
+        (None, CheckFormat::Json) => to_json(&diagnostics),
+        (None, CheckFormat::Sarif) => to_json(&sarif::to_sarif(&workspace, &diagnostics, version)),
+        (Some(_), CheckFormat::Human) => shown.to_human(),
+        (Some(_), CheckFormat::Json) => shown.to_json(),
+        (Some(_), CheckFormat::Sarif) => to_json(&shown.to_sarif(&workspace, version)),
     };
-    let failed = diagnostics.iter().any(|d| d.severity != Severity::Info);
-    let status = if failed && !exit_zero {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    };
-    print(&rendered, status)
+    // The status counts every problem, shown or not.
+    Ok(Report {
+        text,
+        status: u8::from(shown.failed() && !exit_zero),
+    })
 }
 
 /// `buzzard verify`: check the state machines under `paths`.
-fn verify(paths: &[PathBuf], format: VerifyFormat) -> ExitCode {
-    if let Some(missing) = paths.iter().find(|p| !archive::exists(p)) {
-        eprintln!("error: path does not exist: {}", missing.display());
-        return ExitCode::from(2);
-    }
+fn verify(paths: &[PathBuf], format: VerifyFormat) -> Outcome {
+    patharg::existing(paths)?;
     let verified = Verified::scan(paths);
-    let rendered = match format {
+    let text = match format {
         VerifyFormat::Text => report::to_text(&verified),
         VerifyFormat::Json => to_json(&verified),
         VerifyFormat::Dot => report::to_dot(&verified),
     };
-    let status = if verified.has_findings() {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    };
-    print(&rendered, status)
-}
-
-/// `buzzard inspect` on a `.lvproj`, `.lvlib`, or `.lvclass` file.
-fn inspect_project(file: &Path, format: InspectFormat) -> ExitCode {
-    match ProjectFile::from_path(file) {
-        Ok(project) => {
-            let rendered = match format {
-                InspectFormat::Json => to_json(&project),
-                InspectFormat::Markdown => {
-                    summary::project_to_markdown(&project.name, &project, None)
-                }
-                InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
-                    eprintln!(
-                        "error: {}: a project file has no block diagram",
-                        file.display()
-                    );
-                    return ExitCode::from(2);
-                }
-            };
-            print(&rendered, ExitCode::SUCCESS)
-        }
-        Err(err) => {
-            eprintln!("error: {}: {err}", file.display());
-            ExitCode::from(2)
-        }
-    }
-}
-
-/// JSON shape of `inspect` on an `.llb` archive: what the file is, as for
-/// any resource file, and its directory.
-#[derive(serde::Serialize)]
-struct ArchiveOutput<'a> {
-    #[serde(flatten)]
-    metadata: &'a ViMetadata,
-    #[serde(flatten)]
-    archive: &'a archive::ArchiveFile,
-}
-
-/// `buzzard inspect` on an `.llb` archive: the list of its members. A
-/// member is inspected by the path of the archive followed by its name.
-fn inspect_archive(file: &Path, format: InspectFormat) -> ExitCode {
-    let fail = |err: String| {
-        eprintln!("error: {}: {err}", file.display());
-        ExitCode::from(2)
-    };
-    let opened = match archive::list(file) {
-        Ok(Some(listing)) => listing,
-        Ok(None) => {
-            eprintln!(
-                "note: {}: the archive was built into an application and has no directory of \
-                 members; it is shown as the resource file it is",
-                file.display()
-            );
-            return inspect_binary(file, format);
-        }
-        Err(err) => return fail(err),
-    };
-    let rendered = match format {
-        InspectFormat::Json => match Inspection::from_path(file) {
-            Ok(inspection) => to_json(&ArchiveOutput {
-                metadata: &inspection.metadata,
-                archive: &opened,
-            }),
-            Err(err) => return fail(err),
-        },
-        InspectFormat::Markdown => {
-            let title = file
-                .file_name()
-                .unwrap_or(file.as_os_str())
-                .to_string_lossy();
-            summary::archive_to_markdown(&title, &opened)
-        }
-        InspectFormat::Svg | InspectFormat::Dot | InspectFormat::Mermaid => {
-            let example = opened.opened().first().map_or_else(
-                || "<member>".to_owned(),
-                |name| archive::member_path(file, name).display().to_string(),
-            );
-            eprintln!(
-                "error: {}: an archive has no block diagram; name one of its members, as in \
-                 `buzzard inspect \"{example}\"`",
-                file.display()
-            );
-            return ExitCode::from(2);
-        }
-    };
-    print(&rendered, ExitCode::SUCCESS)
-}
-
-/// `buzzard inspect` on a binary file: its metadata and block diagram, or a
-/// picture of the diagram. `file` may name a member of an archive.
-fn inspect_binary(file: &Path, format: InspectFormat) -> ExitCode {
-    let inspection = match Inspection::from_path(file) {
-        Ok(inspection) => inspection,
-        Err(err) => {
-            eprintln!("error: {}: {err}", file.display());
-            return ExitCode::from(2);
-        }
-    };
-    let picture = |draw: fn(&BlockDiagram) -> String| match &inspection.diagram {
-        Some(diagram) => Ok(draw(diagram)),
-        None => Err("file has no block diagram"),
-    };
-    let rendered = match format {
-        InspectFormat::Svg => picture(render::to_svg),
-        InspectFormat::Dot => picture(render::to_dot),
-        InspectFormat::Mermaid => picture(render::to_mermaid),
-        InspectFormat::Json => Ok(to_json(&InspectOutput {
-            metadata: &inspection.metadata,
-            diagram: inspection.diagram.as_ref(),
-        })),
-        InspectFormat::Markdown => {
-            let title = file
-                .file_name()
-                .unwrap_or(file.as_os_str())
-                .to_string_lossy();
-            let mut text = summary::to_markdown(&title, &inspection.metadata, None);
-            if let Some(diagram) = &inspection.diagram {
-                text.push('\n');
-                text.push_str(&summary::diagram_to_markdown(diagram));
-            }
-            Ok(text)
-        }
-    };
-    match rendered {
-        Ok(rendered) => print(&rendered, ExitCode::SUCCESS),
-        Err(reason) => {
-            eprintln!("error: {}: {reason}", file.display());
-            ExitCode::from(2)
-        }
-    }
+    Ok(Report {
+        text,
+        status: u8::from(verified.has_findings()),
+    })
 }
 
 /// `buzzard lsp`: serve the language server over stdio.
@@ -455,63 +435,24 @@ fn lsp() -> ExitCode {
 /// because the reader chose to stop reading. Any other failure (a full
 /// disk, a quota, a broken mount) means the report is missing or
 /// truncated. The error then goes to stderr and the status is 2, whatever
-/// `status` was.
+/// `status` was. It is not printed as JSON, because stdout is what failed.
 fn print(text: &str, status: ExitCode) -> ExitCode {
     let mut stdout = io::stdout().lock();
     match write_report(&mut stdout, text) {
         Ok(()) => status,
-        Err(err) => {
-            eprintln!("error: cannot write output: {err}");
-            ExitCode::from(2)
-        }
+        Err(err) => errors::fail(&Failure::write_failed(&err), false),
     }
 }
 
-fn write_report(out: &mut impl Write, text: &str) -> io::Result<()> {
+pub(crate) fn write_report(out: &mut impl Write, text: &str) -> io::Result<()> {
     match out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
         Err(err) if err.kind() != io::ErrorKind::BrokenPipe => Err(err),
         _ => Ok(()),
     }
 }
 
-fn to_json(value: &impl serde::Serialize) -> String {
+pub(crate) fn to_json(value: &impl serde::Serialize) -> String {
     serde_json::to_string_pretty(value).expect("a report always serializes") + "\n"
-}
-
-fn render_human(diagnostics: &[Diagnostic], file_count: usize) -> String {
-    let mut out = String::new();
-    for d in diagnostics {
-        let _ = writeln!(
-            out,
-            "{}: {}[{}]: {}",
-            d.path.display(),
-            d.severity.as_str(),
-            d.code,
-            d.message
-        );
-    }
-    let errors = diagnostics
-        .iter()
-        .filter(|d| d.severity == Severity::Error)
-        .count();
-    let warnings = diagnostics
-        .iter()
-        .filter(|d| d.severity == Severity::Warning)
-        .count();
-    let files = if file_count == 1 { "file" } else { "files" };
-    if diagnostics.is_empty() {
-        let _ = writeln!(out, "No problems found in {file_count} {files}.");
-    } else {
-        let _ = writeln!(
-            out,
-            "Found {} problem{} ({errors} error{}, {warnings} warning{}) in {file_count} {files}.",
-            diagnostics.len(),
-            if diagnostics.len() == 1 { "" } else { "s" },
-            if errors == 1 { "" } else { "s" },
-            if warnings == 1 { "" } else { "s" },
-        );
-    }
-    out
 }
 
 #[cfg(test)]
@@ -552,5 +493,13 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Other);
         assert!(write_report(&mut Failing(io::ErrorKind::PermissionDenied), "report").is_err());
         assert!(write_report(&mut FailingFlush, "report").is_err());
+    }
+
+    /// The arguments are checked when the tests run, as clap checks them
+    /// in a debug build on the first parse.
+    #[test]
+    fn the_command_line_is_well_formed() {
+        use clap::CommandFactory as _;
+        Cli::command().debug_assert();
     }
 }

@@ -23,8 +23,15 @@ struct Session {
 impl Session {
     /// Start the server with `dir` as its working directory.
     fn start(dir: &std::path::Path) -> Self {
+        Self::start_with(dir, &[])
+    }
+
+    /// Start the server with `dir` as its working directory and `args`
+    /// after `mcp`.
+    fn start_with(dir: &std::path::Path, args: &[&str]) -> Self {
         let mut child = Command::new(BIN)
             .arg("mcp")
+            .args(args)
             .current_dir(dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -117,6 +124,10 @@ fn text(result: &Value) -> &str {
     clippy::similar_names,
     reason = "`callers` and `callees` hold the answers of `buzzard_callers` and `buzzard_callees`"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one session from `initialize` to the end of input, in the order a client runs it"
+)]
 fn full_session_over_real_pipes() {
     let fixtures = fixtures().canonicalize().unwrap();
     let mut session = Session::start(&fixtures);
@@ -130,7 +141,10 @@ fn full_session_over_real_pipes() {
         }),
     );
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
-    assert_eq!(init["result"]["capabilities"], json!({ "tools": {} }));
+    assert_eq!(
+        init["result"]["capabilities"],
+        json!({ "prompts": {}, "tools": {} })
+    );
     assert_eq!(init["result"]["serverInfo"]["name"], "buzzard");
     assert_eq!(
         init["result"]["serverInfo"]["version"],
@@ -160,8 +174,13 @@ fn full_session_over_real_pipes() {
             "buzzard_callees",
             "buzzard_symbols",
             "buzzard_rules",
+            "buzzard_diff",
+            "buzzard_tdms_info",
         ]
     );
+    // The guide for agents ships in the binary, as a prompt.
+    let prompts = session.request("prompts/list", Value::Null);
+    assert_eq!(prompts["result"]["prompts"][0]["name"], "buzzard");
 
     // Relative paths resolve against the working directory of the process.
     let found = session.call(
@@ -211,6 +230,12 @@ fn full_session_over_real_pipes() {
     let missing = session.call("buzzard_inspect", json!({ "path": "missing.vi" }));
     assert_eq!(missing["isError"], true);
     assert_eq!(text(&missing), "file does not exist: missing.vi");
+    assert_eq!(
+        missing["structuredContent"]["error"]["kind"],
+        "path_not_found"
+    );
+    let same = session.call("buzzard_diff", json!({ "old": "add.vi", "new": "add.vi" }));
+    assert_eq!(same["isError"], false, "{same}");
     let unknown = session.request("resources/list", Value::Null);
     assert_eq!(unknown["error"]["code"], -32601);
     session.send_line("{ this is not json");
@@ -241,4 +266,57 @@ fn sees_files_written_during_the_session() {
     let (ok, stderr) = session.finish();
     assert!(ok);
     assert_eq!(stderr, "");
+}
+
+/// `buzzard mcp --root DIR` confines every path argument to the roots.
+#[test]
+fn a_root_confines_the_paths_of_every_tool() {
+    let dir = TempDir::new("mcp-root");
+    std::fs::create_dir(dir.0.join("in")).unwrap();
+    std::fs::create_dir(dir.0.join("out")).unwrap();
+    for name in ["in/Inside.vi", "out/Outside.vi"] {
+        dir.vi(name, &CLEAN, &[]);
+    }
+    let mut session = Session::start_with(&dir.0, &["--root", "in"]);
+    let inside = session.call("buzzard_inspect", json!({ "path": "in/Inside.vi" }));
+    assert_eq!(inside["isError"], false, "{inside}");
+    let outside = dir.0.join("out").join("Outside.vi");
+    for path in [
+        "out/Outside.vi",
+        "in/../out/Outside.vi",
+        &outside.to_string_lossy(),
+    ] {
+        let refused = session.call("buzzard_inspect", json!({ "path": path }));
+        assert_eq!(refused["isError"], true, "{path}: {refused}");
+        assert_eq!(
+            refused["structuredContent"]["error"]["kind"], "outside_root",
+            "{path}: {refused}"
+        );
+    }
+    let checked = session.call("buzzard_check", json!({ "paths": ["."] }));
+    assert_eq!(checked["isError"], true, "{checked}");
+    let (ok, stderr) = session.finish();
+    assert!(ok);
+    assert_eq!(stderr, "");
+
+    // Without a root the same path is read.
+    let mut session = Session::start(&dir.0);
+    let read = session.call("buzzard_inspect", json!({ "path": "out/Outside.vi" }));
+    assert_eq!(read["isError"], false, "{read}");
+    assert!(session.finish().0);
+
+    // A root that is not a directory stops the server before it serves.
+    for root in ["nowhere", "in/Inside.vi", "in\tside"] {
+        let output = Command::new(BIN)
+            .args(["mcp", "--root", root])
+            .current_dir(&dir.0)
+            .stdin(Stdio::null())
+            .output()
+            .expect("run the buzzard binary");
+        assert_eq!(output.status.code(), Some(2), "{root}");
+        assert!(output.stdout.is_empty(), "{root}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
+        assert!(stderr.starts_with("error: "), "{root}: {stderr}");
+        assert_eq!(stderr.lines().count(), 1, "{root}: {stderr}");
+    }
 }

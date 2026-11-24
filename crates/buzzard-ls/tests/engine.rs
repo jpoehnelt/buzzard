@@ -657,3 +657,60 @@ fn findings_about_members_are_published_for_the_archive() {
         ["Main.vi"]
     );
 }
+
+/// A file name is data. The hover of a file is Markdown, and the name is
+/// its heading, so a name with a line break or an escape sequence is
+/// printed on one line. The file is given to the engine as the watcher
+/// would give it, because Windows has no file of such a name.
+#[test]
+fn a_file_name_cannot_add_a_line_to_a_hover_or_a_message() {
+    let mut fx = Fixture::new("hostile-names");
+    let forged = fx.dir.join("a.vi\n# Forged heading");
+    let escape = fx.dir.join("\u{1b}[2Jb.vi");
+    let vi = |callee: &str| {
+        let bytes = RsrcBuilder::default()
+            .save_record(V23, &CLEAN)
+            .links(&[(callee, LvPath::sibling(callee))])
+            .build();
+        FileState::from_inspection(buzzard_lint::Inspection::from_bytes(&bytes))
+    };
+    let updates = fx.engine.apply(vec![
+        (forged.clone(), Some(vi("\u{1b}[2Jb.vi"))),
+        (escape.clone(), Some(vi("a.vi\n# Forged heading"))),
+        (
+            fx.dir.join("c.vi\rd.vi"),
+            Some(FileState::Failed("not a resource file".to_owned())),
+        ),
+    ]);
+
+    let parsed = fx.engine.hover(&forged).unwrap();
+    assert!(
+        parsed.starts_with("### a.vi\\n# Forged heading\n"),
+        "{parsed}"
+    );
+    let honest = fx.engine.hover(&escape).unwrap();
+    assert!(honest.starts_with("### \\u{1b}[2Jb.vi\n"), "{honest}");
+    let failed = fx.engine.hover(&fx.dir.join("c.vi\rd.vi")).unwrap();
+    assert_eq!(
+        failed,
+        "### c.vi\\rd.vi\n\nCannot analyze file: not a resource file\n"
+    );
+    for hover in [&parsed, &honest, &failed] {
+        assert!(!hover.contains(['\u{1b}', '\r']), "{hover}");
+        assert!(!hover.contains("\n# Forged heading"), "{hover}");
+    }
+
+    // The two files call each other. The message of the cycle names them
+    // on one line.
+    let cycles: Vec<&str> = updates
+        .iter()
+        .flat_map(|(_, diagnostics)| diagnostics)
+        .filter(|d| d.code == "BZ005")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(cycles.len(), 2, "{updates:?}");
+    for message in cycles {
+        assert_eq!(message.lines().count(), 1, "{message}");
+        assert!(!message.contains('\u{1b}'), "{message}");
+    }
+}

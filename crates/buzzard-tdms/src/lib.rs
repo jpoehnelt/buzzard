@@ -45,6 +45,7 @@ mod types;
 
 pub mod build;
 pub mod export;
+pub mod info;
 
 pub use error::{Anomaly, Error, Result};
 pub use file::{Channel, Chunks, DaqmxScaler, Group, OpenOptions, TdmsFile, Waveform};

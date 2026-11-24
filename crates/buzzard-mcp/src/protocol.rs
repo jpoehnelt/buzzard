@@ -2,10 +2,13 @@
 
 use std::io::{self, BufRead, ErrorKind, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use buzzard_lint::patharg::Confinement;
+use buzzard_lint::{ErrorKind as FailureKind, Failure};
 use serde_json::{json, Map, Value};
 
+use crate::prompts;
 use crate::tools::{self, State};
 
 /// Protocol revisions this server supports, newest first. The tool methods
@@ -37,8 +40,28 @@ impl Server {
     )]
     pub fn new(base: PathBuf) -> Self {
         Self {
-            state: State::new(&base),
+            state: State::new(&base, None),
         }
+    }
+
+    /// A server whose tools read only inside `roots`: `buzzard mcp --root`.
+    ///
+    /// Every path argument of every tool must lead inside one of the roots
+    /// once links and `..` are resolved. Any other path is refused with the
+    /// error kind `outside_root`. A relative root is resolved against
+    /// `base`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`Failure`] of the kind `bad_argument` when `roots` is
+    /// empty, or when a root is not an existing directory or holds a
+    /// control character.
+    pub fn confined(base: &Path, roots: &[PathBuf]) -> Result<Self, Failure> {
+        let roots: Vec<PathBuf> = roots.iter().map(|root| base.join(root)).collect();
+        let confinement = Confinement::new(&roots)?;
+        Ok(Self {
+            state: State::new(base, Some(confinement)),
+        })
     }
 
     /// Read messages from `reader` until end of input, writing one line to
@@ -144,15 +167,24 @@ impl Server {
 
     fn dispatch(&mut self, method: &str, params: Value) -> Result<Value, (i64, String)> {
         match method {
-            "initialize" => Ok(initialize(&params)),
+            "initialize" => Ok(initialize(&params, &tools::instructions(&self.state))),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+            "tools/list" => Ok(json!({ "tools": tools::definitions(&self.state) })),
             "tools/call" => self.call_tool(params),
+            "prompts/list" => Ok(json!({ "prompts": prompts::list() })),
+            "prompts/get" => prompts::get(&params)
+                .map_err(|reason| (INVALID_PARAMS, format!("Invalid params: {reason}"))),
             other => {
                 // The client chooses the method name, which can have any
                 // length, so the reply shows 64 characters at most.
                 let shown: String = other.chars().take(64).collect();
-                Err((METHOD_NOT_FOUND, format!("Method not found: {shown}")))
+                Err((
+                    METHOD_NOT_FOUND,
+                    format!(
+                        "Method not found: {}",
+                        buzzard_lint::printable::text(&shown)
+                    ),
+                ))
             }
         }
     }
@@ -167,7 +199,11 @@ impl Server {
         };
         if !tools::NAMES.contains(&name.as_str()) {
             let shown: String = name.chars().take(64).collect();
-            return Err((INVALID_PARAMS, format!("Unknown tool: {shown}")));
+            // The name is the caller's text, printed on one line.
+            return Err((
+                INVALID_PARAMS,
+                format!("Unknown tool: {}", buzzard_lint::printable::text(&shown)),
+            ));
         }
         let arguments = match params.remove("arguments") {
             None | Some(Value::Null) => Map::new(),
@@ -185,30 +221,29 @@ impl Server {
         let outcome = outcome.unwrap_or_else(|_| {
             self.state.forget();
             eprintln!("buzzard mcp: internal error in {name}");
-            Err(format!(
-                "internal error in {name}; this is a bug in buzzard"
+            Err(Failure::new(
+                FailureKind::Internal,
+                format!("internal error in {name}; this is a bug in buzzard"),
             ))
         });
         Ok(match outcome {
-            Ok(output) => {
-                let mut result = json!({
-                    "content": [{ "type": "text", "text": output.text }],
-                    "isError": false,
-                });
-                if let Some(structured) = output.structured {
-                    result["structuredContent"] = structured;
-                }
-                result
-            }
-            Err(message) => json!({
-                "content": [{ "type": "text", "text": message }],
+            Ok(output) => json!({
+                "content": [{ "type": "text", "text": output.text }],
+                "structuredContent": output.structured,
+                "isError": false,
+            }),
+            // The text is the message. The kind is for a caller that
+            // decides what to do next without reading prose.
+            Err(failure) => json!({
+                "content": [{ "type": "text", "text": failure.message }],
+                "structuredContent": failure.to_value(),
                 "isError": true,
             }),
         })
     }
 }
 
-fn initialize(params: &Value) -> Value {
+fn initialize(params: &Value, instructions: &str) -> Value {
     let requested = params.get("protocolVersion").and_then(Value::as_str);
     let version = SUPPORTED_PROTOCOL_VERSIONS
         .into_iter()
@@ -216,13 +251,13 @@ fn initialize(params: &Value) -> Value {
         .unwrap_or(SUPPORTED_PROTOCOL_VERSIONS[0]);
     json!({
         "protocolVersion": version,
-        "capabilities": { "tools": {} },
+        "capabilities": { "tools": {}, "prompts": {} },
         "serverInfo": {
             "name": "buzzard",
             "title": "buzzard static analyzer",
             "version": env!("CARGO_PKG_VERSION"),
         },
-        "instructions": tools::INSTRUCTIONS,
+        "instructions": instructions,
     })
 }
 
@@ -324,7 +359,7 @@ mod tests {
 
     #[test]
     fn negotiates_the_protocol_version() {
-        let version = |params: Value| initialize(&params)["protocolVersion"].clone();
+        let version = |params: Value| initialize(&params, "")["protocolVersion"].clone();
         assert_eq!(
             version(json!({ "protocolVersion": "2024-11-05" })),
             "2024-11-05"

@@ -482,6 +482,108 @@ fn a_member_name_cannot_forge_a_line_of_output() {
     }
 }
 
+/// A file on disk whose name holds a line break or an escape character is
+/// reported under that name on one line, as a member of an archive is. The
+/// file systems of some hosts refuse such a name, and the test then has
+/// nothing to check there.
+#[test]
+fn a_file_name_cannot_forge_a_line_of_output() {
+    let dir = TempDir::new("name-forge");
+    let inline = vi(&INLINE_CODE, &[]);
+    let hostile: [(&str, &[u8]); 3] = [
+        ("a.vi\nfake.vi: error[BZ999]: forged.vi", &inline),
+        ("\u{1b}[31mred.vi", &inline),
+        ("bad.vi\nUnparsed files (9)\n.vi", b"nope"),
+    ];
+    let created: Vec<&str> = hostile
+        .iter()
+        .filter(|(name, bytes)| fs::write(dir.0.join(name), bytes).is_ok())
+        .map(|(name, _)| *name)
+        .collect();
+    if created.is_empty() {
+        return;
+    }
+    write(&dir, "ok.vi", &inline);
+    // One line per finding and the summary, whatever the names hold.
+    let quiet = |text: &str| !text.chars().any(|c| c.is_ascii_control() && c != '\n');
+    let (code, stdout, stderr) = run(&["check", "."], &dir.0);
+    assert_eq!((code, stderr.as_str()), (1, ""));
+    assert!(quiet(&stdout), "{stdout:?}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), created.len() + 2, "{stdout}");
+    for line in &lines[..lines.len() - 1] {
+        assert!(
+            line.contains(": warning[BZ001]: ") || line.contains(": error[BZ000]: "),
+            "{line}"
+        );
+        assert!(!line.starts_with("fake.vi: error[BZ999]"), "{line}");
+    }
+    assert!(
+        lines.contains(&format!("ok.vi: {BZ001}").as_str()),
+        "{stdout}"
+    );
+    if created.contains(&hostile[0].0) {
+        assert!(
+            lines.contains(&format!("a.vi\\nfake.vi: error[BZ999]: forged.vi: {BZ001}").as_str()),
+            "{stdout}"
+        );
+    }
+    if created.contains(&hostile[1].0) {
+        assert!(
+            lines.contains(&format!("\\u{{1b}}[31mred.vi: {BZ001}").as_str()),
+            "{stdout}"
+        );
+    }
+    let (_, limited, _) = run(&["check", ".", "--limit", "1"], &dir.0);
+    assert!(quiet(&limited), "{limited:?}");
+    assert_eq!(limited.lines().count(), 3, "{limited}");
+
+    // JSON and SARIF carry the name itself, as an escaped string.
+    let (_, json, _) = run(&["check", ".", "--format", "json"], &dir.0);
+    let parsed: Value = serde_json::from_str(&json).expect("valid JSON");
+    let paths: Vec<&str> = parsed
+        .as_array()
+        .expect("a list")
+        .iter()
+        .map(|d| d["path"].as_str().expect("a path"))
+        .collect();
+    for name in &created {
+        assert!(paths.contains(name), "{name:?}: {paths:?}");
+    }
+    let (_, sarif, _) = run(&["check", ".", "--format", "sarif"], &dir.0);
+    assert!(serde_json::from_str::<Value>(&sarif).is_ok());
+
+    // The other reports of a directory print each name on one line too.
+    for args in [
+        &["verify", "."][..],
+        &["deps", "."],
+        &["deps", ".", "--format", "markdown"],
+        &["deps", ".", "--detail", "packages"],
+    ] {
+        let (code, stdout, stderr) = run(args, &dir.0);
+        assert!(code < 2, "{args:?}: {stderr}");
+        assert!(quiet(&stdout), "{args:?}: {stdout:?}");
+        assert!(quiet(&stderr), "{args:?}: {stderr:?}");
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line == "Unparsed files (9)"
+                    || line.starts_with("fake.vi: error[BZ999]")),
+            "{args:?}: {stdout}"
+        );
+    }
+    // Such a file is found by a scan. Named as an argument it is refused,
+    // with the name on one line.
+    for name in &created {
+        for command in ["check", "inspect", "verify", "deps"] {
+            let (code, stdout, stderr) = run(&[command, name], &dir.0);
+            assert_eq!((code, stdout.as_str()), (2, ""), "{command}");
+            assert!(quiet(&stderr), "{stderr:?}");
+            assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        }
+    }
+}
+
 /// A project library inside an archive is linted and inspected like one
 /// on disk, and its links are part of the dependency report.
 #[test]
