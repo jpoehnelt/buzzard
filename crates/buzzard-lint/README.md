@@ -5,7 +5,8 @@
 language server for LabVIEW files. The crate holds the lint rules, the
 dataflow checks, the project file parser, the dependency graph, SARIF
 output, block diagram rendering, the semantic diff, and the state machine
-checks.
+checks. The crate is for the `buzzard` binary. To run the analysis, install
+`buzzard-cli`.
 
 ## Stability
 

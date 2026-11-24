@@ -3,7 +3,8 @@
 `buzzard-mcp` is the Model Context Protocol (MCP) server of
 [buzzard](https://github.com/jpoehnelt/buzzard), a static analyzer for
 LabVIEW files. The server offers buzzard's analysis to AI agents as
-read-only tools over MCP's stdio transport.
+read-only tools over MCP's stdio transport. An agent's client starts it as
+`buzzard mcp`, which the `buzzard-cli` crate installs.
 
 ## Stability
 
@@ -16,17 +17,21 @@ a failed call, and the prompt `buzzard`.
 ## What the server promises an agent
 
 - The eleven tools are read-only. `tools/list` names and describes them.
-- A result is at most `max_bytes` bytes, 65536 by default. The size is the
-  text plus the `structuredContent` as compact JSON. A larger answer comes as
-  a smaller one whose `budget` entry names the size of the whole answer and
-  says how to get the rest. Only `buzzard_diagram` with `detail` `full`
-  returns more without `max_bytes`. A failed call is inside the budget too.
+- A result is at most `max_bytes` bytes, 65536 by default. A call that
+  passes less than 1024 fails with `bad_argument`. The size is the text plus
+  the `structuredContent` as compact JSON.
+  A larger answer comes as a smaller one with a `budget` entry. That entry
+  holds `max_bytes`, `full_bytes` for the size of the whole answer, and
+  `more`, which says how to get the rest. The one result without a bound is
+  `buzzard_diagram` with `detail` `full` and no `max_bytes`. A failed call is
+  inside the budget too.
 - `buzzard_diagram` returns a whole diagram in format `json` as the diagram
   itself, with the one key `root`. A diagram or a frame that is over the
   budget comes as its outline.
 - A failed call has `isError` set and carries
-  `{"error": {"kind", "message", "path"}}` as `structuredContent`. The kinds
-  are those of `buzzard_lint::ErrorKind`.
+  `{"error": {"kind", "message", "path"}}` as `structuredContent`, without
+  `path` when the error is about no path. The kinds are those of
+  `buzzard_lint::ErrorKind`, and `buzzard --help` lists them.
 - Every tool declares an `outputSchema`. The schemas are in
   `src/output_schemas.json`.
 - A path argument that holds a control character is refused. With

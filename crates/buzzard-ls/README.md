@@ -2,9 +2,14 @@
 
 `buzzard-ls` is the language server of
 [buzzard](https://github.com/jpoehnelt/buzzard), a static analyzer for
-LabVIEW files. The server speaks the Language Server Protocol over stdio
-and watches the file system. One worker task handles every change, so the
-server publishes diagnostics in order.
+LabVIEW files. The server speaks the Language Server Protocol over stdio.
+It publishes the problems that `buzzard check` reports as diagnostics, and
+answers symbol search, hover, and references. An editor starts it as
+`buzzard lsp`, which the `buzzard-cli` crate installs. The VS Code extension
+in the buzzard repository is one such client.
+
+The server watches the file system. One worker task handles every change, so
+the server publishes diagnostics in order.
 
 ## Stability
 

@@ -1,10 +1,10 @@
 # buzzard-tdms
 
-buzzard-tdms reads TDMS measurement files, the format that data-acquisition
-software logs test data in, and exports their channels to Parquet and CSV.
-The crate is built for test-stand logs. Such a log has hundreds of channels
-at about 1 kHz and a few at 100 kHz and more. Its file is several gigabytes
-of many small segments. The crate does not write TDMS files.
+`buzzard-tdms` reads TDMS measurement files, the format that LabVIEW and
+DAQmx log test data in, and exports their channels to Parquet and CSV. The
+crate is for Rust programs that read test-stand logs. Such a log has hundreds
+of channels at about 1 kHz and a few at 100 kHz and more. Its file is several
+gigabytes of many small segments. The crate does not write TDMS files.
 
 ## Read a file
 
@@ -49,8 +49,8 @@ samples. The reader splits a large read over the rayon thread pool.
 When a `.tdms_index` file lies beside the data file, the reader compares
 the lead-ins and metadata of the index file with the data file's, byte for
 byte. It compares every segment of a file of up to 64 segments. Of a longer
-file it compares the first, the last, and up to 64 evenly spaced segments,
-so it does not notice a difference in a segment that it skips. If the
+file it compares the first, the last, and up to 64 evenly spaced segments.
+The reader does not notice a difference in a segment that it skips. If the
 comparison passes, the reader takes the metadata from the index file. If
 not, it ignores the index file. `TdmsFile::index_source` says which file
 the reader used, and `OpenOptions::index_file(false)` turns the index file
@@ -160,11 +160,11 @@ write the chosen channels as one table. Each channel is one column named
 The `parquet` feature is off by default. Without it the crate depends on
 `bytemuck`, `rayon`, and `thiserror` only. Compression is Snappy or none.
 
-`info::to_text` is the report of `buzzard tdms info`. It prints every name
-and value from the file on one line, with a control character as its escape.
-The `json` feature,
-also off by default, adds `info::report` and `info::to_json` for the same
-report as JSON, and depends on `serde` and `serde_json`.
+`info::to_text` is the report of `buzzard tdms info`. No name or value from
+the file can break a line of that report. `info::to_text` writes each control
+character, and each character that reorders text, as its escape. The `json`
+feature, also off by default, adds `info::report` and `info::to_json` for the
+same report as JSON, and depends on `serde` and `serde_json`.
 
 ## How fast the reader is
 
@@ -215,5 +215,5 @@ program. None of its code, tests, or fixtures is in this repository. The
 records the boundary.
 
 "TDMS", "DAQmx", "LabVIEW", and "NI" name the format and the software that
-writes it. buzzard is not affiliated with, endorsed by, or sponsored by National
-Instruments Corporation.
+writes it. buzzard is not affiliated with, endorsed by, or sponsored by
+National Instruments Corporation.

@@ -16,8 +16,11 @@ says. To install the executable from a checkout of the
 cargo install --path crates/buzzard-cli
 ```
 
+Without a checkout, run `cargo install --git https://github.com/jpoehnelt/buzzard buzzard-cli`.
+Both commands need Rust 1.91 or later.
+
 When the extension does not find the executable, the status bar shows "Buzzard: not found" and a
-notification gives that command.
+notification gives the `cargo install --path` command.
 
 ## What the extension adds
 
@@ -29,8 +32,8 @@ The extension adds these views and commands:
 - **Buzzard: Show File Summary** shows the saved version, execution flags, dependencies, and caller
   counts of a file.
 - **Buzzard: Show Block Diagram** shows a picture of the block diagram of a `.vi` or `.ctl` file.
-- **Buzzard: Find Callers** lists the files that use a file. Selecting a caller reveals it in
-  Explorer.
+- **Buzzard: Find Callers** lists the files that use a file. When you select a caller, Explorer
+  shows it.
 - **Buzzard: Restart Server** restarts the language server. A click on the status bar item does
   the same.
 - **Buzzard Viewer** is a read-only editor for `.vi` and `.ctl` files. It shows the summary and the
@@ -55,7 +58,7 @@ VS Code cannot show a `.vi` or `.ctl` file as text, so it asks how to open one.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `buzzard.path` | `buzzard` | The executable. The extension looks up a bare name on `PATH`. It takes `~/...` from the home directory. It takes a relative path with a directory in it from the first workspace folder. |
+| `buzzard.path` | `buzzard` | The executable. The extension looks up a bare name on `PATH`. It resolves `~/...` against the home directory, and a relative path with a directory in it against the first workspace folder. |
 | `buzzard.trace.server` | `off` | `messages` or `verbose` logs the messages between the extension and the language server to the output panel. |
 
 ## Security and privacy

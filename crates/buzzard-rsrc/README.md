@@ -2,8 +2,9 @@
 
 `buzzard-rsrc` is a read-only parser for the binary RSRC container. LabVIEW
 saves `.vi`, `.ctl`, `.vit`, `.ctt`, and `.vim` files in that container, and
-an `.llb` archive holds many such files. The crate is pure Rust, has no
-`unsafe` code, and needs no LabVIEW installation.
+an `.llb` archive holds many such files. The crate is for Rust programs that
+read these files. It is pure Rust, has no `unsafe` code, and needs no
+LabVIEW installation.
 
 The parser reads the resource directory, the version and save settings, the
 owning libraries, the links to other files, the type table, and the block
@@ -52,7 +53,7 @@ separator, so do not join a member name to a path.
 
 To list the members of an archive, call `Llb::parse`. To get the bytes of
 one member, call `Llb::read`, and pass those bytes to the parsers above. For
-an archive on disk, read the bytes with `read_file`.
+an archive on disk, read the bytes with `buzzard_rsrc::read_file`.
 
 ```rust
 use buzzard_rsrc::builder::{LlbBuilder, RsrcBuilder};

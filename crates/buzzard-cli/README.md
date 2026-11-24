@@ -1,9 +1,11 @@
 # buzzard-cli
 
 `buzzard-cli` is the `buzzard` binary: a static analyzer, a language server,
-and a Model Context Protocol (MCP) server for LabVIEW files. The binary
-also reads TDMS measurement files. `buzzard` reads the files from disk and
-needs no LabVIEW installation.
+and a Model Context Protocol (MCP) server for LabVIEW files (`.vi`, `.ctl`,
+`.llb`, `.lvproj`, `.lvlib`, and `.lvclass`). The binary also reads TDMS
+measurement files. It is for LabVIEW developers who check their files in CI
+or in an editor, and for AI agents that read those files. `buzzard` reads
+the files from disk and needs no LabVIEW installation.
 
 ## Install
 
@@ -18,6 +20,8 @@ To build a binary without the Arrow and Parquet crates, add
 `tdms export` then writes CSV only.
 
 ## Run the commands
+
+Each line runs one command on example paths.
 
 ```sh
 buzzard check .                     # report the problems in a directory
@@ -38,12 +42,12 @@ buzzard mcp --root .                # MCP server over stdio, reading only below 
   `diff`, `verify`, and `tdms info`, and `--json` to `tdms export`.
 - To get a short answer first, pass `--limit <N>` to `check`,
   `--detail summary` to `inspect`, and `--detail packages` to `deps`. The full
-  JSON of `inspect` is often over 1 MB for one VI. To read one part of a block
-  diagram, pass `--structure <ID> --frame <N>` or
+  JSON of `inspect` can be over 1 MB for one VI. To read one part of a block
+  diagram, pass `--structure <ID> --frame <INDEX>` or
   `--first-node <ID> --last-node <ID>` with `--format json`.
-- To handle a failure, read the exit status and the error object. A command
-  that fails exits with status 2. With `--error-format json`, or with a JSON
-  or SARIF report format, it also prints
+- To handle an error, read the exit status and the error object. On an
+  error, a command exits with status 2. With `--error-format json`,
+  `--format json`, `--format sarif`, or `--json`, it also prints
   `{"error":{"kind":"...","message":"...","path":"..."}}` on one line of
   stdout. `buzzard --help` lists the kinds.
 - To see what `tdms export` would write, pass `--dry-run`. `export` does not
