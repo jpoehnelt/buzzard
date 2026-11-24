@@ -10,3 +10,7 @@ crates/buzzard-lint/tests/fixtures/project/** -text
 # TDMS fixtures are byte-exact copies of published measurement files.
 *.tdms binary
 *.tdms_index binary
+# The guide for agents is embedded in the binary and compared with the skill
+# file byte for byte.
+crates/buzzard-mcp/src/guide.md text eol=lf
+.claude/skills/buzzard/SKILL.md text eol=lf

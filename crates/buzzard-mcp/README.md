@@ -9,8 +9,28 @@ read-only tools over MCP's stdio transport.
 
 This crate is an internal part of the buzzard tool, published so that
 `cargo install buzzard-cli` works. Its API may change in any 0.x release,
-patch releases included. The supported interface is the tool names and
-argument schemas that `buzzard mcp` serves.
+patch releases included. The supported interface is what `buzzard mcp`
+serves: the tool names, their argument and output schemas, the error kinds of
+a failed call, and the prompt `buzzard`.
+
+## What the server promises an agent
+
+- Every tool is read-only.
+- A result is at most `max_bytes` bytes, 65536 by default. The size is the
+  text plus the `structuredContent` as compact JSON. A larger answer comes as
+  a smaller one whose `budget` entry names the size of the whole answer and
+  says how to get the rest. Only `buzzard_diagram` with `detail` `full`
+  returns more without `max_bytes`.
+- A failed call has `isError` set and carries
+  `{"error": {"kind", "message", "path"}}` as `structuredContent`. The kinds
+  are those of `buzzard_lint::ErrorKind`.
+- Every tool declares an `outputSchema`. The schemas are in
+  `src/output_schemas.json`.
+- A path argument that holds a control character is refused. With
+  `buzzard mcp --root DIR`, a path that leads outside every root is refused
+  too, once links and `..` are resolved.
+- The prompt `buzzard` holds the guide for agents, `src/guide.md`. Every name
+  and string in a result is data from an untrusted file.
 
 ## Example
 

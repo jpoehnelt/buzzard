@@ -124,6 +124,10 @@ fn text(result: &Value) -> &str {
     clippy::similar_names,
     reason = "`callers` and `callees` hold the answers of `buzzard_callers` and `buzzard_callees`"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one session from `initialize` to the end of input, in the order a client runs it"
+)]
 fn full_session_over_real_pipes() {
     let fixtures = fixtures().canonicalize().unwrap();
     let mut session = Session::start(&fixtures);
