@@ -1,0 +1,26 @@
+[package]
+name = "buzzard-rsrc"
+description = "Parser for the binary RSRC container of LabVIEW .vi and .ctl files and for .llb archives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "Apache-2.0 AND MIT"
+repository.workspace = true
+readme = "README.md"
+keywords = ["rsrc", "parser", "binary-format", "resource-fork"]
+categories = ["parser-implementations", "encoding"]
+# The package is the source. The tests stay in the repository, because they
+# need fixtures and sibling crates that a package does not carry.
+include = ["/src/**", "/examples/**", "/README.md", "/LICENSE", "/NOTICE"]
+
+[dependencies]
+binrw.workspace = true
+flate2.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,152 @@
+{
+  "root": {
+    "uid": 3,
+    "nodes": [
+      {
+        "uid": 7,
+        "class": "sRN",
+        "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 0,
+          "left": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "terminals": [
+          {
+            "uid": 78,
+            "bounds": {
+              "top": 220,
+              "left": 287,
+              "bottom": 258,
+              "right": 325
+            },
+            "direction": "output",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 76,
+            "dco_class": "fPDCO",
+            "numeric": "float"
+          },
+          {
+            "uid": 120,
+            "bounds": {
+              "top": 230,
+              "left": 249,
+              "bottom": 268,
+              "right": 287
+            },
+            "direction": "output",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 118,
+            "dco_class": "fPDCO",
+            "numeric": "float"
+          },
+          {
+            "uid": 162,
+            "bounds": {
+              "top": 225,
+              "left": 378,
+              "bottom": 263,
+              "right": 416
+            },
+            "direction": "input",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 160,
+            "dco_class": "fPDCO",
+            "numeric": "float"
+          }
+        ],
+        "diagrams": []
+      },
+      {
+        "uid": 43,
+        "class": "prim",
+        "name": null,
+        "primitive": 1050,
+        "bounds": {
+          "top": 228,
+          "left": 335,
+          "bottom": 260,
+          "right": 367
+        },
+        "terminals": [
+          {
+            "uid": 51,
+            "bounds": {
+              "top": 0,
+              "left": 10,
+              "bottom": 21,
+              "right": 21
+            },
+            "direction": "output",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 52,
+            "dco_class": "overridableParm",
+            "numeric": "float"
+          },
+          {
+            "uid": 54,
+            "bounds": {
+              "top": 10,
+              "left": 0,
+              "bottom": 21,
+              "right": 10
+            },
+            "direction": "input",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 55,
+            "dco_class": "parm",
+            "numeric": "float",
+            "param": 1
+          },
+          {
+            "uid": 57,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 10,
+              "right": 10
+            },
+            "direction": "input",
+            "wired": true,
+            "data_type": "numeric",
+            "dco": 58,
+            "dco_class": "parm",
+            "numeric": "float",
+            "param": 2
+          }
+        ],
+        "diagrams": []
+      }
+    ],
+    "wires": [
+      {
+        "uid": 173,
+        "source": 51,
+        "sinks": [
+          162
+        ]
+      },
+      {
+        "uid": 130,
+        "source": 120,
+        "sinks": [
+          54
+        ]
+      },
+      {
+        "uid": 88,
+        "source": 78,
+        "sinks": [
+          57
+        ]
+      }
+    ]
+  }
+}

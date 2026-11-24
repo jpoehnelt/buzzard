@@ -1,0 +1,50 @@
+file: waveforms-point21.tdms
+size: 526053 bytes
+segments: 2 (version 4713)
+metadata read from: the data file
+anomalies: none
+properties:
+  name (string) = Waveforms Point21
+group 'Configuration0_Impact00' (2 channels)
+  channel 'cDAQ1Mod1_ai0': f64, 32768 values, unit Newtons, increment 0.0001171875
+    wf_start_time (timestamp) = 2020-03-06T23:57:13.467563749Z
+    wf_start_offset (f64) = 0
+    wf_increment (f64) = 0.0001171875
+    wf_samples (i32) = 32768
+    NI_ChannelName (string) = cDAQ1Mod1_ai0
+    NI_SV_AnalogSWTrigger (bool) = true
+    NI_SV_PretriggerSamples (i32) = 8
+    NI_SV_SensorMaximum (f64) = 444
+    NI_SV_SensorSensitivity (f64) = 11.2
+    NI_SV_SensorType (string) = Force (IEPE)
+    NI_SV_TriggerHysteresis (f64) = 0
+    NI_SV_TriggerLevel (f64) = 1
+    NI_SV_TriggerSlope (i32) = 1
+    NI_UnitDescription (string) = Newtons
+    unit_string (string) = Newtons
+    NI_LabVIEWDatatype (string) = 2: Time Waveform
+    NI_XDimension (string) = 0: Time (s)
+    NI_FunctionSubType (string) = 2: Scaled engineering units
+    NI_FunctionType (string) = 0: Signal
+    wf_xunit_string (string) = s
+    wf_xname (string) = Time
+    label (string) = Amplitude
+  channel 'cDAQ1Mod1_ai1': f64, 32768 values, unit g, increment 0.0001171875
+    wf_start_time (timestamp) = 2020-03-06T23:57:13.467563749Z
+    wf_start_offset (f64) = 0
+    wf_increment (f64) = 0.0001171875
+    wf_samples (i32) = 32768
+    NI_ChannelName (string) = cDAQ1Mod1_ai1
+    NI_SV_SensorMaximum (f64) = 50
+    NI_SV_SensorSensitivity (f64) = 100
+    NI_SV_SensorType (string) = Accelerometer
+    NI_UnitDescription (string) = g
+    unit_string (string) = g
+    NI_dBReference (f64) = 1
+    NI_LabVIEWDatatype (string) = 2: Time Waveform
+    NI_XDimension (string) = 0: Time (s)
+    NI_FunctionSubType (string) = 2: Scaled engineering units
+    NI_FunctionType (string) = 0: Signal
+    wf_xunit_string (string) = s
+    wf_xname (string) = Time
+    label (string) = Amplitude

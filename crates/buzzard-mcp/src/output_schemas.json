@@ -1,0 +1,1551 @@
+{
+  "buzzard_check": {
+    "type": "object",
+    "properties": {
+      "diagnostics": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "related": {
+              "type": "array"
+            },
+            "severity": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "The problems that are shown, sorted by path, then code. `path` and `related` name files."
+      },
+      "summary": {
+        "type": "object",
+        "properties": {
+          "by_code": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "files": {
+            "type": "integer"
+          },
+          "infos": {
+            "type": "integer"
+          },
+          "problems": {
+            "type": "integer"
+          },
+          "shown": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "integer"
+          },
+          "not_shown": {
+            "type": "integer"
+          }
+        },
+        "description": "Counts over every problem, shown or not. `shown` is the length of `diagnostics`, `not_shown` is the number of problems left out, as in `buzzard check --limit`, and `truncated` says whether any were."
+      }
+    }
+  },
+  "buzzard_verify": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "findings": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "confidence": {
+                    "type": "string"
+                  },
+                  "handled_by": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "justification": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  }
+                }
+              }
+            },
+            "machines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "exact": {
+                    "type": "boolean"
+                  },
+                  "findings": {
+                    "type": "array"
+                  },
+                  "machine": {
+                    "type": "object"
+                  },
+                  "reachable": {
+                    "type": [
+                      "array",
+                      "null"
+                    ],
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "transitions": {
+                    "type": "array"
+                  }
+                }
+              }
+            },
+            "path": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "queue_machines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "default": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "enqueued": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "location": {
+                    "type": "string"
+                  },
+                  "states": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "unhandled": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "The files that have a state machine, sorted by path, each with its machines and findings. Absent for format `dot` and in a reduced answer."
+      },
+      "unreadable": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "description": "Files that could not be read or parsed, each as a pair of path and reason."
+      },
+      "incomplete": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Files whose block diagram did not decode completely. Nothing is claimed about classic state machines on them."
+      },
+      "summary": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "integer"
+          },
+          "files_with_machines": {
+            "type": "integer"
+          },
+          "files_without_machines": {
+            "type": "integer"
+          },
+          "findings": {
+            "type": "integer"
+          },
+          "heuristic": {
+            "type": "integer"
+          },
+          "incomplete": {
+            "type": "integer"
+          },
+          "machines": {
+            "type": "integer"
+          },
+          "proven": {
+            "type": "integer"
+          },
+          "queue_machines": {
+            "type": "integer"
+          },
+          "structural": {
+            "type": "integer"
+          }
+        },
+        "description": "Counts over all files: files, machines, and findings by confidence."
+      }
+    }
+  },
+  "buzzard_deps": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "integer",
+        "description": "Number of files that were scanned, parsed or not."
+      },
+      "roots": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "directory": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "packages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "integer"
+                  },
+                  "found": {
+                    "type": "integer"
+                  },
+                  "missing": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": [
+                      "null",
+                      "string"
+                    ]
+                  },
+                  "referrers": {
+                    "type": "integer"
+                  },
+                  "targets": {
+                    "type": "array"
+                  },
+                  "unchecked": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "root": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "The symbolic roots that links start with, sorted by name, each with its packages. With `detail` \"packages\" a package holds counts. With \"files\" it holds `targets`, each with its status and the files that use it."
+      },
+      "absolute": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "referrers": {
+              "type": [
+                "array",
+                "integer"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Machine-absolute links, sorted by target. `referrers` is a count with `detail` \"packages\" and the list of files with \"files\"."
+      },
+      "missing": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string"
+            },
+            "referrers": {
+              "type": [
+                "array",
+                "integer"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Relative links with no file at their location, in the shape of `absolute`."
+      },
+      "unparsed": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "path": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        },
+        "description": "Files that could not be read or parsed, with the reason."
+      },
+      "unused_roots": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Names in `roots` that no link starts with. Absent when there are none."
+      }
+    }
+  },
+  "buzzard_inspect": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The file that was inspected."
+      },
+      "metadata": {
+        "type": "object",
+        "properties": {
+          "file_type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "flags": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "auto_error_handling": {
+                "type": "boolean"
+              },
+              "breakpoint_count": {
+                "type": "integer"
+              },
+              "clear_indicators": {
+                "type": "boolean"
+              },
+              "debuggable": {
+                "type": "boolean"
+              },
+              "has_breakpoints": {
+                "type": "boolean"
+              },
+              "inline": {
+                "type": "boolean"
+              },
+              "locked": {
+                "type": "boolean"
+              },
+              "reentrancy": {
+                "type": "string"
+              },
+              "run_on_open": {
+                "type": "boolean"
+              },
+              "saved_for_previous": {
+                "type": "boolean"
+              },
+              "separate_compiled_code": {
+                "type": "boolean"
+              },
+              "suspend_when_called": {
+                "type": "boolean"
+              }
+            }
+          },
+          "kind": {
+            "type": "string"
+          },
+          "libraries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "heap_uids": {
+                  "type": "array"
+                },
+                "link_type": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "qualified_name": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "password_protected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "resource_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "saved_name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "version": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "build": {
+                "type": "integer"
+              },
+              "major": {
+                "type": "integer"
+              },
+              "minor": {
+                "type": "integer"
+              },
+              "patch": {
+                "type": "integer"
+              },
+              "stage": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "For a .vi or .ctl: kind, saved version, flags, owning libraries, and the stored links to other files."
+      },
+      "has_block_diagram": {
+        "type": "boolean",
+        "description": "For a .vi or .ctl: whether buzzard_diagram can export a block diagram."
+      },
+      "project": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "lv_version": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "dependency": {
+                  "type": "boolean"
+                },
+                "item_type": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "name": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "parent_class": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "link": {
+                "type": "object"
+              },
+              "name": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "path": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              },
+              "qualified_name": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "description": "For a .lvproj, .lvlib, or .lvclass: kind, version, members, and parent class."
+      },
+      "archive": {
+        "type": "object",
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file_type": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "id": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "size": {
+                  "type": "integer"
+                },
+                "storage": {
+                  "type": "string"
+                },
+                "stored_size": {
+                  "type": "integer"
+                },
+                "version": {}
+              }
+            }
+          },
+          "unlisted": {
+            "type": "integer"
+          }
+        },
+        "description": "For an .llb archive: its directory of members."
+      },
+      "member_paths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "For an .llb archive: the member path of each member that the tools open."
+      }
+    }
+  },
+  "buzzard_callers": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The file that was asked about, named as its archive names it."
+      },
+      "root": {
+        "type": "string",
+        "description": "The directory that was scanned."
+      },
+      "scanned_files": {
+        "type": "integer",
+        "description": "Number of analyzable files under `root`."
+      },
+      "callers": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The files under `root` that use `path`, sorted."
+      }
+    }
+  },
+  "buzzard_callees": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The file that was asked about, named as its archive names it."
+      },
+      "root": {
+        "type": "string",
+        "description": "The directory that was scanned."
+      },
+      "scanned_files": {
+        "type": "integer",
+        "description": "Number of analyzable files under `root`."
+      },
+      "callees": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "The files under `root` that `path` uses, sorted."
+      }
+    }
+  },
+  "buzzard_symbols": {
+    "type": "object",
+    "properties": {
+      "root": {
+        "type": "string",
+        "description": "The directory that was scanned."
+      },
+      "query": {
+        "type": "string",
+        "description": "The query, as given."
+      },
+      "matches": {
+        "type": "integer",
+        "description": "Number of files that match, shown or not."
+      },
+      "symbols": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "path": {
+              "type": [
+                "null",
+                "string"
+              ]
+            }
+          }
+        },
+        "description": "The best matches, at most `limit`: file name, kind, and path."
+      }
+    }
+  },
+  "buzzard_rules": {
+    "type": "object",
+    "properties": {
+      "rules": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "severity": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Every rule: code, name, default severity, and meaning."
+      }
+    }
+  },
+  "buzzard_diff": {
+    "type": "object",
+    "properties": {
+      "old": {
+        "type": "string",
+        "description": "The old revision, as given."
+      },
+      "new": {
+        "type": "string",
+        "description": "The new revision, as given."
+      },
+      "identical": {
+        "type": "boolean",
+        "description": "Whether nothing differs. Moves left out by `ignore_moves` do not count."
+      },
+      "summary": {
+        "type": "object",
+        "properties": {
+          "dependencies_added": {
+            "type": "integer"
+          },
+          "dependencies_removed": {
+            "type": "integer"
+          },
+          "moves_ignored": {
+            "type": "integer"
+          },
+          "nodes_added": {
+            "type": "integer"
+          },
+          "nodes_changed": {
+            "type": "integer"
+          },
+          "nodes_moved": {
+            "type": "integer"
+          },
+          "nodes_removed": {
+            "type": "integer"
+          },
+          "settings_changed": {
+            "type": "integer"
+          },
+          "wires_added": {
+            "type": "integer"
+          },
+          "wires_changed": {
+            "type": "integer"
+          },
+          "wires_removed": {
+            "type": "integer"
+          }
+        },
+        "description": "How many entries each list holds."
+      },
+      "notes": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "What the reader must know to interpret the rest, for example that one side does not exist. Absent in a reduced answer, as are the lists below."
+      },
+      "settings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "new": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "old": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "setting": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Settings of the file that differ."
+      },
+      "dependencies": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                }
+              }
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "path": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Links added and removed."
+      },
+      "nodes": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "class": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "array"
+                },
+                "uid": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "details": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "matched_by": {
+                  "type": "string"
+                },
+                "node": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "old_uid": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "moved": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "matched_by": {
+                  "type": "string"
+                },
+                "node": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "old_uid": {
+                  "type": "integer"
+                },
+                "to": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                }
+              }
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "class": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "location": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "uid": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "description": "Block diagram nodes added, removed, changed, and moved."
+      },
+      "wires": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "data_type": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "from": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "location": {
+                  "type": "array"
+                },
+                "to": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                }
+              }
+            }
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "old_from_terminal": {
+                  "type": "integer"
+                },
+                "old_to_terminal": {
+                  "type": "integer"
+                },
+                "wire": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "removed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "data_type": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "from": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                },
+                "location": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "to": {
+                  "type": [
+                    "null",
+                    "object"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "description": "Block diagram connections added, removed, and re-attached."
+      }
+    }
+  },
+  "buzzard_tdms_info": {
+    "type": "object",
+    "properties": {
+      "file": {
+        "type": "string",
+        "description": "The file that was described."
+      },
+      "size": {
+        "type": "integer",
+        "description": "Size of the file in bytes."
+      },
+      "segments": {
+        "type": "integer",
+        "description": "Number of segments."
+      },
+      "versions": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        },
+        "description": "The format versions of the segments."
+      },
+      "index": {
+        "type": "string",
+        "enum": [
+          "data_file",
+          "index_file",
+          "index_file_rejected"
+        ],
+        "description": "Where the metadata was read from: the data file, or the .tdms_index file beside it."
+      },
+      "anomalies": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "What is wrong with a truncated or unfinished file. Empty for a sound file."
+      },
+      "properties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "value": {},
+            "seconds": {
+              "type": "integer"
+            },
+            "fractions": {
+              "type": "integer"
+            }
+          }
+        },
+        "description": "The properties of the file. `value` has the JSON type that fits the property `type`."
+      },
+      "groups": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "properties": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "value": {},
+                  "seconds": {
+                    "type": "integer"
+                  },
+                  "fractions": {
+                    "type": "integer"
+                  }
+                }
+              }
+            },
+            "channels": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "length": {
+                    "type": "integer"
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "waveform": {
+                    "type": "object"
+                  },
+                  "scalers": {
+                    "type": "array"
+                  },
+                  "scaling": {
+                    "type": "string"
+                  },
+                  "properties": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string"
+                        },
+                        "value": {},
+                        "seconds": {
+                          "type": "integer"
+                        },
+                        "fractions": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "description": "Every group with its channels: data type, length, unit, waveform timing, scaling, and properties. Absent in a reduced answer."
+      },
+      "group_count": {
+        "type": "integer",
+        "description": "Only in a reduced answer: the number of groups."
+      },
+      "channel_count": {
+        "type": "integer",
+        "description": "Only in a reduced answer: the number of channels."
+      }
+    }
+  },
+  "buzzard_diagram": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "The file whose diagram was read."
+      },
+      "format": {
+        "type": "string",
+        "enum": [
+          "markdown",
+          "json",
+          "mermaid",
+          "dot",
+          "svg"
+        ],
+        "description": "The format of the text."
+      },
+      "detail": {
+        "type": "string",
+        "enum": [
+          "full",
+          "summary",
+          "frame",
+          "nodes"
+        ],
+        "description": "What was returned: the whole diagram, its outline, one frame, or a range of nodes."
+      },
+      "outline": {
+        "type": "object",
+        "properties": {
+          "callees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "calls": {
+                  "type": "integer"
+                },
+                "class": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                }
+              }
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "diagrams": {
+            "type": "integer"
+          },
+          "losses": {
+            "type": "array"
+          },
+          "node_classes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "node_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer"
+            }
+          },
+          "nodes": {
+            "type": "integer"
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "class": {
+                  "type": "string"
+                },
+                "depth": {
+                  "type": "integer"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "frames": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "index": {
+                        "type": "integer"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "nodes": {
+                        "type": "integer"
+                      },
+                      "wires": {
+                        "type": "integer"
+                      },
+                      "all_nodes": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "description": "`nodes` and `wires` count what is directly in the frame. `all_nodes` counts the nodes of the frame and of every structure inside it, and the size of the frame as JSON follows it."
+                },
+                "parent": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "uid": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "terminals": {
+            "type": "integer"
+          },
+          "wires": {
+            "type": "integer"
+          }
+        },
+        "description": "With `detail` \"summary\": counts, the range of node ids, node classes with counts, callees, the structures with their frames, and the kinds of loss the decoder recorded. `complete` is false when anything was lost. With `structure` and `frame`, the outline of that frame."
+      },
+      "structure": {
+        "type": "integer",
+        "description": "With `detail` \"frame\": the id of the structure."
+      },
+      "frame_index": {
+        "type": "integer",
+        "description": "With `detail` \"frame\": the index of the frame."
+      },
+      "frame": {
+        "$ref": "#/$defs/diagram",
+        "description": "With `detail` \"frame\": the nodes and wires of that frame."
+      },
+      "first_node": {
+        "type": "integer",
+        "description": "With `detail` \"nodes\": the first id of the range."
+      },
+      "last_node": {
+        "type": "integer",
+        "description": "With `detail` \"nodes\": the last id of the range."
+      },
+      "nodes": {
+        "type": "array",
+        "items": {
+          "$ref": "#/$defs/node"
+        },
+        "description": "With `detail` \"nodes\": the nodes of the range, each with everything inside it."
+      },
+      "root": {
+        "$ref": "#/$defs/diagram",
+        "description": "When the whole diagram is returned in format `json`: the decoded graph, as `buzzard inspect --format json` holds it under `diagram`. It then stands alone, without `path`, `format`, and `detail`."
+      }
+    },
+    "$defs": {
+      "diagram": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "integer"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/node"
+            }
+          },
+          "wires": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "uid": {
+                  "type": "integer"
+                },
+                "source": {
+                  "type": "integer"
+                },
+                "sinks": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "losses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "node": {
+        "type": "object",
+        "properties": {
+          "uid": {
+            "type": "integer"
+          },
+          "class": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "primitive": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "bounds": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "terminals": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "uid": {
+                  "type": "integer"
+                },
+                "bounds": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "direction": {
+                  "type": "string"
+                },
+                "wired": {
+                  "type": "boolean"
+                },
+                "data_type": {},
+                "dco": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "dco_class": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "numeric": {},
+                "constant": {},
+                "tunnel": {},
+                "param": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "diagrams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/diagram"
+            }
+          },
+          "selector": {
+            "type": "object"
+          },
+          "loop_info": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

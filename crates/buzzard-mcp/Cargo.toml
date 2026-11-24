@@ -1,0 +1,25 @@
+[package]
+name = "buzzard-mcp"
+description = "Model Context Protocol server exposing buzzard's analysis as tools for AI agents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["mcp", "static-analysis", "ai-agents", "lint"]
+categories = ["development-tools"]
+# The package is the source. The tests stay in the repository, because they
+# need fixtures and sibling crates that a package does not carry.
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
+
+[dependencies]
+buzzard-lint.workspace = true
+buzzard-ls.workspace = true
+buzzard-rsrc.workspace = true
+buzzard-tdms = { workspace = true, features = ["json"] }
+serde_json.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

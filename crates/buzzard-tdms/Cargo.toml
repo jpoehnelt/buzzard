@@ -1,0 +1,54 @@
+[package]
+name = "buzzard-tdms"
+description = "Read-only reader for TDMS measurement files, with Parquet and CSV export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["tdms", "measurement", "daq", "parquet", "parser"]
+categories = ["parser-implementations", "science", "encoding"]
+# The package is the source. The tests stay in the repository, with the
+# measurement file they read (CC-BY-4.0, see the root NOTICE).
+include = ["/src/**", "/examples/**", "/README.md", "/LICENSE", "/NOTICE"]
+
+# docs.rs builds with every feature so that `export::parquet` and the JSON
+# report of `info` are documented.
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+# Enables the Parquet export (`buzzard_tdms::export::parquet`). It is off by
+# default so that the reader alone builds with three dependencies.
+# `buzzard-cli` turns it on.
+parquet = ["dep:parquet", "dep:arrow-array", "dep:arrow-schema"]
+# Enables the JSON form of the file report (`buzzard_tdms::info::report`).
+# `buzzard-cli` and `buzzard-mcp` turn it on.
+json = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+bytemuck.workspace = true
+rayon.workspace = true
+thiserror.workspace = true
+# The workspace enables Snappy only. zstd is left out because `zstd-sys` is
+# `BSD-3-Clause AND BSD-2-Clause` and BSD-2-Clause is not allowed in `deny.toml`.
+parquet = { workspace = true, optional = true }
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+parquet.workspace = true
+arrow-array.workspace = true
+serde_json.workspace = true
+
+[[example]]
+name = "tdms_bench"
+required-features = ["parquet"]
+
+[lints]
+workspace = true

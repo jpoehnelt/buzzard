@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+  # The release workflow runs every job here before it publishes anything.
+  workflow_call:
+
+# A new push to a pull request supersedes the run before it. Runs on main are
+# never cancelled, so every merged commit gets a full result and a saved cache.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A fresh runner never reuses incremental artifacts. They only slow the
+  # build down and enlarge the cache.
+  CARGO_INCREMENTAL: 0
+  # Debug info is the bulk of compile and link time and of the cache size.
+  # Panic locations and symbolized backtraces do not need it.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  # Retry after a transient registry or download failure.
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+
+jobs:
+  # This job needs no compilation, so it fails within seconds on unformatted
+  # code.
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  # Clippy and rustdoc share the dependency metadata, so they share a job.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The toolchain is pinned so that a new Rust release cannot fail CI with
+      # lints that are new in it. To move up, change this version, run
+      # `cargo +<version> clippy --workspace --all-targets -- -D warnings`
+      # and the doc build below, and fix what they report in the same commit.
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: 1.100.0
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Building first keeps compile time and test time apart in the log.
+      - run: cargo test --workspace --locked --no-run
+      - run: cargo test --workspace --locked
+
+  # This job builds with the oldest toolchain that Cargo.toml says the crates
+  # support.
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: msrv
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo check --workspace --all-targets --locked
+
+  # This job checks advisories, licenses, duplicate crates, and sources, as
+  # deny.toml configures them. It needs no compilation, only Cargo.lock and the
+  # RustSec database.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          arguments: --all-features --locked
+
+  # This job builds every crate from its packaged files alone, as crates.io
+  # would receive them. It resolves the crates of the workspace from the
+  # packages just made, so it catches a file that `include` in a Cargo.toml
+  # leaves out. It publishes nothing and needs Cargo 1.90 or later.
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo package --workspace --locked
+
+  # This job checks the VS Code extension under editors/vscode, which is
+  # TypeScript and outside the Cargo workspace. Its unit tests also run the
+  # real `buzzard` on a real file, so the job builds the binary first.
+  vscode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+        working-directory: editors/vscode
+      - run: npm run lint
+        working-directory: editors/vscode
+      - run: npm run compile
+        working-directory: editors/vscode
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --locked -p buzzard-cli
+      - run: npm test
+        working-directory: editors/vscode
+        env:
+          BUZZARD_BIN: ${{ github.workspace }}/target/debug/buzzard
+          BUZZARD_FIXTURE: ${{ github.workspace }}/crates/buzzard-rsrc/tests/fixtures/pylabview/empty_vifile.vi
+      # This step proves that the extension still packages. It publishes
+      # nothing.
+      - run: npm run package
+        working-directory: editors/vscode
+
+  # This job compares the TDMS reader with npTDMS
+  # (crates/buzzard-tdms/tests/oracle). npTDMS is installed from PyPI and run
+  # as a separate program. It is LGPL and is never linked, vendored, or
+  # shipped. pytest is installed because the test scenarios that the npTDMS
+  # wheel ships import it.
+  tdms-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # This step uses the runner's own Python. A virtual environment keeps
+      # pip off the system packages. Both versions are pinned so that a new
+      # release of npTDMS or pytest cannot change what CI compares against.
+      # Change a version only in a commit made for that purpose.
+      - run: |
+          python3 -m venv "$RUNNER_TEMP/oracle"
+          "$RUNNER_TEMP/oracle/bin/pip" install npTDMS==1.14.0 pytest==9.2.0
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo test --locked -p buzzard-tdms --test oracle --no-run
+      - run: |
+          BUZZARD_TDMS_ORACLE="$RUNNER_TEMP/oracle/bin/python" \
+            cargo test --locked -p buzzard-tdms --test oracle -- --nocapture
+        env:
+          # With this variable the test fails when the shipped scenarios
+          # cannot be run. Without it the test skips them.
+          BUZZARD_TDMS_ORACLE_STRICT: 1
+
+  # Require this one check in branch protection. It fails if any job above
+  # failed or was cancelled, so the list of jobs can change without a change
+  # to the repository settings.
+  ci:
+    if: always()
+    needs: [fmt, lint, test, msrv, deny, package, vscode, tdms-oracle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: jq -e 'all(.[]; .result == "success")' <<< "$NEEDS"
+        env:
+          NEEDS: ${{ toJSON(needs) }}

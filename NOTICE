@@ -1,0 +1,210 @@
+buzzard
+Copyright (c) 2026 buzzard contributors
+
+buzzard is licensed under the Apache License, Version 2.0 (see LICENSE). Two
+generated source files contain data from third-party projects. The test
+fixtures are unmodified third-party files and are not part of any published
+package. This file records what was taken and on what terms.
+
+buzzard is not affiliated with, authorized by, endorsed by, or sponsored by
+National Instruments Corporation. LabVIEW, NI, and National Instruments are
+trademarks of National Instruments Corporation, used only to identify the
+file format that buzzard reads.
+
+
+Built-in function names, from LVKit
+===================================
+
+File:     crates/buzzard-rsrc/src/blocks/heap/primitives.rs
+Source:   LVKit, https://github.com/pragmatest-dev/lvkit
+          src/lvkit/data/primitives/*.json
+          commit b0430f03e4a6a0ce9b1015215efb1cce6d7509ff
+Licence:  Apache License, Version 2.0 (full text in LICENSE)
+          Copyright 2025-2026 Ryan Friedman
+
+What was taken: for each built-in function, its resource id, its name, and
+LVKit's `verified` flag. Nothing else was copied: no descriptions, no
+documentation links, no terminal names, no code, and nothing from LVKit's
+standard-library data (src/lvkit/data/vilib).
+
+Changes made (Apache-2.0, section 4(b)): the data was modified. The entries
+of 77 JSON files were flattened into one Rust table sorted by id, reduced to
+the three fields above, and 3 entries whose name is a placeholder ("Unknown",
+"Unknown ...") were left out, leaving 687 of 690. The table is produced by
+tools/gen_primitives.py and is not edited by hand.
+
+Provenance of the names: 487 of the 690 entries in LVKit (484 of the 687 kept
+here) are tagged by LVKit as coming from "vi-scripting-nodes-lv2025". That is
+a list of function ids, names and terminals that a third party produced with
+the VI Scripting interface of LabVIEW 2025 and attached, without a licence
+statement, to LVKit issue #59 (https://github.com/pragmatest-dev/lvkit/issues/59).
+LVKit merged it into its table. buzzard takes the result from LVKit under
+LVKit's licence and has not seen the original export. The owner of buzzard
+accepted this origin knowingly: the names are facts about the file format,
+not creative text. The table is kept in one generated file so that it can be
+replaced by an independently derived one. buzzard has not checked any name
+against LabVIEW; 162 entries are marked verified by LVKit, the rest are not.
+
+The NOTICE file distributed with LVKit at that commit reads as follows
+(reproduced as Apache-2.0, section 4(d) requires; its statements are LVKit's,
+about LVKit, and the paragraph above qualifies the fourth and fifth):
+
+    lvkit
+    Copyright 2025-2026 Ryan Friedman
+
+    This product is an independent, clean-room project. It is not affiliated with,
+    authorized by, endorsed by, or sponsored by National Instruments Corporation.
+
+    LabVIEW, NI, and National Instruments are trademarks of National Instruments
+    Corporation, used herein only to identify the file format and software with
+    which lvkit interoperates (nominative use).
+
+    lvkit was developed using only publicly available information: public NI
+    documentation, the open-source pylabview project, and observation of VI files.
+    It was built without installing or running LabVIEW or any NI software, and
+    without the use of any NI source code, internal or non-public specifications,
+    or confidential or proprietary materials.
+
+    lvkit's mappings of LabVIEW primitives and standard-library VIs (in
+    src/lvkit/data/) are lvkit's own definitions, derived purely by inference from
+    public documentation and from the VI XML produced by pylabview. They are
+    best-effort inferences, not authoritative reproductions of any NI
+    specification, and they contain no NI documentation text or artwork.
+
+    lvkit depends on, but does not include, pylabview
+    (https://github.com/mefistotelis/pylabview).
+
+    See PROVENANCE.md for detail.
+
+
+Names of heap tags and object classes, from pylabview
+=====================================================
+
+File:     crates/buzzard-rsrc/src/blocks/heap/tables.rs
+Source:   pylabview, https://github.com/mefistotelis/pylabview
+          pylabview/LVheap.py
+          (the commit was not recorded when the tables were generated)
+Licence:  MIT (full text below)
+          Copyright (C) 2013 Jessica Creighton <jcreigh@femtobit.org>
+          Copyright (C) 2019-2020 Mefistotelis <mefistotelis@gmail.com>
+
+What was taken: the member names and integer values of the enumerations of
+heap field tags and heap object classes in that file, 615 and 373 entries.
+Nothing else was copied: no code, no comments and no documentation.
+
+Changes made: the entries were rewritten as two Rust tables sorted by id.
+
+The licence of pylabview reads as follows:
+
+    MIT License
+
+    Copyright (C) 2013 Jessica Creighton <jcreigh@femtobit.org>
+    Copyright (C) 2019-2020 Mefistotelis <mefistotelis@gmail.com>
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+
+Three test fixtures, from pylabview
+===================================
+
+Files:    crates/buzzard-rsrc/tests/fixtures/pylabview/*
+Source:   pylabview, https://github.com/mefistotelis/pylabview, examples/
+          (byte-identical to the files at commit
+          5f20e23de6a386021eb955c825cc43d221f09ff1)
+Licence:  MIT, the text reproduced above
+
+What was taken: three small files saved by LabVIEW 2014, unchanged. They are
+test data only and are not part of any published package. Their upstream
+paths and checksums are in crates/buzzard-rsrc/tests/fixtures/README.md.
+
+
+A TDMS measurement file, from Zenodo
+====================================
+
+File:     crates/buzzard-tdms/tests/fixtures/zenodo-7758683/waveforms-point21.tdms
+Source:   "Waveforms Point21.tdms" in Saullo G. P. Castro, "Impact hammer
+          test of an Aluminium 6082 T6 plate, 260 x 246 x 1.5 mm, free
+          boundary conditions", Zenodo, 2022,
+          https://doi.org/10.5281/zenodo.7758683
+Licence:  Creative Commons Attribution 4.0 International,
+          https://creativecommons.org/licenses/by/4.0/legalcode
+
+What was taken: that one file of the data set, unchanged apart from its
+name. It is test data only: it is read by the tests of buzzard-tdms and is
+not part of the buzzard binary. Its checksums are in
+crates/buzzard-tdms/tests/fixtures/README.md.
+
+The tests of buzzard-tdms can also run npTDMS
+(https://github.com/adamreeve/npTDMS, LGPL-3.0) as a separate program to
+compare results. npTDMS is not included in, linked into or distributed
+with buzzard; see crates/buzzard-tdms/tests/oracle/README.md.
+
+
+Test fixtures
+=============
+
+Every fixture is an unmodified copy of a file from a public project. Some
+were renamed. The README named in each entry records the source and licence
+of each file, and its upstream path and commit or checksum where the entry
+does not say otherwise.
+
+crates/buzzard-rsrc/tests/fixtures/pylavi
+    Source:   pylavi, https://github.com/marcpage/pylavi, its test suite
+    Licence:  Unlicense (public domain)
+    Record:   crates/buzzard-rsrc/tests/fixtures/README.md, by directory
+              only: no upstream path, commit or checksum per file
+
+crates/buzzard-rsrc/tests/fixtures/pylabview
+    Source:   pylabview, the section "Three test fixtures" above
+    Licence:  MIT, the text reproduced above
+    Record:   crates/buzzard-rsrc/tests/fixtures/README.md
+
+crates/buzzard-lint/tests/fixtures/diff/jki-state-machine
+crates/buzzard-lint/tests/fixtures/verify/jki-state-machine
+    Source:   JKI State Machine,
+              https://github.com/JKISoftware/JKI-State-Machine
+    Licence:  BSD 3-Clause, the text in the LICENSE file of each directory
+    Record:   the README.md of crates/buzzard-lint/tests/fixtures/diff and
+              of crates/buzzard-lint/tests/fixtures/verify
+
+crates/buzzard-lint/tests/fixtures/project/jki-smo
+crates/buzzard-lint/tests/fixtures/verify/jki-smo
+    Source:   JKI State Machine Objects,
+              https://github.com/JKISoftware/JKI-State-Machine-Objects
+    Licence:  BSD 3-Clause, the text in the LICENSE file of each directory
+    Record:   the README.md of crates/buzzard-lint/tests/fixtures/project
+              and of crates/buzzard-lint/tests/fixtures/verify
+
+crates/buzzard-lint/tests/fixtures/diff/grpc-labview
+crates/buzzard-lint/tests/fixtures/project/grpc-labview
+    Source:   grpc-labview, https://github.com/ni/grpc-labview
+    Licence:  MIT, the text in the LICENSE file of each directory
+    Record:   the README.md of crates/buzzard-lint/tests/fixtures/diff and
+              of crates/buzzard-lint/tests/fixtures/project
+
+crates/buzzard-lint/tests/fixtures/verify/lv-mqtt-broker
+    Source:   LV-MQTT-Broker,
+              https://github.com/LabVIEW-Open-Source/LV-MQTT-Broker
+    Licence:  Zero-Clause BSD, the text in the LICENSE file of the directory
+    Record:   crates/buzzard-lint/tests/fixtures/verify/README.md
+
+crates/buzzard-tdms/tests/fixtures/zenodo-7758683
+    Source:   Zenodo, the section "A TDMS measurement file" above
+    Licence:  Creative Commons Attribution 4.0 International
+    Record:   crates/buzzard-tdms/tests/fixtures/README.md

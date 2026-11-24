@@ -1,0 +1,28 @@
+[package]
+name = "buzzard-lint"
+description = "Static analysis rules and dependency graph for buzzard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["lint", "static-analysis", "dependency-graph", "sarif"]
+categories = ["development-tools"]
+# The package is the source. The tests stay in the repository, because they
+# need fixtures and sibling crates that a package does not carry.
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
+
+[dependencies]
+buzzard-rsrc.workspace = true
+async-trait.workspace = true
+encoding_rs.workspace = true
+petgraph.workspace = true
+rayon.workspace = true
+roxmltree.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+walkdir.workspace = true
+
+[lints]
+workspace = true

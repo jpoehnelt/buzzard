@@ -1,0 +1,217 @@
+{
+  "root": {
+    "uid": 3,
+    "nodes": [
+      {
+        "uid": 7,
+        "class": "sRN",
+        "name": null,
+        "primitive": null,
+        "bounds": {
+          "top": 0,
+          "left": 0,
+          "bottom": 0,
+          "right": 0
+        },
+        "terminals": [],
+        "diagrams": []
+      },
+      {
+        "uid": 43,
+        "class": "iUse",
+        "name": "empty.vi",
+        "primitive": null,
+        "bounds": {
+          "top": 338,
+          "left": 261,
+          "bottom": 370,
+          "right": 293
+        },
+        "terminals": [
+          {
+            "uid": 54,
+            "bounds": {
+              "top": 24,
+              "left": 24,
+              "bottom": 32,
+              "right": 32
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 52,
+            "dco_class": "iUseDCO",
+            "param": 0
+          },
+          {
+            "uid": 57,
+            "bounds": {
+              "top": 16,
+              "left": 24,
+              "bottom": 24,
+              "right": 32
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 55,
+            "dco_class": "iUseDCO",
+            "param": 1
+          },
+          {
+            "uid": 60,
+            "bounds": {
+              "top": 8,
+              "left": 24,
+              "bottom": 16,
+              "right": 32
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 58,
+            "dco_class": "iUseDCO",
+            "param": 2
+          },
+          {
+            "uid": 63,
+            "bounds": {
+              "top": 0,
+              "left": 24,
+              "bottom": 8,
+              "right": 32
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 61,
+            "dco_class": "iUseDCO",
+            "param": 3
+          },
+          {
+            "uid": 66,
+            "bounds": {
+              "top": 16,
+              "left": 16,
+              "bottom": 32,
+              "right": 24
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 64,
+            "dco_class": "iUseDCO",
+            "param": 4
+          },
+          {
+            "uid": 69,
+            "bounds": {
+              "top": 0,
+              "left": 16,
+              "bottom": 16,
+              "right": 24
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 67,
+            "dco_class": "iUseDCO",
+            "param": 5
+          },
+          {
+            "uid": 72,
+            "bounds": {
+              "top": 16,
+              "left": 8,
+              "bottom": 32,
+              "right": 16
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 70,
+            "dco_class": "iUseDCO",
+            "param": 6
+          },
+          {
+            "uid": 75,
+            "bounds": {
+              "top": 0,
+              "left": 8,
+              "bottom": 16,
+              "right": 16
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 73,
+            "dco_class": "iUseDCO",
+            "param": 7
+          },
+          {
+            "uid": 78,
+            "bounds": {
+              "top": 24,
+              "left": 0,
+              "bottom": 32,
+              "right": 8
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 76,
+            "dco_class": "iUseDCO",
+            "param": 8
+          },
+          {
+            "uid": 81,
+            "bounds": {
+              "top": 16,
+              "left": 0,
+              "bottom": 24,
+              "right": 8
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 79,
+            "dco_class": "iUseDCO",
+            "param": 9
+          },
+          {
+            "uid": 84,
+            "bounds": {
+              "top": 8,
+              "left": 0,
+              "bottom": 16,
+              "right": 8
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 82,
+            "dco_class": "iUseDCO",
+            "param": 10
+          },
+          {
+            "uid": 87,
+            "bounds": {
+              "top": 0,
+              "left": 0,
+              "bottom": 8,
+              "right": 8
+            },
+            "direction": "input",
+            "wired": false,
+            "data_type": "void",
+            "dco": 85,
+            "dco_class": "iUseDCO",
+            "param": 11
+          }
+        ],
+        "diagrams": []
+      }
+    ],
+    "wires": []
+  }
+}

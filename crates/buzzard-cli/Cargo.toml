@@ -1,0 +1,43 @@
+[package]
+name = "buzzard-cli"
+description = "Static analyzer, language server and MCP server for LabVIEW files (.vi, .ctl, .llb, .lvproj, .lvlib, .lvclass), and a TDMS reader"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["labview", "lint", "static-analysis", "lsp", "sarif"]
+categories = ["command-line-utilities", "development-tools"]
+documentation = "https://github.com/jpoehnelt/buzzard#readme"
+# The package is the source. The tests stay in the repository, because they
+# need fixtures and sibling crates that a package does not carry.
+include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
+
+[[bin]]
+name = "buzzard"
+path = "src/main.rs"
+
+[features]
+default = ["parquet"]
+# Enables `buzzard tdms export --format parquet`. Without it, the export
+# writes CSV only and the binary does not carry the Arrow and Parquet crates.
+parquet = ["buzzard-tdms/parquet"]
+
+[dependencies]
+buzzard-lint.workspace = true
+buzzard-ls.workspace = true
+buzzard-mcp.workspace = true
+buzzard-rsrc.workspace = true
+buzzard-tdms = { workspace = true, features = ["json"] }
+clap.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+url = "2"
+
+[lints]
+workspace = true

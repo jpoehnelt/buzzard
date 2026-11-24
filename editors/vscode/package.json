@@ -1,0 +1,154 @@
+{
+  "name": "buzzard",
+  "displayName": "Buzzard",
+  "description": "Shows the problems, file summaries, and block diagrams that the buzzard language server reports for LabVIEW files.",
+  "version": "0.1.0",
+  "publisher": "buzzard",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jpoehnelt/buzzard.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Linters",
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "buzzard",
+    "vi",
+    "static analysis",
+    "language server"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.vi",
+    "workspaceContains:**/*.ctl",
+    "workspaceContains:**/*.lvproj",
+    "workspaceContains:**/*.lvlib",
+    "workspaceContains:**/*.lvclass"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted workspace, the extension ignores the `buzzard.path` setting of the workspace, so a workspace cannot choose the executable that runs.",
+      "restrictedConfigurations": [
+        "buzzard.path"
+      ]
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Buzzard",
+      "properties": {
+        "buzzard.path": {
+          "type": "string",
+          "default": "buzzard",
+          "scope": "machine-overridable",
+          "markdownDescription": "The `buzzard` executable. The extension looks up a bare name on `PATH`. It takes a path that starts with `~/` from the home directory. It takes a relative path with a directory in it from the first workspace folder."
+        },
+        "buzzard.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "scope": "window",
+          "description": "Which messages between the extension and the buzzard language server the output panel logs."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "buzzard.showSummary",
+        "title": "Show File Summary",
+        "category": "Buzzard"
+      },
+      {
+        "command": "buzzard.showDiagram",
+        "title": "Show Block Diagram",
+        "category": "Buzzard"
+      },
+      {
+        "command": "buzzard.findCallers",
+        "title": "Find Callers",
+        "category": "Buzzard"
+      },
+      {
+        "command": "buzzard.restartServer",
+        "title": "Restart Server",
+        "category": "Buzzard"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "buzzard.showSummary",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(vi|ctl|lvproj|lvlib|lvclass)$/i",
+          "group": "buzzard@1"
+        },
+        {
+          "command": "buzzard.showDiagram",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(vi|ctl)$/i",
+          "group": "buzzard@2"
+        },
+        {
+          "command": "buzzard.findCallers",
+          "when": "resourceScheme == file && resourceExtname =~ /^\\.(vi|ctl|lvproj|lvlib|lvclass)$/i",
+          "group": "buzzard@3"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "buzzard.viewer",
+        "displayName": "Buzzard Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.vi"
+          },
+          {
+            "filenamePattern": "*.ctl"
+          }
+        ],
+        "priority": "option"
+      }
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "compile": "npm run typecheck && node scripts/build.mjs",
+    "lint": "eslint .",
+    "test": "node scripts/build.mjs --tests && node --test \"out/unit/*.test.js\"",
+    "test:integration": "npm run compile && node scripts/build.mjs --tests && node out/integration/runTest.js",
+    "vscode:prepublish": "npm run typecheck && node scripts/build.mjs --production",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "markdown-it": "15.0.3",
+    "vscode-languageclient": "11.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/markdown-it": "14.2.0",
+    "@types/node": "22.20.5",
+    "@types/vscode": "1.91.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.1.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.2"
+  },
+  "overrides": {
+    "minimatch": "11.0.8"
+  }
+}
