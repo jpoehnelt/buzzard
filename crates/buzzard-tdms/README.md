@@ -160,6 +160,10 @@ write the chosen channels as one table. Each channel is one column named
 The `parquet` feature is off by default. Without it the crate depends on
 `bytemuck`, `rayon`, and `thiserror` only. Compression is Snappy or none.
 
+`info::to_text` is the report of `buzzard tdms info`. The `json` feature,
+also off by default, adds `info::report` and `info::to_json` for the same
+report as JSON, and depends on `serde` and `serde_json`.
+
 ## How fast the reader is
 
 The numbers come from `tools/tdms-bench.sh 400`, run from the repository on

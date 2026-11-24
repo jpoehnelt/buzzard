@@ -14,6 +14,7 @@ use serde::Serialize;
 use super::{verify, Confidence, Issue, QueueMachine, Report, Stop, Successors, Verification};
 use crate::archive;
 use crate::inspector::Inspection;
+use crate::printable;
 use crate::project::is_project_file;
 use crate::workspace::discover;
 
@@ -50,6 +51,7 @@ impl From<Issue> for ShownIssue {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FileMachines {
     /// Path of the file.
+    #[serde(serialize_with = "crate::lossy::path")]
     pub path: PathBuf,
     /// Classic state machines: the model, what was derived from it, and
     /// whether the model is exact.
@@ -92,9 +94,11 @@ pub struct Verified {
     /// The files that have a state machine, sorted by path.
     pub files: Vec<FileMachines>,
     /// Files that could not be read or parsed, with the reason.
+    #[serde(serialize_with = "crate::lossy::with_text")]
     pub unreadable: Vec<(PathBuf, String)>,
     /// Files whose block diagram did not decode completely. Nothing is
     /// claimed about classic state machines on them.
+    #[serde(serialize_with = "crate::lossy::paths")]
     pub incomplete: Vec<PathBuf>,
     /// Counts over all files.
     pub summary: Summary,
@@ -256,7 +260,7 @@ fn clean(text: &str) -> String {
 pub fn to_text(verified: &Verified) -> String {
     let mut out = String::new();
     for file in &verified.files {
-        let _ = writeln!(out, "{}", file.path.display());
+        let _ = writeln!(out, "{}", printable::path(&file.path));
         for report in &file.machines {
             machine_text(&mut out, report);
             issues_text(&mut out, file, &report.machine.location);
@@ -279,14 +283,19 @@ pub fn to_text(verified: &Verified) -> String {
         out.push('\n');
     }
     for (path, reason) in &verified.unreadable {
-        let _ = writeln!(out, "{}: cannot analyze file: {reason}", path.display());
+        let _ = writeln!(
+            out,
+            "{}: cannot analyze file: {}",
+            printable::path(path),
+            printable::text(reason)
+        );
     }
     for path in &verified.incomplete {
         let _ = writeln!(
             out,
             "{}: the block diagram did not decode completely; it was not searched for state \
              machines, because nothing could be proven about one",
-            path.display()
+            printable::path(path)
         );
     }
     let s = &verified.summary;

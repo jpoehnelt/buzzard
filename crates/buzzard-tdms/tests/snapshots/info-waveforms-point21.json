@@ -1,0 +1,259 @@
+{
+  "file": "waveforms-point21.tdms",
+  "size": 526053,
+  "segments": 2,
+  "versions": [
+    4713
+  ],
+  "index": "data_file",
+  "anomalies": [],
+  "properties": [
+    {
+      "name": "name",
+      "type": "string",
+      "value": "Waveforms Point21"
+    }
+  ],
+  "groups": [
+    {
+      "name": "Configuration0_Impact00",
+      "properties": [],
+      "channels": [
+        {
+          "name": "cDAQ1Mod1_ai0",
+          "path": "/'Configuration0_Impact00'/'cDAQ1Mod1_ai0'",
+          "type": "f64",
+          "length": 32768,
+          "unit": "Newtons",
+          "waveform": {
+            "start_time": "2020-03-06T23:57:13.467563749Z",
+            "start_offset": 0.0,
+            "increment": 0.0001171875,
+            "samples": 32768
+          },
+          "properties": [
+            {
+              "name": "wf_start_time",
+              "type": "timestamp",
+              "value": "2020-03-06T23:57:13.467563749Z",
+              "seconds": 3666383833,
+              "fractions": 8625028834391726050
+            },
+            {
+              "name": "wf_start_offset",
+              "type": "f64",
+              "value": 0.0
+            },
+            {
+              "name": "wf_increment",
+              "type": "f64",
+              "value": 0.0001171875
+            },
+            {
+              "name": "wf_samples",
+              "type": "i32",
+              "value": 32768
+            },
+            {
+              "name": "NI_ChannelName",
+              "type": "string",
+              "value": "cDAQ1Mod1_ai0"
+            },
+            {
+              "name": "NI_SV_AnalogSWTrigger",
+              "type": "bool",
+              "value": true
+            },
+            {
+              "name": "NI_SV_PretriggerSamples",
+              "type": "i32",
+              "value": 8
+            },
+            {
+              "name": "NI_SV_SensorMaximum",
+              "type": "f64",
+              "value": 444.0
+            },
+            {
+              "name": "NI_SV_SensorSensitivity",
+              "type": "f64",
+              "value": 11.2
+            },
+            {
+              "name": "NI_SV_SensorType",
+              "type": "string",
+              "value": "Force (IEPE)"
+            },
+            {
+              "name": "NI_SV_TriggerHysteresis",
+              "type": "f64",
+              "value": 0.0
+            },
+            {
+              "name": "NI_SV_TriggerLevel",
+              "type": "f64",
+              "value": 1.0
+            },
+            {
+              "name": "NI_SV_TriggerSlope",
+              "type": "i32",
+              "value": 1
+            },
+            {
+              "name": "NI_UnitDescription",
+              "type": "string",
+              "value": "Newtons"
+            },
+            {
+              "name": "unit_string",
+              "type": "string",
+              "value": "Newtons"
+            },
+            {
+              "name": "NI_LabVIEWDatatype",
+              "type": "string",
+              "value": "2: Time Waveform"
+            },
+            {
+              "name": "NI_XDimension",
+              "type": "string",
+              "value": "0: Time (s)"
+            },
+            {
+              "name": "NI_FunctionSubType",
+              "type": "string",
+              "value": "2: Scaled engineering units"
+            },
+            {
+              "name": "NI_FunctionType",
+              "type": "string",
+              "value": "0: Signal"
+            },
+            {
+              "name": "wf_xunit_string",
+              "type": "string",
+              "value": "s"
+            },
+            {
+              "name": "wf_xname",
+              "type": "string",
+              "value": "Time"
+            },
+            {
+              "name": "label",
+              "type": "string",
+              "value": "Amplitude"
+            }
+          ]
+        },
+        {
+          "name": "cDAQ1Mod1_ai1",
+          "path": "/'Configuration0_Impact00'/'cDAQ1Mod1_ai1'",
+          "type": "f64",
+          "length": 32768,
+          "unit": "g",
+          "waveform": {
+            "start_time": "2020-03-06T23:57:13.467563749Z",
+            "start_offset": 0.0,
+            "increment": 0.0001171875,
+            "samples": 32768
+          },
+          "properties": [
+            {
+              "name": "wf_start_time",
+              "type": "timestamp",
+              "value": "2020-03-06T23:57:13.467563749Z",
+              "seconds": 3666383833,
+              "fractions": 8625028834391726050
+            },
+            {
+              "name": "wf_start_offset",
+              "type": "f64",
+              "value": 0.0
+            },
+            {
+              "name": "wf_increment",
+              "type": "f64",
+              "value": 0.0001171875
+            },
+            {
+              "name": "wf_samples",
+              "type": "i32",
+              "value": 32768
+            },
+            {
+              "name": "NI_ChannelName",
+              "type": "string",
+              "value": "cDAQ1Mod1_ai1"
+            },
+            {
+              "name": "NI_SV_SensorMaximum",
+              "type": "f64",
+              "value": 50.0
+            },
+            {
+              "name": "NI_SV_SensorSensitivity",
+              "type": "f64",
+              "value": 100.0
+            },
+            {
+              "name": "NI_SV_SensorType",
+              "type": "string",
+              "value": "Accelerometer"
+            },
+            {
+              "name": "NI_UnitDescription",
+              "type": "string",
+              "value": "g"
+            },
+            {
+              "name": "unit_string",
+              "type": "string",
+              "value": "g"
+            },
+            {
+              "name": "NI_dBReference",
+              "type": "f64",
+              "value": 1.0
+            },
+            {
+              "name": "NI_LabVIEWDatatype",
+              "type": "string",
+              "value": "2: Time Waveform"
+            },
+            {
+              "name": "NI_XDimension",
+              "type": "string",
+              "value": "0: Time (s)"
+            },
+            {
+              "name": "NI_FunctionSubType",
+              "type": "string",
+              "value": "2: Scaled engineering units"
+            },
+            {
+              "name": "NI_FunctionType",
+              "type": "string",
+              "value": "0: Signal"
+            },
+            {
+              "name": "wf_xunit_string",
+              "type": "string",
+              "value": "s"
+            },
+            {
+              "name": "wf_xname",
+              "type": "string",
+              "value": "Time"
+            },
+            {
+              "name": "label",
+              "type": "string",
+              "value": "Amplitude"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -288,3 +288,33 @@ fn export_writes_parquet_by_default_and_is_deterministic() {
         format!("exported 20000 rows of 20 columns to {out}\n")
     );
 }
+
+/// `buzzard_tdms::info` is the report that `tdms info` has always printed.
+/// The command and the MCP server both print it, so the two cannot
+/// differ, and this test keeps the library at the bytes of the command.
+#[test]
+fn the_library_report_is_the_report_the_command_prints() {
+    let dir = TempDir::new("tdms-info-library");
+    let real = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("buzzard-tdms")
+        .join("tests")
+        .join("fixtures")
+        .join("zenodo-7758683")
+        .join("waveforms-point21.tdms");
+    let real = real.to_string_lossy().into_owned();
+    for path in [write_sample(&dir), real] {
+        let file = buzzard_tdms::TdmsFile::open(&path).expect("open the file");
+        let (status, text, stderr) = run(&["tdms", "info", &path]);
+        assert_eq!((status, stderr.as_str()), (0, ""), "{path}");
+        assert_eq!(text, buzzard_tdms::info::to_text(&path, &file), "{path}");
+        let (status, json, stderr) = run(&["tdms", "info", &path, "--format", "json"]);
+        assert_eq!((status, stderr.as_str()), (0, ""), "{path}");
+        assert_eq!(
+            json,
+            buzzard_tdms::info::to_json(&path, &file).expect("the report serializes"),
+            "{path}"
+        );
+        assert!(json.len() > 400, "{path}");
+    }
+}

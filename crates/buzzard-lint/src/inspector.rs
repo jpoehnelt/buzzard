@@ -4,6 +4,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use buzzard_rsrc::{BlockDiagram, RsrcFile, ViMetadata};
+use serde::Serialize;
+
+use crate::summary::DiagramOutline;
 
 /// Everything a backend reports about one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +45,87 @@ impl Inspection {
         let metadata = ViMetadata::from_rsrc(&file).map_err(|e| e.to_string())?;
         let diagram = BlockDiagram::from_rsrc(&file).ok().flatten();
         Ok(Self { metadata, diagram })
+    }
+}
+
+/// The JSON shape of `buzzard inspect --format json`: the fields of the
+/// metadata, then `diagram` with the whole block diagram or `null`. See
+/// [`Inspection::full`].
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct InspectionJson<'a> {
+    #[serde(flatten)]
+    metadata: &'a ViMetadata,
+    diagram: Option<&'a BlockDiagram>,
+}
+
+/// An [`Inspection`] with the outline of the block diagram in place of
+/// the diagram. See [`Inspection::summary`].
+///
+/// As JSON it has the fields of the metadata, as the whole JSON has
+/// them, and then `detail`, `full_json_bytes`, and `diagram`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InspectionSummary {
+    /// Version, flags, links, and other facts decoded from the file.
+    #[serde(flatten)]
+    pub metadata: ViMetadata,
+    /// Always `summary`. It tells this shape from the whole JSON.
+    pub detail: &'static str,
+    /// The size in bytes of the whole JSON
+    /// ([`Inspection::full_json_bytes`]), which this summary stands for.
+    pub full_json_bytes: u64,
+    /// The outline of the block diagram, or `None` where
+    /// [`Inspection::diagram`] is `None`.
+    pub diagram: Option<DiagramOutline>,
+}
+
+impl Inspection {
+    /// The inspection as `buzzard inspect --format json` prints it, for
+    /// a serializer.
+    pub fn full(&self) -> InspectionJson<'_> {
+        InspectionJson {
+            metadata: &self.metadata,
+            diagram: self.diagram.as_ref(),
+        }
+    }
+
+    /// The text of `buzzard inspect --format json`: [`Inspection::full`]
+    /// as indented JSON that ends in a line break.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the metadata and the diagram hold only strings, numbers, and lists"
+    )]
+    pub fn full_json(&self) -> String {
+        serde_json::to_string_pretty(&self.full()).expect("an inspection always serializes") + "\n"
+    }
+
+    /// The length of [`Inspection::full_json`] in bytes. The text is not
+    /// built, so a caller can decide whether to ask for it.
+    pub fn full_json_bytes(&self) -> u64 {
+        // One more byte for the line break at the end.
+        crate::budget::json_bytes(&self.full(), true).saturating_add(1)
+    }
+
+    /// The inspection without the nodes, terminals, and wires of the
+    /// block diagram: the metadata, the size of the whole JSON, and the
+    /// outline of the diagram ([`crate::summary::outline`]).
+    pub fn summary(&self) -> InspectionSummary {
+        InspectionSummary {
+            metadata: self.metadata.clone(),
+            detail: "summary",
+            full_json_bytes: self.full_json_bytes(),
+            diagram: self.diagram.as_ref().map(crate::summary::outline),
+        }
+    }
+}
+
+impl InspectionSummary {
+    /// The summary as indented JSON that ends in a line break.
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "the metadata and the outline hold only strings, numbers, and lists"
+    )]
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("a summary always serializes") + "\n"
     }
 }
 

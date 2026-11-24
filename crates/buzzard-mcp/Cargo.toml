@@ -17,6 +17,7 @@ include = ["/src/**", "/README.md", "/LICENSE", "/NOTICE"]
 buzzard-lint.workspace = true
 buzzard-ls.workspace = true
 buzzard-rsrc.workspace = true
+buzzard-tdms = { workspace = true, features = ["json"] }
 serde_json.workspace = true
 serde.workspace = true
 

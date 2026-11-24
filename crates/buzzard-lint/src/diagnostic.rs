@@ -36,6 +36,7 @@ impl Severity {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct Diagnostic {
     /// The file the finding is about.
+    #[serde(serialize_with = "crate::lossy::path")]
     pub path: PathBuf,
     /// Code of the rule that reported it, such as `BZ001`.
     pub code: &'static str,
@@ -45,6 +46,7 @@ pub struct Diagnostic {
     /// The explanation, without the path or rule code.
     pub message: String,
     /// Other files involved, such as the members of a dependency cycle.
+    #[serde(serialize_with = "crate::lossy::paths")]
     pub related: Vec<PathBuf>,
 }
 
@@ -75,7 +77,7 @@ impl Diagnostic {
         related.retain(|path| *path != archive);
         related.sort();
         related.dedup();
-        let shown = crate::archive::printable(&member);
+        let shown = crate::printable::text(&member);
         (
             Self {
                 path: archive,

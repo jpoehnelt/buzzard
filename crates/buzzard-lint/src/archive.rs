@@ -29,6 +29,7 @@ use rayon::prelude::*;
 use serde::Serialize;
 
 use crate::graph::{code_page_readings, fold};
+use crate::printable::text as printable;
 use crate::project::is_project_file;
 use crate::workspace::is_rsrc_file;
 
@@ -142,20 +143,6 @@ pub fn read_member(archive: &Path, name: &str) -> Result<Option<Vec<u8>>, String
     llb.find(name)
         .map(|member| llb.read(member).map_err(|e| e.to_string()))
         .transpose()
-}
-
-/// A name from an archive, printed on one line. ASCII control characters
-/// are escaped, and everything else is as the archive spells it.
-pub(crate) fn printable(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for c in name.chars() {
-        if c.is_ascii_control() {
-            out.extend(c.escape_default());
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// What the workspace keeps of an opened archive: its directory and the
@@ -573,17 +560,6 @@ mod tests {
         std::fs::write(&path, vi).unwrap();
         assert!(list(&path).unwrap_err().contains("not an LLB archive"));
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
-    }
-
-    #[test]
-    fn a_name_is_printed_on_one_line_and_otherwise_as_it_is() {
-        assert_eq!(printable("a\\b `c` |d|.vi"), "a\\b `c` |d|.vi");
-        assert_eq!(
-            printable("a\nb\r\t\0\u{1b}[0m\u{7f}"),
-            "a\\nb\\r\\t\\u{0}\\u{1b}[0m\\u{7f}"
-        );
-        // Bytes of a legacy code page above 0x7f are letters.
-        assert_eq!(printable("\u{83}\u{65}\u{e9}"), "\u{83}\u{65}\u{e9}");
     }
 
     #[test]

@@ -103,6 +103,7 @@ pub struct Member {
     /// Where the URL points on disk. `None` for installation paths such as
     /// `/<vilib>/...`, other absolute URLs, and items embedded in the XML
     /// file itself.
+    #[serde(serialize_with = "crate::lossy::option")]
     pub path: Option<PathBuf>,
     /// True for an item under a project's `Dependencies` node. Those are
     /// computed by the editor, not chosen by the user.
@@ -120,6 +121,7 @@ pub struct ParentClass {
     pub link: LvPath,
     /// The link resolved against the class file. `None` for installation
     /// paths such as `<vilib>/...`.
+    #[serde(serialize_with = "crate::lossy::option")]
     pub path: Option<PathBuf>,
 }
 

@@ -66,6 +66,10 @@ use crate::dataflow::{describe, function_name};
 use crate::render::label;
 use crate::Inspection;
 
+mod files;
+
+pub use files::{compare, is_null_device};
+
 /// What [`diff`] leaves out of the report.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DiffOptions {

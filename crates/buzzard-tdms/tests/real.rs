@@ -152,3 +152,30 @@ fn real_files_outside_the_repository() {
         }
     }
 }
+
+/// The report of `buzzard tdms info` on the fixture, as the command
+/// printed it before the report moved into this crate. The snapshots in
+/// `tests/snapshots` were written by that command, with the file named
+/// `waveforms-point21.tdms`. The command line and the MCP server print
+/// this report, so its bytes are a contract.
+#[test]
+fn the_text_report_of_the_fixture_is_unchanged() {
+    let file = TdmsFile::open(fixture()).unwrap();
+    assert_eq!(
+        buzzard_tdms::info::to_text("waveforms-point21.tdms", &file),
+        include_str!("snapshots/info-waveforms-point21.txt")
+    );
+}
+
+#[cfg(feature = "json")]
+#[test]
+fn the_json_report_of_the_fixture_is_unchanged() {
+    let file = TdmsFile::open(fixture()).unwrap();
+    let json = buzzard_tdms::info::to_json("waveforms-point21.tdms", &file).unwrap();
+    assert_eq!(json, include_str!("snapshots/info-waveforms-point21.json"));
+    // The value that a server returns is the same report.
+    let value = serde_json::to_value(buzzard_tdms::info::report("x", &file)).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(value["groups"], parsed["groups"]);
+    assert_eq!(value["file"], "x");
+}

@@ -138,15 +138,15 @@ impl Roots {
             };
             return Err(format!(
                 "the directory given for root {bare} {problem}: {}",
-                dir.display()
+                crate::printable::path(dir)
             ));
         }
         let key = bare.to_lowercase();
         match self.map.get(&key) {
             Some(known) if !same_directory(known, dir) => Err(format!(
                 "root {bare} was given two directories: {} and {}",
-                known.display(),
-                dir.display()
+                crate::printable::path(known),
+                crate::printable::path(dir)
             )),
             // The first spelling of a directory is the one reported.
             Some(_) => Ok(()),
