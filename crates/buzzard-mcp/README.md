@@ -15,7 +15,7 @@ a failed call, and the prompt `buzzard`.
 
 ## What the server promises an agent
 
-- Every tool is read-only.
+- The eleven tools are read-only. `tools/list` names and describes them.
 - A result is at most `max_bytes` bytes, 65536 by default. The size is the
   text plus the `structuredContent` as compact JSON. A larger answer comes as
   a smaller one whose `budget` entry names the size of the whole answer and
