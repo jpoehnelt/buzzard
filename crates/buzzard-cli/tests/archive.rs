@@ -147,7 +147,7 @@ fn inspect_lists_the_members_of_an_archive() {
     assert_eq!(members[3]["storage"], "stored");
 
     // An archive has no diagram, so the error names a member to ask for.
-    for format in ["svg", "dot", "mermaid"] {
+    for format in ["svg", "dot", "mermaid", "html"] {
         let (code, stdout, stderr) = run(&["inspect", "lib.llb", "--format", format], &dir.0);
         assert_eq!((code, stdout.as_str()), (2, ""), "{format}");
         assert!(
@@ -171,6 +171,26 @@ fn inspect_reads_a_member_like_the_file_it_holds() {
         assert_eq!(member, loose, "{format}");
         assert!(member.1.len() > 50, "{format}");
     }
+    // The HTML report names the file as it was passed, and hashes the
+    // member's own bytes.
+    let member = run(&["inspect", "lib.llb/add.vi", "--format", "html"], &dir.0);
+    let loose = run(&["inspect", "loose/add.vi", "--format", "html"], &dir.0);
+    assert_eq!((member.0, member.2.as_str()), (0, ""));
+    assert_eq!((loose.0, loose.2.as_str()), (0, ""));
+    let hash = sha256(&add_vi());
+    for (report, name) in [(&member.1, "lib.llb/add.vi"), (&loose.1, "loose/add.vi")] {
+        assert!(report.contains(&hash), "{report}");
+        assert!(
+            slashes(report).contains(&format!("<h1 class=\"bz-title\">{name}</h1>")),
+            "{report}"
+        );
+        assert_eq!(report.matches("<svg ").count(), 1);
+    }
+    // The page is the same but for the name of the file.
+    assert_eq!(
+        slashes(&member.1).replace("lib.llb/add.vi", "X"),
+        slashes(&loose.1).replace("loose/add.vi", "X")
+    );
     // The name is matched as the editor matches it, without letter
     // case, and shown as the archive has it.
     let (code, stdout, _) = run(&["inspect", "lib.llb/ADD.VI"], &dir.0);
@@ -995,4 +1015,62 @@ fn output_about_archives_is_byte_identical_across_runs() {
     let report = slashes(&report);
     let first = report.find("machine.llb/M00.vi").unwrap();
     assert!(first < report.find("machine.llb/M11.vi").unwrap());
+}
+
+#[test]
+fn a_file_name_cannot_forge_a_line_of_the_html_report() {
+    let dir = TempDir::new("html-forge");
+    // A path argument with a control character is refused, so a line
+    // break or an escape reaches the page through the names of the links
+    // that the file holds. The names of files reach it through the path.
+    let links = ["a.vi\n<h1>forged.vi", "\u{1b}[31mred.vi"];
+    let inline = vi(&INLINE_CODE, &links);
+    let hostile = ["x\u{202e}iv.exe.vi", "<script>alert(1)<\\script>.vi"];
+    write(&dir, "ok.vi", &inline);
+    let (code, plain, _) = run(&["inspect", "ok.vi", "--format", "html"], &dir.0);
+    assert_eq!(code, 0);
+    let clean = |html: &str| {
+        // No control character but the line breaks of the page, nothing
+        // that reorders text, and no markup from a name.
+        assert!(
+            !html.chars().any(|c| c.is_ascii_control() && c != '\n'),
+            "{html:?}"
+        );
+        assert!(!html.contains('\u{202e}'), "{html:?}");
+        assert!(!html.contains("<script"), "{html}");
+        assert!(!html.contains("<h1>"), "{html}");
+        assert_eq!(html.matches("<h1 ").count(), 1, "{html}");
+        assert_eq!(
+            html.matches("<li class=\"bz-finding\">").count(),
+            1,
+            "{html}"
+        );
+    };
+    clean(&plain);
+    assert!(plain.contains("a.vi\\n&lt;h1&gt;forged.vi"), "{plain}");
+    assert!(plain.contains("\\u{1b}[31mred.vi"), "{plain}");
+    let mut tried = 0;
+    for name in hostile {
+        if fs::write(dir.0.join(name), &inline).is_err() {
+            continue;
+        }
+        tried += 1;
+        let (code, html, stderr) = run(&["inspect", name, "--format", "html"], &dir.0);
+        assert_eq!((code, stderr.as_str()), (0, ""), "{name:?}");
+        clean(&html);
+        // The name is in the title, the heading, the metadata, and the
+        // finding, and adds no line to any of them.
+        assert_eq!(html.lines().count(), plain.lines().count(), "{html}");
+    }
+    let shown = |name: &str| run(&["inspect", name, "--format", "html"], &dir.0).1;
+    if dir.0.join(hostile[0]).exists() {
+        assert!(shown(hostile[0]).contains("<h1 class=\"bz-title\">x\\u{202e}iv.exe.vi</h1>"));
+    }
+    if dir.0.join(hostile[1]).exists() {
+        assert!(shown(hostile[1]).contains("&lt;script&gt;alert(1)&lt;\\script&gt;.vi"));
+    }
+    // Every name above is legal on Linux.
+    if cfg!(target_os = "linux") {
+        assert_eq!(tried, hostile.len());
+    }
 }

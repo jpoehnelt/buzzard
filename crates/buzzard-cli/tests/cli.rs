@@ -217,6 +217,105 @@ fn check_and_inspect_cover_project_files() {
     assert!(stderr.contains("invalid XML"), "{stderr}");
 }
 
+/// Every `http://` or `https://` address in `text`.
+fn addresses(text: &str) -> Vec<&str> {
+    let mut found = Vec::new();
+    for (at, _) in text.match_indices("http") {
+        let rest = &text[at..];
+        if rest.starts_with("http://") || rest.starts_with("https://") {
+            let end = rest
+                .find(['"', '\'', ' ', '<', '>', ')'])
+                .unwrap_or(rest.len());
+            found.push(&rest[..end]);
+        }
+    }
+    found
+}
+
+#[test]
+fn inspect_prints_an_html_report() {
+    let fixtures = fixtures();
+    let (code, html, stderr) = run(&["inspect", "add.vi", "--format", "html"], &fixtures);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert!(html.starts_with("<!DOCTYPE html>\n"), "{html}");
+    assert!(html.trim_end().ends_with("</html>"));
+    assert_eq!(html.matches("<svg ").count(), 1);
+    assert_eq!(html.matches("</svg>").count(), 1);
+    let bytes = std::fs::read(fixtures.join("add.vi")).unwrap();
+    assert!(
+        html.contains(&format!(
+            "SHA-256 <code class=\"bz-code\">{}</code>",
+            sha256(&bytes)
+        )),
+        "{html}"
+    );
+    assert!(html.contains("<title>add.vi - buzzard</title>"));
+    assert!(html.contains("<pre class=\"bz-pre\">### add.vi\n"));
+    assert!(html.contains("The diagram decoded completely."));
+    // The page loads nothing and links to nothing. The one address is the
+    // namespace of the SVG.
+    assert_eq!(addresses(&html), ["http://www.w3.org/2000/svg"]);
+    for tag in ["<script", "<link", "<img", "<iframe", "src=", "href="] {
+        assert!(!html.contains(tag), "{tag}");
+    }
+    // No absolute path: only the path as it was passed.
+    let absolute = fixtures.canonicalize().unwrap();
+    assert!(!html.contains(&*absolute.to_string_lossy()));
+}
+
+#[test]
+fn the_html_report_is_byte_identical_across_runs() {
+    let fixtures = fixtures();
+    let first = run(&["inspect", "add.vi", "--format", "html"], &fixtures);
+    for _ in 0..3 {
+        assert_eq!(
+            run(&["inspect", "add.vi", "--format", "html"], &fixtures),
+            first
+        );
+    }
+}
+
+#[test]
+fn the_html_report_of_a_file_without_a_diagram_says_so() {
+    let dir = TempDir::new("html-no-diagram");
+    dir.vi("a.vi", &CLEAN, &[]);
+    let (code, html, stderr) = run(&["inspect", "a.vi", "--format", "html"], &dir.0);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert!(html.contains("buzzard decoded no block diagram from this file."));
+    assert!(!html.contains("<svg"));
+    assert!(html.contains("No problems found."), "{html}");
+    let bytes = std::fs::read(dir.0.join("a.vi")).unwrap();
+    assert!(html.contains(&sha256(&bytes)));
+}
+
+#[test]
+fn the_html_report_lists_the_problems_of_the_file_checked_alone() {
+    let dir = TempDir::new("html-alone");
+    dir.vi("a.vi", &CLEAN, &["b.vi"]);
+    dir.vi("b.vi", &INLINE_CODE, &["a.vi"]);
+    // Checked together, the two files make a cycle.
+    let (_, together, _) = run(&["check", "."], &dir.0);
+    assert!(together.contains("b.vi: error[BZ005]"), "{together}");
+    let (code, html, _) = run(&["inspect", "b.vi", "--format", "html"], &dir.0);
+    assert_eq!(code, 0);
+    assert!(
+        html.contains("Problems found when this file is checked alone"),
+        "{html}"
+    );
+    assert!(html.contains("(BZ002, BZ005, BZ006)"));
+    assert!(
+        html.contains(
+            "<span class=\"bz-warning\">warning[BZ001]</span> <code class=\"bz-code\">b.vi</code>: \
+             compiled code is not separated from the source file; enable \
+             &quot;Separate compiled code from source file&quot;</li>"
+        ),
+        "{html}"
+    );
+    // Alone, the file is in no cycle.
+    assert!(!html.contains("BZ005]"), "{html}");
+    assert_eq!(html.matches("<li class=\"bz-finding\">").count(), 1);
+}
+
 /// Run with stdout connected to a device that accepts no data, like a full
 /// disk. Returns the exit status and stderr.
 #[cfg(target_os = "linux")]

@@ -61,6 +61,7 @@ buzzard inspect crates/buzzard-rsrc/tests/fixtures/pylavi/add.vi --format json
 - To print an outline in place of every node and wire, pass `--detail summary`. The full JSON of one VI can be over 1 MB.
 - To print one frame or a range of nodes as JSON, take the ids from the outline. Pass `--structure <ID> --frame <INDEX>` or `--first-node <ID> --last-node <ID>` with `--format json`.
 - To draw the block diagram, pass `--format svg`, `dot`, or `mermaid`.
+- To get one HTML page to keep or share, pass `--format html`. The page holds the file's SHA-256, its settings, a picture of the block diagram, whether the diagram decoded completely, and the problems of the file checked alone. It loads nothing from the network.
 - To list the members of an `.llb` archive, pass the archive.
 
 ### Compare two versions of a file

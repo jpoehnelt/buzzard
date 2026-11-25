@@ -29,13 +29,19 @@ fn run(args: &[&str], dir: &Path) -> (i32, String, String) {
     )
 }
 
-/// A directory with a clean VI, two files that do not parse, and nothing
-/// named `nope`.
+/// A directory with a clean VI, a project that lists it, two files that do
+/// not parse, and nothing named `nope`.
 fn workspace(name: &str) -> TempDir {
     let dir = TempDir::new(name);
     dir.vi("a.vi", &CLEAN, &[]);
     fs::write(dir.0.join("bad.vi"), b"nope").expect("write the file");
     fs::write(dir.0.join("Bad.lvproj"), "<Project>").expect("write the file");
+    fs::write(
+        dir.0.join("Good.lvproj"),
+        "<Project LVVersion=\"23008000\">\n<Item Name=\"a.vi\" Type=\"VI\" URL=\"a.vi\"/>\n\
+         </Project>\n",
+    )
+    .expect("write the file");
     dir
 }
 
@@ -164,6 +170,19 @@ const FAILURES: &[(&[&str], &str, Option<&str>)] = &[
         &["inspect", "a.vi", "--format", "dot", "--error-format=json"],
         "unsupported",
         Some("a.vi"),
+    ),
+    // A project file has no block diagram, so it has no HTML report.
+    (
+        &[
+            "inspect",
+            "Good.lvproj",
+            "--format",
+            "html",
+            "--error-format",
+            "json",
+        ],
+        "unsupported",
+        Some("Good.lvproj"),
     ),
     (
         &[
@@ -656,8 +675,8 @@ fn inspect_detail_summary_is_the_metadata_and_an_outline() {
     let parsed: Value = serde_json::from_str(&summary).unwrap();
     assert_eq!(parsed["detail"], "summary");
 
-    // A picture is always the whole diagram.
-    for format in ["svg", "dot", "mermaid"] {
+    // A picture and the HTML report are always the whole diagram.
+    for format in ["svg", "dot", "mermaid", "html"] {
         let (code, stdout, stderr) = run(
             &[
                 "inspect", "add.vi", "--format", format, "--detail", "summary",
