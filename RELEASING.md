@@ -88,3 +88,44 @@ follow "The first release of a crate". Otherwise, follow "Later releases".
 
 Add the new crate to the list of crates in the `publish` job of
 `release.yml`. Follow "The first release of a crate" once for that crate.
+
+## Binaries
+
+The Binaries workflow, `.github/workflows/binaries.yml`, builds the
+`buzzard` binary for the targets below. It uploads the archives as workflow
+artifacts only. It creates no tag and no GitHub Release, and it uploads
+nothing to crates.io. The Release workflow runs it after its checks, and
+you can also start it by hand. Neither the dry run nor the upload of the
+crates waits for it.
+
+| Target | Runner |
+| --- | --- |
+| `x86_64-unknown-linux-musl` | `ubuntu-latest` |
+| `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm` |
+| `x86_64-apple-darwin` | `macos-15-intel` |
+| `aarch64-apple-darwin` | `macos-latest` |
+| `x86_64-pc-windows-msvc` | `windows-latest` |
+| `aarch64-pc-windows-msvc` | `windows-11-arm` |
+
+Each runner builds for its own architecture and runs the binary on the
+fixtures before it packages it. The Linux binaries link musl statically,
+and the Windows binaries link the C runtime statically. The arm runners are
+free for public repositories only. In a private repository, those jobs wait
+for a runner that never comes.
+
+Each archive is `buzzard-<version>-<target>.tar.gz`, or `.zip` on Windows.
+It holds one directory of the same name, with the binary, `README.md`,
+`LICENSE`, and `NOTICE`. Each archive has a `<archive>.sha256` file beside
+it, and `SHA256SUMS` lists every archive. The artifact `buzzard-binaries`
+holds them all.
+
+To attach the binaries to a release:
+
+1. Run the Binaries workflow on `main`, or take the run of the Release
+   workflow that published the crates.
+2. Download the artifact `buzzard-binaries` from the run's page. Downloads
+   need a signed-in GitHub user, and the artifacts expire after the
+   retention period of the repository.
+3. Unpack the artifact and run `sha256sum -c SHA256SUMS` in its directory.
+4. Only you create the tag and the GitHub Release, by hand. Attach the
+   archives, their `.sha256` files, and `SHA256SUMS` to the release.

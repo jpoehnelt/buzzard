@@ -47,6 +47,8 @@ CI uses no secrets, so pull requests from forks run every job.
 
 A second local run of `cargo package` after a change to a library crate can fail with an item that "cannot be found" in another crate of the workspace. Cargo keeps the crates that the first run unpacked and built and does not look at them again. Before the second run, delete `~/.cargo/registry/src/-*/buzzard-*`, and delete the files in `target/debug/deps` and the directories in `target/debug/.fingerprint` with the crate name and hash of each file that `grep -l 'registry/src/-.*/buzzard' target/debug/deps/buzzard_*.d` prints. CI starts without them.
 
+`.github/workflows/binaries.yml` is not a check either. It starts by hand (`workflow_dispatch`) or from `release.yml`, builds the `buzzard` binary for the targets in `RELEASING.md`, "Binaries", and uploads them as workflow artifacts only. It creates no tag and no GitHub Release, and it publishes nothing.
+
 `.github/workflows/release.yml` is not a check. It publishes to crates.io and starts by hand only (`workflow_dispatch`). `RELEASING.md` holds the steps. A published version is permanent, and the owner starts every release. Do not run `cargo publish` without `--dry-run`. Do not create a tag. Do not add a trigger to that workflow.
 
 To run one integration test file, use `cargo test -p <crate> --test <file>`. To run unit tests by name, use `cargo test -p <crate> --lib <name>`.
@@ -94,6 +96,7 @@ The tests named in parentheses enforce these invariants.
 - The TDMS reader never panics, never hangs, and never allocates more than a file accounts for. The reader uses checked arithmetic on sizes that come from a file (`a_file_cut_at_any_byte_gives_a_prefix_of_every_channel`, `a_file_cannot_make_the_index_grow_without_paying_for_it`). The crate has no `unsafe` code and does not memory-map. Reads go through the `ReadAt` trait.
 - A truncated or unfinished TDMS file gives a prefix of every channel and an `Anomaly`, never invented values. Anything else that contradicts the format is an `Error` with a byte offset. A new way of recovering data adds an `Anomaly` variant and a row to the table in the crate's README (`anomalies_say_exactly_what_is_wrong`).
 - The TDMS reader believes an index file only after it compared the lead-ins and metadata with those of the data file, byte for byte. It compares every segment of a file of up to 64 segments, and evenly spaced segments of a longer file. Do not make the reader believe more (`an_index_file_of_a_long_file_is_checked_in_evenly_spaced_segments`).
+- Every action that a workflow uses is pinned to a full commit SHA with a version comment (`every_action_is_pinned_to_a_commit`). `binaries.yml` asks for no write permission, uses no secret, and does not tag, release, or publish (`the_binaries_workflow_can_write_nothing`). `release.yml` has the one trigger `workflow_dispatch`, and neither `dry-run` nor `publish` needs the `binaries` job (`the_release_workflow_starts_by_hand_only`). The matrix of `binaries.yml` builds the targets on the runners of the table in `RELEASING.md` (`the_binaries_workflow_builds_every_documented_target`). These tests are in `crates/buzzard-cli/tests/workflows.rs`.
 
 ## Contracts
 
@@ -131,6 +134,7 @@ Users and other tools depend on the following contracts. Check them when you jud
 - Once the crates are released, users depend on the public APIs of `buzzard-tdms` and `buzzard-rsrc`, builders included. While the crates are at 0.x, a breaking change needs a new minor version. The other library crates are published only so that `cargo install buzzard-cli` works, and their APIs may change in any release.
 - Public enums that may grow are `#[non_exhaustive]`. `SelectorMatch`, `PathKind`, `FileKind`, and `Direction` in `buzzard-rsrc` are exhaustive, because `buzzard-lint` matches them exhaustively.
 - The six crate names on crates.io and the binary name `buzzard` are permanent once published.
+- The Binaries workflow names each archive `buzzard-<version>-<target>.tar.gz`, or `.zip` for a Windows target, with one top directory of the same name that holds the binary, `README.md`, `LICENSE`, and `NOTICE`. Beside each archive is `<archive>.sha256`, and `SHA256SUMS` lists every archive in the format of `sha256sum`. The targets are the table in `RELEASING.md`, "Binaries". Install scripts and users depend on these names once a release attaches them.
 - Input formats are binary RSRC files (`RSRC_EXTENSIONS`), `.llb` archives of RSRC files, project files (`.lvproj`, `.lvlib`, `.lvclass`), and TDMS files (`.tdms`, with an optional `.tdms_index` beside them).
 
 ## Running and measuring

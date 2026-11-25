@@ -22,6 +22,13 @@ To install without a checkout, run
 Both ways need Rust 1.91 or later and install one binary, `buzzard`. The crates
 are not on crates.io yet.
 
+No release has binaries yet. Once a GitHub Release attaches them, download the
+`buzzard-<version>-<target>` archive for your system and `SHA256SUMS`, and run
+`sha256sum -c --ignore-missing SHA256SUMS`. Then unpack the archive and put
+`buzzard` on your `PATH`. The binaries are not signed. On macOS, run
+`xattr -d com.apple.quarantine buzzard` before the first start. On Windows,
+SmartScreen may warn about an unknown publisher.
+
 ## Quick start
 
 From the checkout, check a fixture VI that has breakpoints. `check` prints two
