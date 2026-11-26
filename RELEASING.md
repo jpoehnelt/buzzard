@@ -29,7 +29,8 @@ follow "The first release of a crate". Otherwise, follow "Later releases".
    under Environments, create the environment `release`. Limit its
    deployment branches to `main`. Add yourself as a required reviewer.
 2. Run the Release workflow on `main` with `dry_run` on. Continue only when
-   the run is green.
+   the `checks` and `dry-run` jobs are green. A failed `binaries` job does
+   not block the crates. See "Binaries".
 3. Check out that commit of `main` with a clean working tree.
 4. Do not store the token of this step in the repository or in its secrets.
    On crates.io, create an API token with only the scope `publish-new` and
@@ -76,8 +77,10 @@ follow "The first release of a crate". Otherwise, follow "Later releases".
    each `buzzard-*` entry in `[workspace.dependencies]` the same value. Run
    `cargo check` so that `Cargo.lock` follows.
 2. Merge the change through a pull request.
-3. Run the Release workflow on `main` with `dry_run` on. Then run it with
-   `dry_run` off and approve the `release` environment. When `crates` is
+3. Run the Release workflow on `main` with `dry_run` on. Continue only when
+   the `checks` and `dry-run` jobs are green. A failed `binaries` job does
+   not block the crates. Then run the workflow with `dry_run` off and approve
+   the `release` environment. When `crates` is
    `tdms`, the other crates stay at their published version.
 4. If a run fails after it uploaded some crates, fix the cause and run the
    workflow again. The workflow skips each version that crates.io already
@@ -88,3 +91,46 @@ follow "The first release of a crate". Otherwise, follow "Later releases".
 
 Add the new crate to the list of crates in the `publish` job of
 `release.yml`. Follow "The first release of a crate" once for that crate.
+
+## Binaries
+
+The Binaries workflow, `.github/workflows/binaries.yml`, builds the
+`buzzard` binary for the targets below. It uploads the archives as workflow
+artifacts only. It creates no tag and no GitHub Release, and it uploads
+nothing to crates.io. The Release workflow runs it after its checks, and
+you can also start it by hand. Neither the dry run nor the upload of the
+crates waits for it, so a failed `binaries` job turns the Release run red
+but does not stop the crates. Run the Binaries workflow again by hand to
+build the binaries.
+
+| Target | Runner |
+| --- | --- |
+| `x86_64-unknown-linux-musl` | `ubuntu-latest` |
+| `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm` |
+| `x86_64-apple-darwin` | `macos-15-intel` |
+| `aarch64-apple-darwin` | `macos-latest` |
+| `x86_64-pc-windows-msvc` | `windows-latest` |
+| `aarch64-pc-windows-msvc` | `windows-11-arm` |
+
+Each runner builds for its own architecture and runs the binary on the
+fixtures before it packages it. The Linux binaries link musl statically,
+and the Windows binaries link the C runtime statically. The arm runners are
+free for public repositories only. In a private repository, those jobs wait
+for a runner that never comes.
+
+Each archive is `buzzard-<version>-<target>.tar.gz`, or `.zip` on Windows.
+It holds one directory of the same name, with the binary, `README.md`,
+`LICENSE`, and `NOTICE`. Each archive has a `<archive>.sha256` file beside
+it, and `SHA256SUMS` lists every archive. The artifact `buzzard-binaries`
+holds them all.
+
+To attach the binaries to a release:
+
+1. Run the Binaries workflow on `main`, or take the run of the Release
+   workflow that published the crates.
+2. Download the artifact `buzzard-binaries` from the run's page. Downloads
+   need a signed-in GitHub user, and the artifacts expire after the
+   retention period of the repository.
+3. Unpack the artifact and run `sha256sum -c SHA256SUMS` in its directory.
+4. Only you create the tag and the GitHub Release, by hand. Attach the
+   archives, their `.sha256` files, and `SHA256SUMS` to the release.

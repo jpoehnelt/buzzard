@@ -41,6 +41,16 @@ jobs:
     permissions:
       contents: read
 
+  # This job builds the binaries of binaries.yml on the commit being released
+  # and uploads them as workflow artifacts. It creates no tag and no GitHub
+  # Release. Neither dry-run nor publish waits for it, so a failed binary
+  # build does not stop the crates.
+  binaries:
+    needs: checks
+    uses: ./.github/workflows/binaries.yml
+    permissions:
+      contents: read
+
   # This job does what `cargo publish` would do, without the upload. It has no
   # access to crates.io, because it requests no token and `id-token` is not
   # granted.
