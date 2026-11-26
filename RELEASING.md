@@ -29,7 +29,8 @@ follow "The first release of a crate". Otherwise, follow "Later releases".
    under Environments, create the environment `release`. Limit its
    deployment branches to `main`. Add yourself as a required reviewer.
 2. Run the Release workflow on `main` with `dry_run` on. Continue only when
-   the run is green.
+   the `checks` and `dry-run` jobs are green. A failed `binaries` job does
+   not block the crates. See "Binaries".
 3. Check out that commit of `main` with a clean working tree.
 4. Do not store the token of this step in the repository or in its secrets.
    On crates.io, create an API token with only the scope `publish-new` and
@@ -76,8 +77,10 @@ follow "The first release of a crate". Otherwise, follow "Later releases".
    each `buzzard-*` entry in `[workspace.dependencies]` the same value. Run
    `cargo check` so that `Cargo.lock` follows.
 2. Merge the change through a pull request.
-3. Run the Release workflow on `main` with `dry_run` on. Then run it with
-   `dry_run` off and approve the `release` environment. When `crates` is
+3. Run the Release workflow on `main` with `dry_run` on. Continue only when
+   the `checks` and `dry-run` jobs are green. A failed `binaries` job does
+   not block the crates. Then run the workflow with `dry_run` off and approve
+   the `release` environment. When `crates` is
    `tdms`, the other crates stay at their published version.
 4. If a run fails after it uploaded some crates, fix the cause and run the
    workflow again. The workflow skips each version that crates.io already
@@ -96,7 +99,9 @@ The Binaries workflow, `.github/workflows/binaries.yml`, builds the
 artifacts only. It creates no tag and no GitHub Release, and it uploads
 nothing to crates.io. The Release workflow runs it after its checks, and
 you can also start it by hand. Neither the dry run nor the upload of the
-crates waits for it.
+crates waits for it, so a failed `binaries` job turns the Release run red
+but does not stop the crates. Run the Binaries workflow again by hand to
+build the binaries.
 
 | Target | Runner |
 | --- | --- |

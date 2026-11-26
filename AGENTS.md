@@ -47,9 +47,9 @@ CI uses no secrets, so pull requests from forks run every job.
 
 A second local run of `cargo package` after a change to a library crate can fail with an item that "cannot be found" in another crate of the workspace. Cargo keeps the crates that the first run unpacked and built and does not look at them again. Before the second run, delete `~/.cargo/registry/src/-*/buzzard-*`, and delete the files in `target/debug/deps` and the directories in `target/debug/.fingerprint` with the crate name and hash of each file that `grep -l 'registry/src/-.*/buzzard' target/debug/deps/buzzard_*.d` prints. CI starts without them.
 
-`.github/workflows/binaries.yml` is not a check either. It starts by hand (`workflow_dispatch`) or from `release.yml`, builds the `buzzard` binary for the targets in `RELEASING.md`, "Binaries", and uploads them as workflow artifacts only. It creates no tag and no GitHub Release, and it publishes nothing.
-
 `.github/workflows/release.yml` is not a check. It publishes to crates.io and starts by hand only (`workflow_dispatch`). `RELEASING.md` holds the steps. A published version is permanent, and the owner starts every release. Do not run `cargo publish` without `--dry-run`. Do not create a tag. Do not add a trigger to that workflow.
+
+`.github/workflows/binaries.yml` is not a check either. It starts by hand (`workflow_dispatch`) or from `release.yml`, builds the `buzzard` binary for the targets in `RELEASING.md`, "Binaries", and uploads them as workflow artifacts only. It creates no tag and no GitHub Release, and it publishes nothing.
 
 To run one integration test file, use `cargo test -p <crate> --test <file>`. To run unit tests by name, use `cargo test -p <crate> --lib <name>`.
 
