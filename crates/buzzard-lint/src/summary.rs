@@ -22,27 +22,49 @@ fn yes_no(value: Option<bool>) -> &'static str {
     }
 }
 
-/// Render a summary. `usage` is `(callers, callees)` inside the workspace,
-/// when a dependency graph is available. The title is usually a file name
-/// and is printed on one line ([`crate::printable::text`]), here and in
-/// the other summaries.
-pub fn to_markdown(title: &str, meta: &ViMetadata, usage: Option<(usize, usize)>) -> String {
-    let mut out = String::new();
+/// One row of the metadata of a file: a label and its value, as plain
+/// text that a renderer still has to print on one line and escape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataRow {
+    /// What the row is about, such as `Saved version`.
+    pub label: &'static str,
+    /// The value, such as `21.0.0`.
+    pub value: String,
+    /// A code that goes with the value, such as the file type `LVIN` of
+    /// the row `Kind`.
+    pub code: Option<String>,
+}
+
+impl MetadataRow {
+    fn new(label: &'static str, value: impl Into<String>) -> Self {
+        Self {
+            label,
+            value: value.into(),
+            code: None,
+        }
+    }
+}
+
+/// The rows of the metadata of a file, in the order the summaries print
+/// them. `usage` is `(callers, callees)` inside the workspace, when a
+/// dependency graph is available. [`to_markdown`] and the HTML report
+/// both print these rows, so the two forms list the same facts.
+pub fn metadata_rows(meta: &ViMetadata, usage: Option<(usize, usize)>) -> Vec<MetadataRow> {
     let kind = match meta.kind {
         FileKind::Vi => "VI",
         FileKind::Control => "Control",
         FileKind::Library => "LLB archive",
         FileKind::Other => "Resource file",
     };
-    let _ = writeln!(out, "### {}\n", printable::text(title));
-    let _ = writeln!(out, "| | |\n| --- | --- |");
-    let _ = writeln!(out, "| Kind | {kind} (`{}`) |", meta.file_type);
+    let mut rows = vec![MetadataRow {
+        code: Some(meta.file_type.to_string()),
+        ..MetadataRow::new("Kind", kind)
+    }];
     if let Some(version) = meta.version {
-        let _ = writeln!(out, "| Saved version | {version} |");
+        rows.push(MetadataRow::new("Saved version", version.to_string()));
     }
     if !meta.libraries.is_empty() {
-        let libraries = printable::text(&meta.libraries.join(" > "));
-        let _ = writeln!(out, "| Library | {libraries} |");
+        rows.push(MetadataRow::new("Library", meta.libraries.join(" > ")));
     }
     if let Some(flags) = &meta.flags {
         let reentrancy = match flags.reentrancy {
@@ -51,43 +73,78 @@ pub fn to_markdown(title: &str, meta: &ViMetadata, usage: Option<(usize, usize)>
             Some(Reentrancy::PreallocatedClones) => "preallocated clones",
             None => "unknown",
         };
-        let _ = writeln!(
-            out,
-            "| Compiled code separated | {} |",
-            yes_no(flags.separate_compiled_code)
-        );
-        let _ = writeln!(
-            out,
-            "| Automatic error handling | {} |",
-            yes_no(flags.auto_error_handling)
-        );
-        let _ = writeln!(out, "| Debugging allowed | {} |", yes_no(flags.debuggable));
-        let _ = writeln!(out, "| Breakpoints | {} |", yes_no(flags.has_breakpoints));
-        let _ = writeln!(
-            out,
-            "| Suspend when called | {} |",
-            yes_no(flags.suspend_when_called)
-        );
-        let _ = writeln!(out, "| Run when opened | {} |", yes_no(flags.run_on_open));
-        let _ = writeln!(out, "| Reentrancy | {reentrancy} |");
-        let _ = writeln!(out, "| Inlined | {} |", yes_no(flags.inline));
-        let _ = writeln!(out, "| Locked | {} |", yes_no(flags.locked));
+        rows.extend([
+            MetadataRow::new(
+                "Compiled code separated",
+                yes_no(flags.separate_compiled_code),
+            ),
+            MetadataRow::new(
+                "Automatic error handling",
+                yes_no(flags.auto_error_handling),
+            ),
+            MetadataRow::new("Debugging allowed", yes_no(flags.debuggable)),
+            MetadataRow::new("Breakpoints", yes_no(flags.has_breakpoints)),
+            MetadataRow::new("Suspend when called", yes_no(flags.suspend_when_called)),
+            MetadataRow::new("Run when opened", yes_no(flags.run_on_open)),
+            MetadataRow::new("Reentrancy", reentrancy),
+            MetadataRow::new("Inlined", yes_no(flags.inline)),
+            MetadataRow::new("Locked", yes_no(flags.locked)),
+        ]);
     }
     if meta.password_protected.is_some() {
-        let _ = writeln!(
-            out,
-            "| Password-protected | {} |",
-            yes_no(meta.password_protected)
-        );
+        rows.push(MetadataRow::new(
+            "Password-protected",
+            yes_no(meta.password_protected),
+        ));
     }
     if let Some((callers, callees)) = usage {
-        let _ = writeln!(out, "| Callers in workspace | {callers} |");
-        let _ = writeln!(out, "| Callees in workspace | {callees} |");
+        rows.push(MetadataRow::new(
+            "Callers in workspace",
+            callers.to_string(),
+        ));
+        rows.push(MetadataRow::new(
+            "Callees in workspace",
+            callees.to_string(),
+        ));
     }
+    rows
+}
 
+/// The targets of the links of a file, sorted and each once. A target is
+/// data from the file, so a renderer prints it on one line.
+pub fn dependencies(meta: &ViMetadata) -> Vec<String> {
     let mut targets: Vec<String> = meta.links.iter().map(|l| l.path.to_string()).collect();
     targets.sort();
     targets.dedup();
+    targets
+}
+
+/// Render a summary. `usage` is `(callers, callees)` inside the workspace,
+/// when a dependency graph is available. The title is usually a file name
+/// and is printed on one line ([`crate::printable::text`]), here and in
+/// the other summaries.
+pub fn to_markdown(title: &str, meta: &ViMetadata, usage: Option<(usize, usize)>) -> String {
+    let mut out = String::new();
+    let _ = writeln!(out, "### {}\n", printable::text(title));
+    let _ = writeln!(out, "| | |\n| --- | --- |");
+    for row in metadata_rows(meta, usage) {
+        let value = printable::text(&row.value);
+        match row.code {
+            Some(code) => {
+                let _ = writeln!(
+                    out,
+                    "| {} | {value} (`{}`) |",
+                    row.label,
+                    printable::text(&code)
+                );
+            }
+            None => {
+                let _ = writeln!(out, "| {} | {value} |", row.label);
+            }
+        }
+    }
+
+    let targets = dependencies(meta);
     let _ = writeln!(out, "\n**Dependencies ({})**\n", targets.len());
     for target in &targets {
         // A link is data from the file and stays on its line.

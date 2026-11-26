@@ -250,7 +250,21 @@ fn inspect_prints_an_html_report() {
         "{html}"
     );
     assert!(html.contains("<title>add.vi - buzzard</title>"));
-    assert!(html.contains("<pre class=\"bz-pre\">### add.vi\n"));
+    assert!(
+        html.contains(
+            "<tr><th scope=\"row\">Kind</th><td>VI (<code class=\"bz-code\">LVIN</code>)</td></tr>"
+        ),
+        "{html}"
+    );
+    assert!(html.contains("<tr><th scope=\"row\">Saved version</th><td>21.0.0</td></tr>"));
+    assert!(html.contains("<h3 class=\"bz-subheading\">Dependencies (0)</h3>"));
+    assert!(
+        html.contains("2 nodes, 6 terminals, 3 wires, 1 diagram.</p>"),
+        "{html}"
+    );
+    // The metadata is a table, not Markdown text.
+    assert!(!html.contains("| --- |"));
+    assert!(!html.contains("<pre"));
     assert!(html.contains("The diagram decoded completely."));
     // The page loads nothing and links to nothing. The one address is the
     // namespace of the SVG.

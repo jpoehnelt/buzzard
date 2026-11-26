@@ -782,7 +782,8 @@ pub fn scan(workspace: &Workspace, graph: &DependencyGraph, roots: &Roots) -> De
     }
 }
 
-fn plural(count: usize, one: &str, many: &str) -> String {
+/// `count` and the noun that goes with it, such as `1 wire` or `2 wires`.
+pub(crate) fn plural(count: usize, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
