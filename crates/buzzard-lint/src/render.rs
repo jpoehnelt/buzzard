@@ -87,8 +87,12 @@ pub fn frame_title(node: &Node, index: usize) -> String {
     }
 }
 
+/// `text` for SVG: on one line ([`crate::printable::text`]), so that a
+/// control character or a character that reorders text in a name does
+/// not reach the picture, and then escaped as XML.
 fn escape(text: &str) -> String {
-    text.replace('&', "&amp;")
+    crate::printable::text(text)
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
@@ -706,6 +710,39 @@ mod tests {
             primitive: Some(id),
             ..node(uid, "prim", None, vec![])
         }
+    }
+
+    #[test]
+    fn escape_prints_a_name_on_one_line_before_it_escapes_markup() {
+        assert_eq!(
+            escape("a\n<b>\u{1b}[0m\u{202e}&\"c\""),
+            "a\\n&lt;b&gt;\\u{1b}[0m\\u{202e}&amp;&quot;c&quot;"
+        );
+        let named = Node {
+            name: Some("x\ny\u{202e}z".to_owned()),
+            ..node(
+                2,
+                "iUse",
+                Some(Rect {
+                    top: 0,
+                    left: 0,
+                    bottom: 32,
+                    right: 32,
+                }),
+                vec![],
+            )
+        };
+        let svg = to_svg(&BlockDiagram {
+            root: Diagram {
+                uid: 1,
+                nodes: vec![named],
+                wires: vec![],
+                losses: Vec::new(),
+            },
+        });
+        assert!(svg.contains("x\\ny\\u{202e}z"), "{svg}");
+        assert!(!svg.contains('\u{202e}'));
+        assert!(!svg.contains("x\ny"));
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod diagnostic;
 pub mod diff;
 pub mod failure;
 pub mod graph;
+pub mod html;
 pub mod inspector;
 mod lossy;
 pub mod patharg;

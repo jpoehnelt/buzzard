@@ -1,13 +1,16 @@
 //! The `inspect` subcommand: what one file holds.
 
+use std::fmt::Write;
 use std::path::Path;
 
 use buzzard_lint::project::is_project_file;
 use buzzard_lint::summary;
-use buzzard_lint::{archive, patharg, printable, render, ErrorKind, Failure};
+use buzzard_lint::{archive, html, patharg, printable, render, ErrorKind, Failure};
+use buzzard_lint::{lint, DependencyGraph, LintConfig, Workspace};
 use buzzard_lint::{Inspection, ProjectFile};
 use buzzard_rsrc::{BlockDiagram, ViMetadata};
 use clap::ValueEnum;
+use sha2::{Digest, Sha256};
 
 use crate::{to_json, Outcome, Report};
 
@@ -23,11 +26,21 @@ pub(crate) enum Format {
     Dot,
     /// The block diagram as a Mermaid flowchart.
     Mermaid,
+    /// One HTML page that holds everything it shows: the SHA-256 of the
+    /// file, its metadata, a picture of the block diagram, the losses of
+    /// the decoder, and the problems that check finds in the file alone.
+    Html,
 }
 
 impl Format {
     fn is_picture(self) -> bool {
         matches!(self, Self::Svg | Self::Dot | Self::Mermaid)
+    }
+
+    /// Whether the format shows the whole block diagram, so that
+    /// `--detail summary` does not apply to it.
+    fn is_whole(self) -> bool {
+        self.is_picture() || matches!(self, Self::Html)
     }
 }
 
@@ -56,10 +69,10 @@ pub(crate) enum Part {
 /// member of an archive and the member's name decides how it is read.
 pub(crate) fn run(file: &Path, format: Format, detail: Detail, part: Option<Part>) -> Outcome {
     patharg::check(file)?;
-    if detail == Detail::Summary && format.is_picture() {
+    if detail == Detail::Summary && format.is_whole() {
         return Err(Failure::bad_argument(
-            "--detail summary applies to --format json and markdown; svg, dot, and mermaid \
-             draw the whole block diagram",
+            "--detail summary applies to --format json and markdown; svg, dot, mermaid, and \
+             html show the whole block diagram",
         ));
     }
     if part.is_some() && !matches!(format, Format::Json) {
@@ -148,7 +161,7 @@ fn project(file: &Path, format: Format) -> Outcome {
     let text = match format {
         Format::Json => to_json(&project),
         Format::Markdown => summary::project_to_markdown(&project.name, &project, None),
-        Format::Svg | Format::Dot | Format::Mermaid => {
+        Format::Svg | Format::Dot | Format::Mermaid | Format::Html => {
             return Err(Failure::unsupported(
                 file,
                 "a project file has no block diagram",
@@ -192,7 +205,7 @@ fn archive(file: &Path, format: Format, detail: Detail) -> Outcome {
             })
         }
         Format::Markdown => summary::archive_to_markdown(&title(file), &opened),
-        Format::Svg | Format::Dot | Format::Mermaid => {
+        Format::Svg | Format::Dot | Format::Mermaid | Format::Html => {
             let example = opened.opened().first().map_or_else(
                 || "<member>".to_owned(),
                 |name| printable::path(&archive::member_path(file, name)),
@@ -221,12 +234,15 @@ fn title(file: &Path) -> String {
 /// `buzzard inspect` on a binary file: its metadata and block diagram, or a
 /// picture of the diagram. `file` may name a member of an archive.
 fn binary(file: &Path, format: Format, detail: Detail) -> Outcome {
-    let inspection = Inspection::from_path(file).map_err(|err| unreadable(file, err))?;
+    // `Inspection::from_path`, with the bytes kept for the hash.
+    let bytes = archive::read(file).map_err(|err| unreadable(file, err))?;
+    let inspection = Inspection::from_bytes(&bytes).map_err(|err| unreadable(file, err))?;
     let picture = |draw: fn(&BlockDiagram) -> String| match &inspection.diagram {
         Some(diagram) => Ok(draw(diagram)),
         None => Err(Failure::unsupported(file, "file has no block diagram")),
     };
     let text = match (format, detail) {
+        (Format::Html, _) => report(file, &bytes, &inspection),
         (Format::Svg, _) => picture(render::to_svg)?,
         (Format::Dot, _) => picture(render::to_dot)?,
         (Format::Mermaid, _) => picture(render::to_mermaid)?,
@@ -245,4 +261,27 @@ fn binary(file: &Path, format: Format, detail: Detail) -> Outcome {
         }
     };
     Ok(Report::ok(text))
+}
+
+/// `buzzard inspect --format html`: one page about one binary file. The
+/// hash is that of `bytes`, the bytes read, which for a member are the
+/// member's own bytes. The findings are those of the file checked alone.
+fn report(file: &Path, bytes: &[u8], inspection: &Inspection) -> String {
+    let sha256: String =
+        Sha256::digest(bytes)
+            .iter()
+            .fold(String::with_capacity(64), |mut hex, byte| {
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            });
+    let workspace = Workspace::scan(&[file.to_path_buf()]);
+    let graph = DependencyGraph::build(&workspace);
+    let findings = lint(&workspace, &graph, &LintConfig::default());
+    html::to_html(&html::Page {
+        path: file,
+        sha256: &sha256,
+        metadata: &inspection.metadata,
+        diagram: inspection.diagram.as_ref(),
+        findings: &findings,
+    })
 }

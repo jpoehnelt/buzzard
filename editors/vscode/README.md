@@ -17,7 +17,8 @@ cargo install --path crates/buzzard-cli
 ```
 
 Without a checkout, run `cargo install --git https://github.com/jpoehnelt/buzzard buzzard-cli`.
-Both commands need Rust 1.91 or later.
+Both commands need Rust 1.91 or later. A downloaded binary works too, if it is on `PATH` or the
+`buzzard.path` setting names it.
 
 When the extension does not find the executable, the status bar shows "Buzzard: not found" and a
 notification gives the `cargo install --path` command.

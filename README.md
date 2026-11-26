@@ -22,6 +22,16 @@ To install without a checkout, run
 Both ways need Rust 1.91 or later and install one binary, `buzzard`. The crates
 are not on crates.io yet.
 
+A GitHub Release may attach prebuilt binaries. Download the
+`buzzard-<version>-<target>` archive for your system and `SHA256SUMS`. To
+verify the archive, run `sha256sum -c --ignore-missing SHA256SUMS` on Linux
+or `shasum -a 256 -c --ignore-missing SHA256SUMS` on macOS. On Windows, run
+`Get-FileHash -Algorithm SHA256 <archive>` in PowerShell and compare the hash
+with the archive's line in `SHA256SUMS`. Then unpack the archive and put
+`buzzard` on your `PATH`. The binaries are not signed. If macOS blocks the
+first start, run `xattr -c buzzard`. On Windows, SmartScreen may warn about an
+unknown publisher.
+
 ## Quick start
 
 From the checkout, check a fixture VI that has breakpoints. `check` prints two
@@ -61,6 +71,7 @@ buzzard inspect crates/buzzard-rsrc/tests/fixtures/pylavi/add.vi --format json
 - To print an outline in place of every node and wire, pass `--detail summary`. The full JSON of one VI can be over 1 MB.
 - To print one frame or a range of nodes as JSON, take the ids from the outline. Pass `--structure <ID> --frame <INDEX>` or `--first-node <ID> --last-node <ID>` with `--format json`.
 - To draw the block diagram, pass `--format svg`, `dot`, or `mermaid`.
+- To get one HTML page to keep or share, pass `--format html`. The page holds the file's SHA-256, its settings, a picture of the block diagram, whether the diagram decoded completely, and the problems of the file checked alone. It loads nothing from the network.
 - To list the members of an `.llb` archive, pass the archive.
 
 ### Compare two versions of a file

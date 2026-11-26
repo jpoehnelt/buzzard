@@ -60,6 +60,8 @@ bytemuck = { version = "1.25", features = ["derive"] }
 parquet = { version = "60.2", default-features = false, features = ["arrow", "snap"] }
 arrow-array = { version = "60.2", default-features = false }
 arrow-schema = { version = "60.2", default-features = false }
+# The SHA-256 of a file in the HTML report of `inspect`
+sha2 = { version = "0.10", default-features = false }
 # Property-based tests
 proptest = { version = "1", default-features = false, features = ["std"] }
 

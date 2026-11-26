@@ -1,0 +1,199 @@
+name: Binaries
+
+# This workflow builds the `buzzard` binary for each target in RELEASING.md,
+# "Binaries", and uploads the archives as workflow artifacts. It starts by
+# hand, or from the release workflow. It creates no tag and no GitHub
+# Release, and it uploads nothing to crates.io. The owner attaches the
+# archives to a release by hand.
+on:
+  workflow_dispatch:
+  # The release workflow calls this workflow after its checks.
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
+  # Symbols are most of the size of a release binary. Panic messages keep
+  # their file and line without them. [profile.release] stays as it is, so a
+  # local `cargo build --release` keeps its symbols.
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+
+jobs:
+  # Each runner builds for its own architecture, so every binary runs in the
+  # smoke step on the machine that built it. The Linux binaries link musl
+  # statically, and the Windows binaries link the C runtime statically, so
+  # neither needs a library on the user's machine.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      # A crate that compiles C code needs a C compiler for musl.
+      - if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked -p buzzard-cli --target "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
+      - name: Name the binary and the version
+        id: meta
+        env:
+          TARGET: ${{ matrix.target }}
+          OS: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          # The first `version` in Cargo.toml is that of [workspace.package].
+          # A Windows checkout may end its lines with \r.
+          version=$(tr -d '\r' < Cargo.toml | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+          test -n "$version"
+          exe=buzzard
+          if [ "$OS" = Windows ]; then exe=buzzard.exe; fi
+          {
+            echo "version=$version"
+            echo "binary=target/$TARGET/release/$exe"
+            echo "exe=$exe"
+            echo "name=buzzard-$version-$TARGET"
+          } >> "$GITHUB_OUTPUT"
+      # The binary runs the commands of the README's quick start on the
+      # fixtures, so a binary that starts but cannot read a file fails here.
+      - name: Smoke test
+        env:
+          BIN: ${{ steps.meta.outputs.binary }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          printed=$("$BIN" --version)
+          if [ "$printed" != "buzzard $VERSION" ]; then
+            echo "::error::--version printed '$printed', not 'buzzard $VERSION'"
+            exit 1
+          fi
+          # The fixture has two warnings, so `check` exits 1.
+          status=0
+          "$BIN" check crates/buzzard-rsrc/tests/fixtures/pylavi/add_breakpoints.vi || status=$?
+          if [ "$status" -ne 1 ]; then
+            echo "::error::check exited $status, not 1"
+            exit 1
+          fi
+          "$BIN" tdms info crates/buzzard-tdms/tests/fixtures/zenodo-7758683/waveforms-point21.tdms
+      # The archive holds one directory of the archive's name, with the
+      # binary, the README, and the license files in it. Windows gets a zip,
+      # made by PowerShell, which every Windows runner has.
+      - name: Package
+        id: package
+        env:
+          BIN: ${{ steps.meta.outputs.binary }}
+          EXE: ${{ steps.meta.outputs.exe }}
+          NAME: ${{ steps.meta.outputs.name }}
+          OS: ${{ runner.os }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/$NAME"
+          cp "$BIN" "dist/$NAME/$EXE"
+          cp README.md LICENSE NOTICE "dist/$NAME/"
+          cd dist
+          if [ "$OS" = Windows ]; then
+            archive="$NAME.zip"
+            pwsh -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath '$archive'"
+          else
+            archive="$NAME.tar.gz"
+            tar -czf "$archive" "$NAME"
+          fi
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+          cat "$archive.sha256"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-${{ matrix.target }}
+          path: |
+            dist/${{ steps.package.outputs.archive }}
+            dist/${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  # This job puts every archive, its .sha256 file, and one SHA256SUMS file
+  # for all archives into one artifact.
+  # It runs only when every target built.
+  checksums:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Check the archives and write SHA256SUMS
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(buzzard-*.tar.gz buzzard-*.zip)
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "::error::no archive was downloaded"
+            exit 1
+          fi
+          # Every archive is buzzard-<version>-<target>, and the targets
+          # start with an architecture, so the version is what comes before.
+          versions=$(for archive in "${archives[@]}"; do
+            version=${archive#buzzard-}
+            version=${version%%-x86_64-*}
+            version=${version%%-aarch64-*}
+            echo "$version"
+          done | sort -u)
+          if [ "$(wc -l <<< "$versions")" -ne 1 ]; then
+            echo "::error::the archives have more than one version: $versions"
+            exit 1
+          fi
+          sha256sum -c ./*.sha256
+          sha256sum "${archives[@]}" > SHA256SUMS
+          {
+            echo "### buzzard $versions: nothing was released"
+            echo
+            echo "| Archive | Bytes | SHA-256 |"
+            echo "| --- | --- | --- |"
+            while read -r sum file; do
+              echo "| $file | $(stat -c %s "$file") | \`$sum\` |"
+            done < SHA256SUMS
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: buzzard-binaries
+          path: dist
+          if-no-files-found: error

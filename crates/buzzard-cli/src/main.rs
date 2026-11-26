@@ -108,9 +108,10 @@ enum Command {
     /// `full_json_bytes`.
     #[command(
         after_help = "Exit status: 0, or 2 when buzzard cannot read the file, when you \
-        ask for svg, dot, or mermaid and the file has no block diagram or with --detail \
-        summary, when the file has no such frame, or when the path is a directory or holds \
-        a control character."
+        ask for svg, dot, or mermaid and the file has no block diagram, when you ask for \
+        svg, dot, mermaid, or html with --detail summary or for a project file or an \
+        archive, when the file has no such frame, or when the path is a directory or holds \
+        a control character. The html report of a file without a block diagram exits 0."
     )]
     Inspect {
         /// A file, or a member path such as lib/util.llb/Init.vi.
